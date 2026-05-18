@@ -1,4 +1,4 @@
-﻿use std::fmt;
+use std::fmt;
 use std::fmt::{Display, Formatter};
 
 pub enum GrammarNode {
@@ -15,23 +15,47 @@ impl Display for GrammarNode {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             GrammarNode::Sequence(s) => {
-                write!(f, "seq({})", s.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))
+                write!(
+                    f,
+                    "seq({})",
+                    s.iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
             GrammarNode::Choice(c) => {
-                write!(f, "choice({})", c.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))
+                write!(
+                    f,
+                    "choice({})",
+                    c.iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
-            GrammarNode::TerminalLiteral(l) => { write!(f, "{}", l)}
-            GrammarNode::TerminalPattern(p) => { write!(f, "{}", p)}
-            GrammarNode::NonTerminal(nt) => { write!(f, "$.{}", nt)}
-            GrammarNode::ZeroOrMore(zm) => {write!(f, "repeat({})", zm)}
-            GrammarNode::OneOrMore(om) => {write!(f, "repeat1({})", om)}
+            GrammarNode::TerminalLiteral(l) => {
+                write!(f, "{}", l)
+            }
+            GrammarNode::TerminalPattern(p) => {
+                write!(f, "{}", p)
+            }
+            GrammarNode::NonTerminal(nt) => {
+                write!(f, "$.{}", nt)
+            }
+            GrammarNode::ZeroOrMore(zm) => {
+                write!(f, "repeat({})", zm)
+            }
+            GrammarNode::OneOrMore(om) => {
+                write!(f, "repeat1({})", om)
+            }
         }
     }
 }
 
 pub struct Production {
     pub name: String,
-    pub body: GrammarNode
+    pub body: GrammarNode,
 }
 
 impl Display for Production {
@@ -43,9 +67,8 @@ impl Display for Production {
     }
 }
 
-
 pub struct Grammar {
-    pub productions: Vec<Production>
+    pub productions: Vec<Production>,
 }
 
 impl Display for Grammar {
