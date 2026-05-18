@@ -79,3 +79,87 @@ impl Display for Grammar {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::GrammarNode::*;
+    use super::*;
+
+    #[test]
+    fn nonterminal_display() {
+        assert_eq!(NonTerminal("foo".into()).to_string(), "$.foo");
+    }
+
+    #[test]
+    fn terminal_literal_display() {
+        assert_eq!(TerminalLiteral("'x'".into()).to_string(), "'x'");
+    }
+
+    #[test]
+    fn terminal_pattern_display() {
+        assert_eq!(TerminalPattern("/a+/".into()).to_string(), "/a+/");
+    }
+
+    #[test]
+    fn zero_or_more_display() {
+        assert_eq!(
+            ZeroOrMore(Box::new(NonTerminal("a".into()))).to_string(),
+            "repeat($.a)"
+        );
+    }
+
+    #[test]
+    fn one_or_more_display() {
+        assert_eq!(
+            OneOrMore(Box::new(NonTerminal("a".into()))).to_string(),
+            "repeat1($.a)"
+        );
+    }
+
+    #[test]
+    fn sequence_display() {
+        assert_eq!(
+            Sequence(vec![
+                NonTerminal("a".into()),
+                NonTerminal("b".into()),
+                NonTerminal("c".into()),
+            ])
+            .to_string(),
+            "seq($.a, $.b, $.c)"
+        );
+    }
+
+    #[test]
+    fn choice_display() {
+        assert_eq!(
+            Choice(vec![NonTerminal("a".into()), NonTerminal("b".into())]).to_string(),
+            "choice($.a, $.b)"
+        );
+    }
+
+    #[test]
+    fn production_display() {
+        let p = Production {
+            name: "expr".into(),
+            body: NonTerminal("a".into()),
+        };
+        assert_eq!(p.to_string(), "expr -> $.a");
+    }
+
+    #[test]
+    fn grammar_display() {
+        let g = Grammar {
+            productions: vec![
+                Production {
+                    name: "a".into(),
+                    body: TerminalLiteral("'x'".into()),
+                },
+                Production {
+                    name: "b".into(),
+                    body: NonTerminal("a".into()),
+                },
+            ],
+        };
+        assert_eq!(g.to_string(), "\na -> 'x'\nb -> $.a");
+    }
+}
