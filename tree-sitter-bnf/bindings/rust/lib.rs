@@ -5,6 +5,7 @@
 //!
 //! ```
 //! let code = r#"
+//! expr -> 'a';
 //! "#;
 //! let mut parser = tree_sitter::Parser::new();
 //! let language = tree_sitter_bnf::LANGUAGE;
