@@ -1,97 +1,46 @@
-ifeq ($(OS),Windows_NT)
-$(error Windows is not supported)
-endif
+CARGO       ?= cargo
+TS          ?= tree-sitter
+GRAMMAR_DIR := tree-sitter-bnf
+PARSER_C    := $(GRAMMAR_DIR)/src/parser.c
 
-LANGUAGE_NAME := tree-sitter-bnf
-HOMEPAGE_URL := https://github.com/tree-sitter/tree-sitter-bnf
-VERSION := 0.1.0
+.DEFAULT_GOAL := help
 
-# repository
-SRC_DIR := src
+.PHONY: help generate test-grammar build release test check lint fmt fmt-check clean
 
-TS ?= tree-sitter
+help: ## Show this help
+	@echo "Usage: make <target>"
+	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
-# install directory layout
-PREFIX ?= /usr/local
-DATADIR ?= $(PREFIX)/share
-INCLUDEDIR ?= $(PREFIX)/include
-LIBDIR ?= $(PREFIX)/lib
-PCLIBDIR ?= $(LIBDIR)/pkgconfig
+$(PARSER_C): $(GRAMMAR_DIR)/grammar.js
+	cd $(GRAMMAR_DIR) && $(TS) generate
 
-# source/object files
-PARSER := $(SRC_DIR)/parser.c
-EXTRAS := $(filter-out $(PARSER),$(wildcard $(SRC_DIR)/*.c))
-OBJS := $(patsubst %.c,%.o,$(PARSER) $(EXTRAS))
+generate: $(PARSER_C) ## Regenerate parser from grammar.js (runs only if grammar.js changed)
 
-# flags
-ARFLAGS ?= rcs
-override CFLAGS += -I$(SRC_DIR) -std=c11 -fPIC
+test-grammar: $(PARSER_C) ## Run tree-sitter corpus tests
+	cd $(GRAMMAR_DIR) && $(TS) test
 
-# ABI versioning
-SONAME_MAJOR = $(shell sed -n 's/\#define LANGUAGE_VERSION //p' $(PARSER))
-SONAME_MINOR = $(word 1,$(subst ., ,$(VERSION)))
+build: $(PARSER_C) ## Build both crates (debug)
+	$(CARGO) build
 
-# OS-specific bits
-ifeq ($(shell uname),Darwin)
-	SOEXT = dylib
-	SOEXTVER_MAJOR = $(SONAME_MAJOR).$(SOEXT)
-	SOEXTVER = $(SONAME_MAJOR).$(SONAME_MINOR).$(SOEXT)
-	LINKSHARED = -dynamiclib -Wl,-install_name,$(LIBDIR)/lib$(LANGUAGE_NAME).$(SOEXTVER),-rpath,@executable_path/../Frameworks
-else
-	SOEXT = so
-	SOEXTVER_MAJOR = $(SOEXT).$(SONAME_MAJOR)
-	SOEXTVER = $(SOEXT).$(SONAME_MAJOR).$(SONAME_MINOR)
-	LINKSHARED = -shared -Wl,-soname,lib$(LANGUAGE_NAME).$(SOEXTVER)
-endif
-ifneq ($(filter $(shell uname),FreeBSD NetBSD DragonFly),)
-	PCLIBDIR := $(PREFIX)/libdata/pkgconfig
-endif
+release: $(PARSER_C) ## Build both crates (release)
+	$(CARGO) build --release
 
-all: lib$(LANGUAGE_NAME).a lib$(LANGUAGE_NAME).$(SOEXT) $(LANGUAGE_NAME).pc
+test: $(PARSER_C) ## Run all Rust tests
+	$(CARGO) test
 
-lib$(LANGUAGE_NAME).a: $(OBJS)
-	$(AR) $(ARFLAGS) $@ $^
+check: $(PARSER_C) ## Fast type-check without linking
+	$(CARGO) check
 
-lib$(LANGUAGE_NAME).$(SOEXT): $(OBJS)
-	$(CC) $(LDFLAGS) $(LINKSHARED) $^ $(LDLIBS) -o $@
-ifneq ($(STRIP),)
-	$(STRIP) $@
-endif
+lint: ## Run clippy
+	$(CARGO) clippy -- -D warnings
 
-$(LANGUAGE_NAME).pc: bindings/c/$(LANGUAGE_NAME).pc.in
-	sed -e 's|@PROJECT_VERSION@|$(VERSION)|' \
-		-e 's|@CMAKE_INSTALL_LIBDIR@|$(LIBDIR:$(PREFIX)/%=%)|' \
-		-e 's|@CMAKE_INSTALL_INCLUDEDIR@|$(INCLUDEDIR:$(PREFIX)/%=%)|' \
-		-e 's|@PROJECT_DESCRIPTION@|$(DESCRIPTION)|' \
-		-e 's|@PROJECT_HOMEPAGE_URL@|$(HOMEPAGE_URL)|' \
-		-e 's|@CMAKE_INSTALL_PREFIX@|$(PREFIX)|' $< > $@
+fmt: ## Format Rust source
+	$(CARGO) fmt
 
-$(PARSER): $(SRC_DIR)/grammar.json
-	$(TS) generate $^
+fmt-check: ## Check formatting without modifying
+	$(CARGO) fmt --check
 
-install: all
-	install -d '$(DESTDIR)$(DATADIR)'/tree-sitter/queries/bnf '$(DESTDIR)$(INCLUDEDIR)'/tree_sitter '$(DESTDIR)$(PCLIBDIR)' '$(DESTDIR)$(LIBDIR)'
-	install -m644 bindings/c/tree_sitter/$(LANGUAGE_NAME).h '$(DESTDIR)$(INCLUDEDIR)'/tree_sitter/$(LANGUAGE_NAME).h
-	install -m644 $(LANGUAGE_NAME).pc '$(DESTDIR)$(PCLIBDIR)'/$(LANGUAGE_NAME).pc
-	install -m644 lib$(LANGUAGE_NAME).a '$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).a
-	install -m755 lib$(LANGUAGE_NAME).$(SOEXT) '$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).$(SOEXTVER)
-	ln -sf lib$(LANGUAGE_NAME).$(SOEXTVER) '$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).$(SOEXTVER_MAJOR)
-	ln -sf lib$(LANGUAGE_NAME).$(SOEXTVER_MAJOR) '$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).$(SOEXT)
-	install -m644 queries/*.scm '$(DESTDIR)$(DATADIR)'/tree-sitter/queries/bnf
-
-uninstall:
-	$(RM) '$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).a \
-		'$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).$(SOEXTVER) \
-		'$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).$(SOEXTVER_MAJOR) \
-		'$(DESTDIR)$(LIBDIR)'/lib$(LANGUAGE_NAME).$(SOEXT) \
-		'$(DESTDIR)$(INCLUDEDIR)'/tree_sitter/$(LANGUAGE_NAME).h \
-		'$(DESTDIR)$(PCLIBDIR)'/$(LANGUAGE_NAME).pc
-	$(RM) -r '$(DESTDIR)$(DATADIR)'/tree-sitter/queries/bnf
-
-clean:
-	$(RM) $(OBJS) $(LANGUAGE_NAME).pc lib$(LANGUAGE_NAME).a lib$(LANGUAGE_NAME).$(SOEXT)
-
-test:
-	$(TS) test
-
-.PHONY: all install uninstall clean test
+clean: ## Remove build artifacts
+	$(CARGO) clean
+	rm -rf $(GRAMMAR_DIR)/src

@@ -1,0 +1,8 @@
+target/
+node_modules/
+*.a
+*.so
+*.dylib
+*.dll
+tree-sitter-bnf/src/
+tree-sitter-bnf/tree-sitter-bnf.pc
