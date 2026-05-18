@@ -105,3 +105,73 @@ fn visit(node: &Node<'_>, source_code: &str) -> GrammarNode {
         kind => panic!("Unknown node kind: {}", kind),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(src: &str) -> String {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_bnf::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        visit_grammar(&tree.root_node(), src)
+            .to_string()
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn literal_terminal() {
+        assert_eq!(parse("a -> 'x';"), "a -> 'x'");
+    }
+
+    #[test]
+    fn pattern_terminal() {
+        assert_eq!(parse("a -> /x+/;"), "a -> /x+/");
+    }
+
+    #[test]
+    fn nonterminal_ref() {
+        assert_eq!(parse("a -> b;"), "a -> $.b");
+    }
+
+    #[test]
+    fn alternatives() {
+        assert_eq!(parse("a -> 'x' | 'y';"), "a -> choice('x', 'y')");
+    }
+
+    #[test]
+    fn sequence() {
+        assert_eq!(parse("a -> 'x' 'y';"), "a -> seq('x', 'y')");
+    }
+
+    #[test]
+    fn kleene_star() {
+        assert_eq!(parse("a -> 'x'*;"), "a -> repeat('x')");
+    }
+
+    #[test]
+    fn kleene_plus() {
+        assert_eq!(parse("a -> 'x'+;"), "a -> repeat1('x')");
+    }
+
+    #[test]
+    fn grouped_subseq() {
+        assert_eq!(parse("a -> ('x' | 'y')*;"), "a -> repeat(choice('x', 'y'))");
+    }
+
+    #[test]
+    fn sequence_with_alternative() {
+        assert_eq!(
+            parse("a -> 'x' 'y' | 'z';"),
+            "a -> choice(seq('x', 'y'), 'z')"
+        );
+    }
+
+    #[test]
+    fn multi_rule() {
+        assert_eq!(parse("a -> 'x';\nb -> a;"), "a -> 'x'\nb -> $.a");
+    }
+}
