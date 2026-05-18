@@ -12,6 +12,9 @@
 (plus) @operator
 (asterisk) @operator
 
+; Comments
+(comment) @comment
+
 ; Structural punctuation
 "->" @operator
 "|" @operator

@@ -10,6 +10,8 @@
 module.exports = grammar({
   name: "bnf",
 
+  extras: $ => [/\s/, $.comment],
+
   rules: {
     grammar: $ => repeat1($.rule),
     rule: $ => seq($.nonTerminal, '->', $.ruleBody, ';'),
@@ -24,5 +26,6 @@ module.exports = grammar({
     pattern: $ => /\/([^/]|\[[^]]+\]|\\\/)+\//,
     literal: $ => /'([^']|\\')+'/,
     nonTerminal: $ => /[A-Za-z_][A-Za-z0-9_]*/,
+    comment: $ => token(seq('#', /.*/)),
   }
 });
