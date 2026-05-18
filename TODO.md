@@ -7,7 +7,7 @@ Impact key: **high** = meaningful to most users or unlocks a category of use; **
 | ID | Task | Category | Impact | Status |
 |----|------|----------|--------|--------|
 | G-01 | Optional operator (`?`) | Grammar | high | open |
-| G-02 | Comments | Grammar | high | open |
+| G-02 | Comments | Grammar | high | done |
 | Q-01 | `locals.scm` | Query files | high | open |
 | C-01 | Full `grammar.js` output | CLI | high | open |
 | C-02 | Undefined-reference check | CLI | high | open |
