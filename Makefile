@@ -1,6 +1,7 @@
 CARGO       ?= cargo
 TS          ?= tree-sitter
 GRAMMAR_DIR := tree-sitter-bnf
+PARSER_C    := $(GRAMMAR_DIR)/src/parser.c
 
 .DEFAULT_GOAL := help
 
@@ -11,22 +12,24 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
-generate: ## Regenerate parser from grammar.js
+$(PARSER_C): $(GRAMMAR_DIR)/grammar.js
 	cd $(GRAMMAR_DIR) && $(TS) generate
 
-test-grammar: ## Run tree-sitter corpus tests
+generate: $(PARSER_C) ## Regenerate parser from grammar.js (runs only if grammar.js changed)
+
+test-grammar: $(PARSER_C) ## Run tree-sitter corpus tests
 	cd $(GRAMMAR_DIR) && $(TS) test
 
-build: ## Build both crates (debug)
+build: $(PARSER_C) ## Build both crates (debug)
 	$(CARGO) build
 
-release: ## Build both crates (release)
+release: $(PARSER_C) ## Build both crates (release)
 	$(CARGO) build --release
 
-test: ## Run all Rust tests
+test: $(PARSER_C) ## Run all Rust tests
 	$(CARGO) test
 
-check: ## Fast type-check without linking
+check: $(PARSER_C) ## Fast type-check without linking
 	$(CARGO) check
 
 lint: ## Run clippy
@@ -40,4 +43,4 @@ fmt-check: ## Check formatting without modifying
 
 clean: ## Remove build artifacts
 	$(CARGO) clean
-	$(MAKE) -C $(GRAMMAR_DIR) clean
+	rm -rf $(GRAMMAR_DIR)/src

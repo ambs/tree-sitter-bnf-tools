@@ -4,3 +4,5 @@ node_modules/
 *.so
 *.dylib
 *.dll
+tree-sitter-bnf/src/
+tree-sitter-bnf/tree-sitter-bnf.pc
