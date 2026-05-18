@@ -1,6 +1,33 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
+#[derive(Debug)]
+pub enum ParseError {
+    UnexpectedNodeType { expected: String, got: String },
+    UnknownNodeKind(String),
+    MalformedProduction,
+    SyntaxError,
+    ParseFailed,
+}
+
+impl Display for ParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::UnexpectedNodeType { expected, got } => {
+                write!(f, "expected node type '{}', got '{}'", expected, got)
+            }
+            ParseError::UnknownNodeKind(kind) => write!(f, "unknown node kind '{}'", kind),
+            ParseError::MalformedProduction => {
+                write!(f, "non-terminal expected on left-hand side of production")
+            }
+            ParseError::SyntaxError => write!(f, "input contains syntax errors"),
+            ParseError::ParseFailed => write!(f, "parser returned no tree"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 pub enum GrammarNode {
     Sequence(Vec<GrammarNode>),
     Choice(Vec<GrammarNode>),

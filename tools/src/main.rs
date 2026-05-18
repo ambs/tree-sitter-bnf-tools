@@ -2,13 +2,15 @@ mod dom;
 mod visitors;
 
 use std::env;
+use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 
+use crate::dom::ParseError;
 use crate::visitors::visit_grammar;
 use tree_sitter::Parser;
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {
@@ -18,12 +20,9 @@ fn main() {
 
     let filename = &args[1];
 
-    let mut file =
-        File::open(filename).unwrap_or_else(|_| panic!("Error opening file: {}", filename));
-
+    let mut file = File::open(filename)?;
     let mut source_code = String::new();
-    file.read_to_string(&mut source_code)
-        .unwrap_or_else(|_| panic!("Error reading file: {}", filename));
+    file.read_to_string(&mut source_code)?;
 
     let mut parser = Parser::new();
     parser
@@ -32,12 +31,14 @@ fn main() {
 
     let tree = parser
         .parse(&source_code, None)
-        .unwrap_or_else(|| panic!("Error parsing source code: {}", filename));
+        .ok_or(ParseError::ParseFailed)?;
 
     let root_node = tree.root_node();
     if root_node.has_error() {
-        panic!("There was some parsing error")
+        return Err(ParseError::SyntaxError.into());
     }
-    let grammar = visit_grammar(&root_node, &source_code);
+
+    let grammar = visit_grammar(&root_node, &source_code)?;
     println!("{}", grammar);
+    Ok(())
 }
