@@ -1,0 +1,6 @@
+target/
+node_modules/
+*.a
+*.so
+*.dylib
+*.dll

@@ -1,0 +1,14 @@
+[package]
+name = "bnf-tools"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tools for working with BNF grammars"
+license = "MIT"
+
+[[bin]]
+name = "bnf-tools"
+path = "src/main.rs"
+
+[dependencies]
+tree-sitter-bnf = { path = "../tree-sitter-bnf" }
+tree-sitter = "0.25.3"
