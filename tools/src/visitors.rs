@@ -13,7 +13,7 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Grammar {
     let mut grammar = Grammar {
         productions: Vec::new(),
     };
-    let count = node.child_count();
+    let count = node.child_count() as u32;
     for i in 0..count {
         let child = node.child(i).unwrap();
         let production = visit_rule(&child, source_code);
@@ -49,12 +49,12 @@ fn visit_literal(node: &Node<'_>, source_code: &str) -> GrammarNode {
 }
 
 fn visit_rule_body(node: &Node<'_>, source_code: &str) -> GrammarNode {
-    let count = node.child_count();
+    let count = node.child_count() as u32;
     if count == 1 {
         visit(&node.child(0).unwrap(), source_code)
     } else {
         let mut choice = Vec::new();
-        let mut i = 0;
+        let mut i: u32 = 0;
         while i < count {
             choice.push(visit(&node.child(i).unwrap(), source_code));
             i += 2;
@@ -78,7 +78,7 @@ fn visit_symbol(node: &Node<'_>, source_code: &str) -> GrammarNode {
 }
 
 fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> GrammarNode {
-    let count = node.child_count();
+    let count = node.child_count() as u32;
     if count == 1 {
         visit(&node.child(0).unwrap(), source_code)
     } else {
