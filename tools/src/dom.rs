@@ -107,6 +107,25 @@ impl Display for Grammar {
     }
 }
 
+pub struct Scaffold<'a> {
+    pub grammar: &'a Grammar,
+    pub name: &'a str,
+}
+
+impl Display for Scaffold<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "module.exports = grammar({{")?;
+        writeln!(f, "  name: \"{}\",", self.name)?;
+        writeln!(f)?;
+        writeln!(f, "  rules: {{")?;
+        for production in &self.grammar.productions {
+            writeln!(f, "    {}: $ => {},", production.name, production.body)?;
+        }
+        writeln!(f, "  }}")?;
+        write!(f, "}});")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::GrammarNode::*;
@@ -188,5 +207,60 @@ mod tests {
             ],
         };
         assert_eq!(g.to_string(), "\na -> 'x'\nb -> $.a");
+    }
+
+    #[test]
+    fn scaffold_single_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "expr".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+        };
+        assert_eq!(
+            Scaffold { grammar: &g, name: "expr" }.to_string(),
+            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    expr: $ => 'x',\n  }\n});"
+        );
+    }
+
+    #[test]
+    fn scaffold_multi_rule() {
+        let g = Grammar {
+            productions: vec![
+                Production {
+                    name: "a".into(),
+                    body: TerminalLiteral("'x'".into()),
+                },
+                Production {
+                    name: "b".into(),
+                    body: NonTerminal("a".into()),
+                },
+            ],
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "test",
+        }
+        .to_string();
+        assert!(out.contains("    a: $ => 'x',"));
+        assert!(out.contains("    b: $ => $.a,"));
+        assert!(out.starts_with("module.exports = grammar({"));
+        assert!(out.ends_with("});"));
+    }
+
+    #[test]
+    fn scaffold_name_appears_in_output() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "r".into(),
+                body: TerminalLiteral("'y'".into()),
+            }],
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "mygrammar",
+        }
+        .to_string();
+        assert!(out.contains("name: \"mygrammar\""));
     }
 }
