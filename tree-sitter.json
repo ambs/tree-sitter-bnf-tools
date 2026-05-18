@@ -1,0 +1,40 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "bnf",
+      "camelcase": "Bnf",
+      "title": "Bnf",
+      "scope": "source.bnf",
+      "file-types": [
+        "bnf"
+      ],
+      "injection-regex": "^bnf$",
+      "class-name": "TreeSitterBnf"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "A simple BNF syntax parser",
+    "authors": [
+      {
+        "name": "Alberto Simões",
+        "email": "ambs@cpan.org",
+        "url": "https://ambs.zbr.pt/"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/tree-sitter/tree-sitter-bnf"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": false,
+    "node": false,
+    "python": false,
+    "rust": true,
+    "swift": false,
+    "zig": false
+  }
+}

@@ -1,0 +1,10 @@
+prefix=/usr/local
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: tree-sitter-bnf
+Description: 
+URL: https://github.com/tree-sitter/tree-sitter-bnf
+Version: 0.1.0
+Libs: -L${libdir} -ltree-sitter-bnf
+Cflags: -I${includedir}
