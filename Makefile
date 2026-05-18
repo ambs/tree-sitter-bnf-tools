@@ -32,7 +32,7 @@ test: $(PARSER_C) ## Run all Rust tests
 check: $(PARSER_C) ## Fast type-check without linking
 	$(CARGO) check
 
-lint: ## Run clippy
+lint: $(PARSER_C) ## Run clippy
 	$(CARGO) clippy -- -D warnings
 
 fmt: ## Format Rust source
