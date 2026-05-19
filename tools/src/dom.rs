@@ -31,6 +31,7 @@ impl std::error::Error for ParseError {}
 pub enum GrammarNode {
     Sequence(Vec<GrammarNode>),
     Choice(Vec<GrammarNode>),
+    Optional(Box<GrammarNode>),
     TerminalLiteral(String),
     TerminalPattern(String),
     NonTerminal(String),
@@ -75,6 +76,9 @@ impl Display for GrammarNode {
             }
             GrammarNode::OneOrMore(om) => {
                 write!(f, "repeat1({})", om)
+            }
+            GrammarNode::Optional(om) => {
+                write!(f, "optional({})", om)
             }
         }
     }
@@ -159,6 +163,14 @@ mod tests {
         assert_eq!(
             OneOrMore(Box::new(NonTerminal("a".into()))).to_string(),
             "repeat1($.a)"
+        );
+    }
+
+    #[test]
+    fn optional_display() {
+        assert_eq!(
+            Optional(Box::new(NonTerminal("a".into()))).to_string(),
+            "optional($.a)"
         );
     }
 
