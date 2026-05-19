@@ -25,7 +25,8 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Construct | Syntax | Example |
 |-----------|--------|---------|
 | Rule | `name -> body ;` | `expr -> term ;` |
-| Literal terminal | `'text'` | `'+' ` |
+| Comment | `# text` | `# this is a comment` |
+| Literal terminal | `'text'` | `'+'` |
 | Pattern terminal | `/regex/` | `/[0-9]+/` |
 | Non-terminal reference | bare identifier | `term` |
 | Sequence | juxtaposition | `'(' expr ')'` |
@@ -36,7 +37,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 
 ## bnf-tools
 
-Reads a `.bnf` file and prints the equivalent tree-sitter `grammar.js` rule bodies.
+Converts a `.bnf` file to tree-sitter notation.
 
 **Build from source**
 
@@ -48,23 +49,59 @@ make build
 **Usage**
 
 ```sh
-bnf-tools <file.bnf>
+bnf-tools [OPTIONS] <file.bnf>
+
+Options:
+  --name <NAME>          Grammar name (default: filename stem)
+  --rules-only           Print rule bodies only, without grammar.js boilerplate
+  --generate             Write grammar.js to a directory and run tree-sitter generate
+  --output-dir <DIR>     Output directory for --generate (default: ./<name>)
+  -h, --help             Print help
 ```
 
-**Example**
+**Print a complete `grammar.js` scaffold** (default)
 
 Given `expr.bnf`:
 
 ```bnf
+# arithmetic expressions
 expr -> term ('+' term)* ;
 term -> /[0-9]+/ | '(' expr ')' ;
 ```
 
 Running `bnf-tools expr.bnf` outputs:
 
+```js
+module.exports = grammar({
+  name: "expr",
+
+  rules: {
+    expr: $ => seq($.term, repeat(seq('+', $.term))),
+    term: $ => choice(/[0-9]+/, seq('(', $.expr, ')')),
+  }
+});
+```
+
+**Print rule bodies only**
+
+```sh
+bnf-tools --rules-only expr.bnf
+```
+
 ```
 expr -> seq($.term, repeat(seq('+', $.term)))
 term -> choice(/[0-9]+/, seq('(', $.expr, ')'))
+```
+
+**Generate a tree-sitter project**
+
+```sh
+bnf-tools --generate expr.bnf
+# creates ./expr/grammar.js and runs tree-sitter generate
+# producing ./expr/src/parser.c
+
+bnf-tools --generate --output-dir ~/parsers/arithmetic --name arithmetic expr.bnf
+# creates the project at the specified path with an explicit grammar name
 ```
 
 ## Development
