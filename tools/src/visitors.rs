@@ -81,6 +81,7 @@ fn visit_symbol(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, Parse
     Ok(match kleene {
         "plus" => OneOrMore(Box::new(symbol)),
         "asterisk" => ZeroOrMore(Box::new(symbol)),
+        "questionMark" => Optional(Box::new(symbol)),
         _ => symbol,
     })
 }
@@ -162,13 +163,34 @@ mod tests {
     }
 
     #[test]
+    fn kleene_question_mark() {
+        assert_eq!(parse("a -> 'x'?;"), "a -> optional('x')");
+    }
+
+    #[test]
     fn kleene_plus() {
         assert_eq!(parse("a -> 'x'+;"), "a -> repeat1('x')");
     }
 
     #[test]
-    fn grouped_subseq() {
+    fn grouped_subseq_asterisk() {
         assert_eq!(parse("a -> ('x' | 'y')*;"), "a -> repeat(choice('x', 'y'))");
+    }
+
+    #[test]
+    fn grouped_subseq_plus() {
+        assert_eq!(
+            parse("a -> ('x' | 'y')+;"),
+            "a -> repeat1(choice('x', 'y'))"
+        );
+    }
+
+    #[test]
+    fn grouped_subseq_optional() {
+        assert_eq!(
+            parse("a -> ('x' | 'y')?;"),
+            "a -> optional(choice('x', 'y'))"
+        );
     }
 
     #[test]
