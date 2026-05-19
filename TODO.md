@@ -9,7 +9,7 @@ Impact key: **high** = meaningful to most users or unlocks a category of use; **
 | G-01 | Optional operator (`?`) | Grammar | high | open |
 | G-02 | Comments | Grammar | high | done |
 | Q-01 | `locals.scm` | Query files | high | open |
-| C-01 | Full `grammar.js` output | CLI | high | done |
+| C-01 | Full `grammar.js` output + `--generate` | CLI | high | done |
 | C-02 | Undefined-reference check | CLI | high | open |
 | C-03 | Left-recursion detection | CLI | high | open |
 | B-01 | WASM build | Bindings | high | open |
@@ -51,7 +51,7 @@ Impact key: **high** = meaningful to most users or unlocks a category of use; **
 
 ## `bnf-tools` CLI
 
-- **C-01 — Full `grammar.js` output** *(high)* — instead of just printing rule bodies, emit a complete, runnable `grammar.js` scaffold (module boilerplate, `name`, all rules) that can be pasted directly into a new tree-sitter project
+- **C-01 — Full `grammar.js` output + `--generate`** *(high)* — default output is now a complete, runnable `grammar.js` scaffold; `--rules-only` restores the old rule-body-only format; `--generate [--output-dir DIR] [--name NAME]` writes the scaffold to a directory and runs `tree-sitter generate` to produce `src/parser.c`; arg parsing uses clap
 - **C-02 — Undefined-reference check** *(high)* — after parsing, warn when a non-terminal is referenced in a rule body but never defined as a rule LHS; catches real bugs in grammars before tree-sitter does
 - **C-03 — Left-recursion detection** *(high)* — flag directly or mutually left-recursive rules, which tree-sitter cannot handle; saves users from cryptic parser failures
 - **C-04 — `--format` flag** *(medium)* — switch the output target; initial candidates: `tree-sitter` (current default), `peg.js`, `lark`, `antlr4`

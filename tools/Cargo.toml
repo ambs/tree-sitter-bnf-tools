@@ -12,3 +12,4 @@ path = "src/main.rs"
 [dependencies]
 tree-sitter-bnf = { path = "../tree-sitter-bnf" }
 tree-sitter = "0.26.8"
+clap = { version = "4", features = ["derive"] }
