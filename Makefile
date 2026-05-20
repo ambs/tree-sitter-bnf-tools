@@ -5,7 +5,7 @@ PARSER_C    := $(GRAMMAR_DIR)/src/parser.c
 
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar build release test check lint fmt fmt-check clean
+.PHONY: help generate test-grammar build release test check typecheck lint fmt fmt-check clean
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -29,8 +29,10 @@ release: $(PARSER_C) ## Build both crates (release)
 test: $(PARSER_C) ## Run all Rust tests
 	$(CARGO) test
 
-check: $(PARSER_C) ## Fast type-check without linking
+typecheck: $(PARSER_C) ## Fast type-check without linking
 	$(CARGO) check
+
+check: fmt-check lint typecheck test test-grammar ## Run all checks (fmt, lint, typecheck, tests, corpus)
 
 lint: $(PARSER_C) ## Run clippy
 	$(CARGO) clippy -- -D warnings
