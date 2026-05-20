@@ -1,0 +1,33 @@
+# a comment
+# <- @comment
+
+expr -> term ;
+# <- @variable.definition
+#    ^^ @operator
+#       ^^^^ @variable
+#            ^ @punctuation.delimiter
+
+rule -> 'literal' ;
+#       ^^^^^^^^^ @string
+
+rule -> /[a-z]+/ ;
+#       ^^^^^^^^ @string.regexp
+
+rule -> a | b ;
+#       ^ @variable
+#         ^ @operator
+#           ^ @variable
+
+rule -> (a | b)+ ;
+#       ^ @punctuation.bracket
+#             ^ @punctuation.bracket
+#              ^ @operator
+
+rule -> a+ ;
+#        ^ @operator
+
+rule -> b* ;
+#        ^ @operator
+
+rule -> c? ;
+#        ^ @operator

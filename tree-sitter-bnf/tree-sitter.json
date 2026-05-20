@@ -10,6 +10,8 @@
         "bnf"
       ],
       "injection-regex": "^bnf$",
+      "highlights": "queries/highlights.scm",
+      "locals": "queries/locals.scm",
       "class-name": "TreeSitterBnf"
     }
   ],
