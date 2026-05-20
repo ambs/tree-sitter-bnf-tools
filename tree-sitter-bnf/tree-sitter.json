@@ -12,6 +12,7 @@
       "injection-regex": "^bnf$",
       "highlights": "queries/highlights.scm",
       "locals": "queries/locals.scm",
+      "injections": "queries/injections.scm",
       "class-name": "TreeSitterBnf"
     }
   ],
