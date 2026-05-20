@@ -15,6 +15,17 @@ Use kebab-case slugs, e.g. `chore/restructure`, `feature/corpus-tests`.
 
 All PRs target `main`.
 
+## Branch workflow
+
+Before creating a branch for a new PR, always sync main with upstream:
+
+```sh
+git fetch origin
+git merge --ff-only origin/main
+```
+
+Then create the branch from the updated main.
+
 ## Checklist before opening
 
 - [ ] `make fmt-check` passes

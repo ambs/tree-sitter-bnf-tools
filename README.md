@@ -33,7 +33,26 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Alternative | `\|` | `'a' \| 'b'` |
 | Zero or more | `*` | `term*` |
 | One or more | `+` | `term+` |
+| Zero or one (optional) | `?` | `','?` |
 | Grouping | `( )` | `('a' \| 'b')*` |
+
+### Not supported
+
+The following constructs from other BNF/EBNF variants are **not** recognised:
+
+| Construct | Example | Why it fails |
+|-----------|---------|--------------|
+| `::=` / `:` / `=` rule separator | `expr ::= term` | Only `->` is accepted |
+| Double-quoted literals | `"text"` | Only single-quoted `'text'` is accepted |
+| Angle-bracket non-terminals | `<expr>` | Only bare identifiers are accepted |
+| `[optional]` bracket notation | `['+'?]` | Use `?` instead: `'+'?` |
+| `{repetition}` curly-brace notation | `{term}` | Use `*` instead: `term*` |
+| Empty (epsilon) alternatives | `a -> b \|` | Trailing `\|` without a body is a parse error |
+| ABNF character codes | `%x41` | Not implemented |
+| Case-insensitive literals | `%i"text"` | Not implemented |
+
+If your grammar uses any of the unsupported constructs, convert them to the
+supported equivalents before running `bnf-tools`.
 
 ## bnf-tools
 
