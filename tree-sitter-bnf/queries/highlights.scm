@@ -11,6 +11,7 @@
 ; Kleene operators
 (plus) @operator
 (asterisk) @operator
+(questionMark) @operator
 
 ; Comments
 (comment) @comment
