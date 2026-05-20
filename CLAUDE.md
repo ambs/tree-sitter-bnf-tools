@@ -28,15 +28,14 @@ Then create the branch from the updated main.
 
 ## Checklist before opening
 
-- [ ] `make fmt-check` passes
-- [ ] `make lint` passes
-- [ ] `make test` passes
-- [ ] `make test-grammar` passes (if grammar changed)
+- [ ] `main` is up to date with `origin/main` (`git fetch origin && git merge --ff-only origin/main`)
+- [ ] Branch is up to date with `main` (`git rebase main`)
+- [ ] `make check` passes
 
 ## PR description rules
 
 - Never include unticked checklist items in a PR description.
-- Before opening the PR, run every checklist item. If it passes, tick it.
+- Before opening the PR, run through the checklist. Tick each item as it passes.
 - If a check cannot be run (e.g. requires credentials or a specific environment),
   ask the user to run it before the PR is opened.
 - Only open the PR once all items are ticked.
