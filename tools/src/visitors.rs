@@ -1,5 +1,5 @@
-use crate::dom::GrammarNode::*;
-use crate::dom::{Grammar, GrammarNode, ParseError, Production};
+use crate::dom::GrammarNode::{self, *};
+use crate::dom::{Grammar, ParseError, Production};
 use tree_sitter::Node;
 
 fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
@@ -112,6 +112,14 @@ fn visit_symbol_subseq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode
     visit(&node.child(1).expect("subseq has inner child"), source_code)
 }
 
+fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+    let inner = visit(
+        &node.child(1).expect("tokenExpr has inner child"),
+        source_code,
+    )?;
+    Ok(Token(Box::new(inner)))
+}
+
 fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     match node.kind() {
         "nonTerminal" => Ok(visit_non_terminal(node, source_code)),
@@ -121,6 +129,7 @@ fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> 
         "pattern" => Ok(visit_pattern(node, source_code)),
         "literal" => Ok(visit_literal(node, source_code)),
         "subSeq" => visit_symbol_subseq(node, source_code),
+        "tokenExpr" => visit_token_expr(node, source_code),
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
     }
 }
@@ -229,5 +238,34 @@ mod tests {
     #[test]
     fn multi_rule() {
         assert_eq!(parse("a -> 'x';\nb -> a;"), "a -> 'x'\nb -> $.a");
+    }
+
+    #[test]
+    fn token_expr_single_pattern() {
+        assert_eq!(parse("a -> << /[0-9]+/ >>;"), "a -> token(/[0-9]+/)");
+    }
+
+    #[test]
+    fn token_expr_sequence() {
+        assert_eq!(
+            parse("a -> << /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;"),
+            "a -> token(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/))"
+        );
+    }
+
+    #[test]
+    fn token_expr_alternatives() {
+        assert_eq!(
+            parse("a -> << '+' | '-' >>;"),
+            "a -> token(choice('+', '-'))"
+        );
+    }
+
+    #[test]
+    fn token_expr_with_kleene_plus() {
+        assert_eq!(
+            parse("a -> << /[0-9]/ >>+;"),
+            "a -> repeat1(token(/[0-9]/))"
+        );
     }
 }
