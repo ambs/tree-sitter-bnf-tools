@@ -8,12 +8,12 @@ expr -> 'a'*;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal)
-          (asterisk))))))
+          content: (literal)
+          kleene: (asterisk))))))
 
 ================================================================================
 Kleene questionMark on literal
@@ -25,12 +25,12 @@ expr -> 'a'?;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal)
-          (questionMark))))))
+          content: (literal)
+          kleene: (questionMark))))))
 
 ================================================================================
 Kleene plus on literal
@@ -42,12 +42,12 @@ expr -> 'a'+;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal)
-          (plus))))))
+          content: (literal)
+          kleene: (plus))))))
 
 ================================================================================
 Kleene plus on non-terminal
@@ -59,13 +59,12 @@ expr -> foo+;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (nonTerminal)
-          (plus))))))
-
+          content: (nonTerminal)
+          kleene: (plus))))))
 
 ================================================================================
 Kleene asterisk on non-terminal
@@ -77,13 +76,12 @@ expr -> foo*;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (nonTerminal)
-          (asterisk))))))
-
+          content: (nonTerminal)
+          kleene: (asterisk))))))
 
 ================================================================================
 Kleene questionMark on non-terminal
@@ -95,11 +93,9 @@ expr -> foo?;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (nonTerminal)
-          (questionMark))))))
-
-
+          content: (nonTerminal)
+          kleene: (questionMark))))))

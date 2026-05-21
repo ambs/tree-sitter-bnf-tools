@@ -8,11 +8,11 @@ expr -> 'hello';
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal))))))
+          content: (literal))))))
 
 ================================================================================
 Double-quoted literal terminal
@@ -24,11 +24,11 @@ expr -> "hello";
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal))))))
+          content: (literal))))))
 
 ================================================================================
 Pattern terminal
@@ -40,11 +40,11 @@ expr -> /[a-z]+/;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (pattern))))))
+          content: (pattern))))))
 
 ================================================================================
 Non-terminal reference
@@ -56,8 +56,8 @@ expr -> other;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (nonTerminal))))))
+          content: (nonTerminal))))))

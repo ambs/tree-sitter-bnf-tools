@@ -10,11 +10,11 @@ expr -> 'a';
 (grammar
   (comment)
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal))))))
+          content: (literal))))))
 
 ================================================================================
 Inline comment after a rule
@@ -26,11 +26,11 @@ expr -> 'a'; # a comment
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal)))))
+          content: (literal)))))
   (comment))
 
 ================================================================================
@@ -45,18 +45,18 @@ stmt -> expr;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal)))))
+          content: (literal)))))
   (comment)
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (nonTerminal))))))
+          content: (nonTerminal))))))
 
 ================================================================================
 Consecutive comments before a rule
@@ -72,11 +72,11 @@ expr -> 'a';
   (comment)
   (comment)
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal))))))
+          content: (literal))))))
 
 ================================================================================
 Inline comment after a pattern terminal
@@ -88,9 +88,9 @@ expr -> /[a-z]+/; # comment after pattern
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (pattern)))))
+          content: (pattern)))))
   (comment))

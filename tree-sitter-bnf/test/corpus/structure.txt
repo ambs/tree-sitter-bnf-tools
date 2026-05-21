@@ -8,14 +8,14 @@ expr -> 'a' | 'b';
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal)))
+          content: (literal)))
       (symbolSeq
         (symbol
-          (literal))))))
+          content: (literal))))))
 
 ================================================================================
 Sequence
@@ -27,13 +27,13 @@ expr -> 'a' 'b';
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal))
+          content: (literal))
         (symbol
-          (literal))))))
+          content: (literal))))))
 
 ================================================================================
 Sequence with alternatives
@@ -45,16 +45,16 @@ expr -> 'a' 'b' | 'c';
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal))
+          content: (literal))
         (symbol
-          (literal)))
+          content: (literal)))
       (symbolSeq
         (symbol
-          (literal))))))
+          content: (literal))))))
 
 ================================================================================
 Grouped sub-sequence with Kleene star
@@ -66,16 +66,16 @@ expr -> ('a' | 'b')*;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (subSeq
-            (ruleBody
+          content: (subSeq
+            body: (ruleBody
               (symbolSeq
                 (symbol
-                  (literal)))
+                  content: (literal)))
               (symbolSeq
                 (symbol
-                  (literal)))))
-          (asterisk))))))
+                  content: (literal)))))
+          kleene: (asterisk))))))
