@@ -39,3 +39,9 @@ rule -> << /[0-9]+/ >> ;
 rule -> lhs: expr ;
 #       ^^^^ @label
 #            ^^^^ @variable
+
+rule -> (a b => name) ;
+#       ^ @punctuation.bracket
+#            ^^ @operator
+#               ^^^^ @type
+#                   ^ @punctuation.bracket

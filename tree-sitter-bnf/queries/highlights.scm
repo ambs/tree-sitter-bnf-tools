@@ -19,6 +19,10 @@
 ; Comments
 (comment) @comment
 
+; Alias group
+(aliasName (nonTerminal) @type)
+"=>" @operator
+
 ; Structural punctuation
 "->" @operator
 "|" @operator
