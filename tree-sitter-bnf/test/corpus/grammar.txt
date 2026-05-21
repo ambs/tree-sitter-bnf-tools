@@ -9,14 +9,14 @@ stmt -> expr;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (literal)))))
+          content: (literal)))))
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (nonTerminal))))))
+          content: (nonTerminal))))))

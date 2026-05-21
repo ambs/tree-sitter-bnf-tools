@@ -29,8 +29,12 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
 
 fn visit_rule(node: &Node<'_>, source_code: &str) -> Result<Production, ParseError> {
     ensure_node_type(node, "rule")?;
-    let rule_name = node.child(0).expect("rule has name child");
-    let rule_body = node.child(2).expect("rule has body child");
+    let rule_name = node
+        .child_by_field_name("name")
+        .expect("rule has name field");
+    let rule_body = node
+        .child_by_field_name("body")
+        .expect("rule has body field");
     let NonTerminal(name) = visit(&rule_name, source_code)? else {
         return Err(ParseError::MalformedProduction);
     };
@@ -82,12 +86,17 @@ fn visit_rule_body(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, Pa
 }
 
 fn visit_symbol(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
-    let symbol = visit(&node.child(0).expect("symbol has child"), source_code)?;
-    let kleene = if node.child_count() > 1 {
-        node.child(1).expect("child 1 exists").kind()
-    } else {
-        ""
-    };
+    let symbol = visit(
+        &node
+            .child_by_field_name("content")
+            .expect("symbol has content field"),
+        source_code,
+    )?;
+    let kleene = node
+        .child_by_field_name("kleene")
+        .as_ref()
+        .map(|n| n.kind())
+        .unwrap_or("");
     Ok(match kleene {
         "plus" => OneOrMore(Box::new(symbol)),
         "asterisk" => ZeroOrMore(Box::new(symbol)),
@@ -109,12 +118,19 @@ fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
 }
 
 fn visit_symbol_subseq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
-    visit(&node.child(1).expect("subseq has inner child"), source_code)
+    visit(
+        &node
+            .child_by_field_name("body")
+            .expect("subSeq has body field"),
+        source_code,
+    )
 }
 
 fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let inner = visit(
-        &node.child(1).expect("tokenExpr has inner child"),
+        &node
+            .child_by_field_name("body")
+            .expect("tokenExpr has body field"),
         source_code,
     )?;
     Ok(Token(Box::new(inner)))

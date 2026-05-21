@@ -14,16 +14,16 @@ module.exports = grammar({
 
   rules: {
     grammar: $ => repeat1($.rule),
-    rule: $ => seq($.nonTerminal, '->', $.ruleBody, ';'),
+    rule: $ => seq(field('name', $.nonTerminal), '->', field('body', $.ruleBody), ';'),
     ruleBody: $ => seq($.symbolSeq, repeat(seq('|', $.symbolSeq))),
     symbolSeq: $ => repeat1($.symbol),
-    symbol: $ => seq(choice($.nonTerminal, $._terminal, $.subSeq, $.tokenExpr), optional($._kleeneOp)),
+    symbol: $ => seq(field('content', choice($.nonTerminal, $._terminal, $.subSeq, $.tokenExpr)), optional(field('kleene', $._kleeneOp))),
     _kleeneOp: $ => choice($.plus, $.asterisk, $.questionMark),
     plus: $ => '+',
     asterisk: $ => '*',
     questionMark: $ => '?',
-    subSeq: $ => seq('(', $.ruleBody, ')'),
-    tokenExpr: $ => seq('<<', $.ruleBody, '>>'),
+    subSeq: $ => seq('(', field('body', $.ruleBody), ')'),
+    tokenExpr: $ => seq('<<', field('body', $.ruleBody), '>>'),
     _terminal: $ => choice($.pattern, $.literal),
     pattern: $ => /\/([^/\[\\]|\[[^\]]*\]|\\.)+\//,
     literal: $ => token(choice(

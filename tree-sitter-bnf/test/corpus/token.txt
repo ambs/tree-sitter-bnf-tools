@@ -8,15 +8,15 @@ digits -> << /[0-9]+/ >>;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (tokenExpr
-            (ruleBody
+          content: (tokenExpr
+            body: (ruleBody
               (symbolSeq
                 (symbol
-                  (pattern))))))))))
+                  content: (pattern))))))))))
 
 ================================================================================
 Token expression with sequence
@@ -28,17 +28,17 @@ identifier -> << /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (tokenExpr
-            (ruleBody
+          content: (tokenExpr
+            body: (ruleBody
               (symbolSeq
                 (symbol
-                  (pattern))
+                  content: (pattern))
                 (symbol
-                  (pattern))))))))))
+                  content: (pattern))))))))))
 
 ================================================================================
 Token expression with alternatives
@@ -50,18 +50,18 @@ sign -> << '+' | '-' >>;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (tokenExpr
-            (ruleBody
+          content: (tokenExpr
+            body: (ruleBody
               (symbolSeq
                 (symbol
-                  (literal)))
+                  content: (literal)))
               (symbolSeq
                 (symbol
-                  (literal))))))))))
+                  content: (literal))))))))))
 
 ================================================================================
 Token expression with Kleene plus
@@ -73,16 +73,16 @@ digits -> << /[0-9]/ >>+;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (tokenExpr
-            (ruleBody
+          content: (tokenExpr
+            body: (ruleBody
               (symbolSeq
                 (symbol
-                  (pattern)))))
-          (plus))))))
+                  content: (pattern)))))
+          kleene: (plus))))))
 
 ================================================================================
 Token expression with literal
@@ -94,12 +94,12 @@ kw_if -> << 'if' >>;
 
 (grammar
   (rule
-    (nonTerminal)
-    (ruleBody
+    name: (nonTerminal)
+    body: (ruleBody
       (symbolSeq
         (symbol
-          (tokenExpr
-            (ruleBody
+          content: (tokenExpr
+            body: (ruleBody
               (symbolSeq
                 (symbol
-                  (literal))))))))))
+                  content: (literal))))))))))
