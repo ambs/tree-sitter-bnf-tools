@@ -48,9 +48,19 @@ fn visit_pattern(node: &Node<'_>, source_code: &str) -> GrammarNode {
     TerminalPattern(text.to_string())
 }
 
+fn normalize_literal(text: &str) -> String {
+    if text.starts_with('"') {
+        let inner = &text[1..text.len() - 1];
+        let content = inner.replace("\\\"", "\"").replace('\'', "\\'");
+        format!("'{content}'")
+    } else {
+        text.to_string()
+    }
+}
+
 fn visit_literal(node: &Node<'_>, source_code: &str) -> GrammarNode {
     let text = node.utf8_text(source_code.as_bytes()).expect("valid UTF-8");
-    TerminalLiteral(text.to_string())
+    TerminalLiteral(normalize_literal(text))
 }
 
 fn visit_rule_body(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
@@ -135,6 +145,21 @@ mod tests {
     #[test]
     fn literal_terminal() {
         assert_eq!(parse("a -> 'x';"), "a -> 'x'");
+    }
+
+    #[test]
+    fn double_quoted_literal_normalised_to_single() {
+        assert_eq!(parse(r#"a -> "x";"#), "a -> 'x'");
+    }
+
+    #[test]
+    fn double_quoted_literal_with_embedded_single_quote() {
+        assert_eq!(parse(r#"a -> "it's";"#), r"a -> 'it\'s'");
+    }
+
+    #[test]
+    fn double_quoted_literal_with_escaped_double_quote() {
+        assert_eq!(parse(r#"a -> "say \"hi\"";"#), r#"a -> 'say "hi"'"#);
     }
 
     #[test]

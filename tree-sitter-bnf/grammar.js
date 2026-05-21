@@ -25,7 +25,10 @@ module.exports = grammar({
     subSeq: $ => seq('(', $.ruleBody, ')'),
     _terminal: $ => choice($.pattern, $.literal),
     pattern: $ => /\/([^/\[\\]|\[[^\]]*\]|\\.)+\//,
-    literal: $ => /'([^'\\]|\\.)*'/,
+    literal: $ => token(choice(
+      /'([^'\\]|\\.)*'/,
+      /"([^"\\]|\\.)*"/,
+    )),
     nonTerminal: $ => /[A-Za-z_][A-Za-z0-9_]*/,
     comment: $ => token(seq('#', /.*/)),
   }
