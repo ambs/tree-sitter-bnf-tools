@@ -1,3 +1,6 @@
+; Field labels
+(fieldLabel) @label
+
 ; Non-terminal references
 (nonTerminal) @variable
 
