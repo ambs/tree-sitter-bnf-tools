@@ -37,6 +37,7 @@ pub enum GrammarNode {
     NonTerminal(String),
     ZeroOrMore(Box<GrammarNode>),
     OneOrMore(Box<GrammarNode>),
+    Token(Box<GrammarNode>),
 }
 
 impl Display for GrammarNode {
@@ -79,6 +80,9 @@ impl Display for GrammarNode {
             }
             GrammarNode::Optional(om) => {
                 write!(f, "optional({})", om)
+            }
+            GrammarNode::Token(inner) => {
+                write!(f, "token({})", inner)
             }
         }
     }
@@ -171,6 +175,26 @@ mod tests {
         assert_eq!(
             Optional(Box::new(NonTerminal("a".into()))).to_string(),
             "optional($.a)"
+        );
+    }
+
+    #[test]
+    fn token_display() {
+        assert_eq!(
+            Token(Box::new(TerminalPattern("/[0-9]+/".into()))).to_string(),
+            "token(/[0-9]+/)"
+        );
+    }
+
+    #[test]
+    fn token_sequence_display() {
+        assert_eq!(
+            Token(Box::new(Sequence(vec![
+                TerminalPattern("/[A-Za-z_]/".into()),
+                TerminalPattern("/[A-Za-z0-9_]*/".into()),
+            ])))
+            .to_string(),
+            "token(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/))"
         );
     }
 

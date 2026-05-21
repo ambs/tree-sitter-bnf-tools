@@ -35,6 +35,11 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | One or more | `+` | `term+` |
 | Zero or one (optional) | `?` | `','?` |
 | Grouping | `( )` | `('a' \| 'b')*` |
+| Token expression | `<< >>` | `<< /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>` |
+
+A `<< >>` token expression marks its contents as an atomic lexer terminal — no
+whitespace or extras are allowed between its parts. It maps directly to
+tree-sitter's `token()` DSL function.
 
 ### Not supported
 

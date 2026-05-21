@@ -31,3 +31,7 @@ rule -> b* ;
 
 rule -> c? ;
 #        ^ @operator
+
+rule -> << /[0-9]+/ >> ;
+#       ^^ @punctuation.bracket
+#                   ^^ @punctuation.bracket
