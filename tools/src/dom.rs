@@ -39,6 +39,7 @@ pub enum GrammarNode {
     OneOrMore(Box<GrammarNode>),
     Token(Box<GrammarNode>),
     Field(String, Box<GrammarNode>),
+    Alias(Box<GrammarNode>, Box<GrammarNode>),
 }
 
 impl Display for GrammarNode {
@@ -87,6 +88,9 @@ impl Display for GrammarNode {
             }
             GrammarNode::Field(name, inner) => {
                 write!(f, "field('{}', {})", name, inner)
+            }
+            GrammarNode::Alias(body, name) => {
+                write!(f, "alias({}, {})", body, name)
             }
         }
     }
@@ -195,6 +199,18 @@ mod tests {
         assert_eq!(
             Field("lhs".into(), Box::new(NonTerminal("expr".into()))).to_string(),
             "field('lhs', $.expr)"
+        );
+    }
+
+    #[test]
+    fn alias_display() {
+        assert_eq!(
+            Alias(
+                Box::new(NonTerminal("foo".into())),
+                Box::new(NonTerminal("bar".into()))
+            )
+            .to_string(),
+            "alias($.foo, $.bar)"
         );
     }
 

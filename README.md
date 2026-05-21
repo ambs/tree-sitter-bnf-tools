@@ -37,6 +37,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Grouping | `( )` | `('a' \| 'b')*` |
 | Token expression | `<< >>` | `<< /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>` |
 | Field label | `name: symbol` | `lhs: expr` |
+| Alias group | `(body => name)` | `(a b => pair)` |
 
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
@@ -58,6 +59,35 @@ assign: $ => seq(field('target', $.name), '=', field('value', $.expr)),
 
 A Kleene operator applied to a labeled symbol wraps the whole quantified
 expression: `items: expr*` generates `field('items', repeat($.expr))`.
+
+An alias group relabels a sequence in the generated AST, mapping to
+tree-sitter's `alias()` DSL function.  The `=>` separator divides the body
+from the target name.  The name is either a bare identifier (producing a named
+node) or a quoted string (producing an anonymous node):
+
+```bnf
+param_list -> '(' (name type => parameter)* ')' ;
+```
+
+generates:
+
+```js
+param_list: $ => seq('(', repeat(alias(seq($.name, $.type), $.parameter)), ')'),
+```
+
+With a quoted string name:
+
+```bnf
+kw_true -> ('t' 'r' 'u' 'e' => 'true') ;
+```
+
+generates:
+
+```js
+kw_true: $ => alias(seq('t', 'r', 'u', 'e'), 'true'),
+```
+
+Kleene operators and field labels compose with alias groups in the usual way.
 
 ### Not supported
 

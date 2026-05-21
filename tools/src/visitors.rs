@@ -147,6 +147,21 @@ fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
     Ok(Token(Box::new(inner)))
 }
 
+fn visit_alias_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+    let body = visit(
+        &node
+            .child_by_field_name("body")
+            .expect("aliasGroup has body field"),
+        source_code,
+    )?;
+    let alias_node = node
+        .child_by_field_name("alias")
+        .expect("aliasGroup has alias field");
+    let name_child = alias_node.child(0).expect("aliasName has a child");
+    let name = visit(&name_child, source_code)?;
+    Ok(Alias(Box::new(body), Box::new(name)))
+}
+
 fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     match node.kind() {
         "nonTerminal" => Ok(visit_non_terminal(node, source_code)),
@@ -156,6 +171,7 @@ fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> 
         "pattern" => Ok(visit_pattern(node, source_code)),
         "literal" => Ok(visit_literal(node, source_code)),
         "subSeq" => visit_symbol_subseq(node, source_code),
+        "aliasGroup" => visit_alias_group(node, source_code),
         "tokenExpr" => visit_token_expr(node, source_code),
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
     }
@@ -319,6 +335,38 @@ mod tests {
         assert_eq!(
             parse("rule -> items: expr* ;"),
             "rule -> field('items', repeat($.expr))"
+        );
+    }
+
+    #[test]
+    fn alias_group_nonterminal_name() {
+        assert_eq!(
+            parse("rule -> (a b => pair) ;"),
+            "rule -> alias(seq($.a, $.b), $.pair)"
+        );
+    }
+
+    #[test]
+    fn alias_group_literal_name() {
+        assert_eq!(
+            parse("rule -> (a b => 'pair') ;"),
+            "rule -> alias(seq($.a, $.b), 'pair')"
+        );
+    }
+
+    #[test]
+    fn alias_group_single_symbol() {
+        assert_eq!(
+            parse("rule -> (foo => bar) ;"),
+            "rule -> alias($.foo, $.bar)"
+        );
+    }
+
+    #[test]
+    fn alias_group_with_kleene() {
+        assert_eq!(
+            parse("rule -> (a b => pair)* ;"),
+            "rule -> repeat(alias(seq($.a, $.b), $.pair))"
         );
     }
 }

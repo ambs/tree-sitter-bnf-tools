@@ -1,0 +1,120 @@
+================================================================================
+Alias group with non-terminal name
+================================================================================
+
+rule -> (a b => name) ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (aliasGroup
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (nonTerminal))
+                (symbol
+                  content: (nonTerminal))))
+            alias: (aliasName
+              (nonTerminal))))))))
+
+================================================================================
+Alias group with literal name
+================================================================================
+
+rule -> (a b => "name") ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (aliasGroup
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (nonTerminal))
+                (symbol
+                  content: (nonTerminal))))
+            alias: (aliasName
+              (literal))))))))
+
+================================================================================
+Alias group with single symbol
+================================================================================
+
+rule -> (foo => bar) ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (aliasGroup
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (nonTerminal))))
+            alias: (aliasName
+              (nonTerminal))))))))
+
+================================================================================
+Alias group with Kleene operator
+================================================================================
+
+rule -> (a b => pair)* ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (aliasGroup
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (nonTerminal))
+                (symbol
+                  content: (nonTerminal))))
+            alias: (aliasName
+              (nonTerminal)))
+          kleene: (asterisk))))))
+
+================================================================================
+Alias group with field label
+================================================================================
+
+rule -> items:(a b => pair)* ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (aliasGroup
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (nonTerminal))
+                (symbol
+                  content: (nonTerminal))))
+            alias: (aliasName
+              (nonTerminal)))
+          kleene: (asterisk))))))
