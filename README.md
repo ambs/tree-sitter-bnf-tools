@@ -36,10 +36,28 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Zero or one (optional) | `?` | `','?` |
 | Grouping | `( )` | `('a' \| 'b')*` |
 | Token expression | `<< >>` | `<< /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>` |
+| Field label | `name: symbol` | `lhs: expr` |
 
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
 tree-sitter's `token()` DSL function.
+
+A field label annotates a symbol with a named field in the generated AST,
+mapping to tree-sitter's `field()` DSL function.  The colon must be attached
+to the label name (no space before it); a space after the colon is optional.
+
+```bnf
+assign -> target: name '=' value: expr ;
+```
+
+generates:
+
+```js
+assign: $ => seq(field('target', $.name), '=', field('value', $.expr)),
+```
+
+A Kleene operator applied to a labeled symbol wraps the whole quantified
+expression: `items: expr*` generates `field('items', repeat($.expr))`.
 
 ### Not supported
 
@@ -48,7 +66,6 @@ The following constructs from other BNF/EBNF variants are **not** recognised:
 | Construct | Example | Why it fails |
 |-----------|---------|--------------|
 | `::=` / `:` / `=` rule separator | `expr ::= term` | Only `->` is accepted |
-| Double-quoted literals | `"text"` | Only single-quoted `'text'` is accepted |
 | Angle-bracket non-terminals | `<expr>` | Only bare identifiers are accepted |
 | `[optional]` bracket notation | `['+'?]` | Use `?` instead: `'+'?` |
 | `{repetition}` curly-brace notation | `{term}` | Use `*` instead: `term*` |

@@ -97,12 +97,23 @@ fn visit_symbol(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, Parse
         .as_ref()
         .map(|n| n.kind())
         .unwrap_or("");
-    Ok(match kleene {
+    let with_kleene = match kleene {
         "plus" => OneOrMore(Box::new(symbol)),
         "asterisk" => ZeroOrMore(Box::new(symbol)),
         "questionMark" => Optional(Box::new(symbol)),
         _ => symbol,
-    })
+    };
+    Ok(
+        if let Some(label_node) = node.child_by_field_name("label") {
+            let text = label_node
+                .utf8_text(source_code.as_bytes())
+                .expect("valid UTF-8");
+            let name = text.trim_end_matches(':').to_string();
+            Field(name, Box::new(with_kleene))
+        } else {
+            with_kleene
+        },
+    )
 }
 
 fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
@@ -282,6 +293,32 @@ mod tests {
         assert_eq!(
             parse("a -> << /[0-9]/ >>+;"),
             "a -> repeat1(token(/[0-9]/))"
+        );
+    }
+
+    #[test]
+    fn field_label_on_nonterminal() {
+        assert_eq!(parse("rule -> lhs: expr ;"), "rule -> field('lhs', $.expr)");
+    }
+
+    #[test]
+    fn field_label_on_literal() {
+        assert_eq!(parse("rule -> key: 'foo' ;"), "rule -> field('key', 'foo')");
+    }
+
+    #[test]
+    fn multiple_field_labels() {
+        assert_eq!(
+            parse("rule -> lhs: expr '+' rhs: expr ;"),
+            "rule -> seq(field('lhs', $.expr), '+', field('rhs', $.expr))"
+        );
+    }
+
+    #[test]
+    fn field_label_with_kleene() {
+        assert_eq!(
+            parse("rule -> items: expr* ;"),
+            "rule -> field('items', repeat($.expr))"
         );
     }
 }

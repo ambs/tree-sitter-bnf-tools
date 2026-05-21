@@ -1,0 +1,125 @@
+================================================================================
+Field label on non-terminal
+================================================================================
+
+rule -> lhs: expr ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (nonTerminal))))))
+
+================================================================================
+Field label on literal
+================================================================================
+
+rule -> key: 'foo' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (literal))))))
+
+================================================================================
+Field label on pattern
+================================================================================
+
+rule -> name: /[a-z]+/ ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (pattern))))))
+
+================================================================================
+Multiple field labels in sequence
+================================================================================
+
+rule -> lhs: expr '+' rhs: expr ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (nonTerminal))
+        (symbol
+          content: (literal))
+        (symbol
+          label: (fieldLabel)
+          content: (nonTerminal))))))
+
+================================================================================
+Field label with Kleene star
+================================================================================
+
+rule -> items: expr* ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (nonTerminal)
+          kleene: (asterisk))))))
+
+================================================================================
+Field label with Kleene plus
+================================================================================
+
+rule -> args: expr+ ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (nonTerminal)
+          kleene: (plus))))))
+
+================================================================================
+Field label without space before content
+================================================================================
+
+rule -> lhs:expr ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (nonTerminal))))))

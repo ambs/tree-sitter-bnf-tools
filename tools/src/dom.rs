@@ -38,6 +38,7 @@ pub enum GrammarNode {
     ZeroOrMore(Box<GrammarNode>),
     OneOrMore(Box<GrammarNode>),
     Token(Box<GrammarNode>),
+    Field(String, Box<GrammarNode>),
 }
 
 impl Display for GrammarNode {
@@ -83,6 +84,9 @@ impl Display for GrammarNode {
             }
             GrammarNode::Token(inner) => {
                 write!(f, "token({})", inner)
+            }
+            GrammarNode::Field(name, inner) => {
+                write!(f, "field('{}', {})", name, inner)
             }
         }
     }
@@ -183,6 +187,14 @@ mod tests {
         assert_eq!(
             Token(Box::new(TerminalPattern("/[0-9]+/".into()))).to_string(),
             "token(/[0-9]+/)"
+        );
+    }
+
+    #[test]
+    fn field_display() {
+        assert_eq!(
+            Field("lhs".into(), Box::new(NonTerminal("expr".into()))).to_string(),
+            "field('lhs', $.expr)"
         );
     }
 
