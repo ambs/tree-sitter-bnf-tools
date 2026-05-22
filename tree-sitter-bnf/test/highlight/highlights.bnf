@@ -36,6 +36,10 @@ rule -> << /[0-9]+/ >> ;
 #       ^^ @punctuation.bracket
 #                   ^^ @punctuation.bracket
 
+rule -> '-' <<! /[0-9]+/ >> ;
+#           ^^^ @punctuation.bracket
+#                        ^^ @punctuation.bracket
+
 rule -> lhs: expr ;
 #       ^^^^ @label
 #            ^^^^ @variable

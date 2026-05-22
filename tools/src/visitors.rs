@@ -275,6 +275,20 @@ fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
     Ok(Token(Box::new(inner)))
 }
 
+/// Converts a `tokenImmediateExpr` node into a [`GrammarNode::TokenImmediate`] wrapping its body.
+fn visit_token_immediate_expr(
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
+    let inner = visit(
+        &node
+            .child_by_field_name("body")
+            .expect("tokenImmediateExpr has body field"),
+        source_code,
+    )?;
+    Ok(TokenImmediate(Box::new(inner)))
+}
+
 /// Converts a `precGroup` node into a [`GrammarNode::Prec`] wrapping its body.
 fn visit_prec_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let body = visit(
@@ -318,6 +332,7 @@ fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> 
         "subSeq" => visit_symbol_subseq(node, source_code),
         "aliasGroup" => visit_alias_group(node, source_code),
         "tokenExpr" => visit_token_expr(node, source_code),
+        "tokenImmediateExpr" => visit_token_immediate_expr(node, source_code),
         "precGroup" => visit_prec_group(node, source_code),
         "ruleBodyInner" => visit_rule_body(node, source_code),
         "symbolSeqInner" => visit_symbol_seq(node, source_code),
@@ -443,6 +458,30 @@ mod tests {
     #[test]
     fn token_expr_single_pattern() {
         assert_eq!(parse("a -> << /[0-9]+/ >>;"), "a -> token(/[0-9]+/)");
+    }
+
+    #[test]
+    fn token_immediate_expr_single_pattern() {
+        assert_eq!(
+            parse("a -> <<! /[0-9]+/ >>;"),
+            "a -> token.immediate(/[0-9]+/)"
+        );
+    }
+
+    #[test]
+    fn token_immediate_expr_sequence() {
+        assert_eq!(
+            parse("a -> <<! /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;"),
+            "a -> token.immediate(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/))"
+        );
+    }
+
+    #[test]
+    fn token_immediate_expr_literal() {
+        assert_eq!(
+            parse("negative -> '-' <<! /[0-9]+/ >>;"),
+            "negative -> seq('-', token.immediate(/[0-9]+/))"
+        );
     }
 
     #[test]

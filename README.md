@@ -36,6 +36,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Zero or one (optional) | `?` | `','?` |
 | Grouping | `( )` | `('a' \| 'b')*` |
 | Token expression | `<< >>` | `<< /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>` |
+| Token immediate expression | `<<! >>` | `'-' <<! /[0-9]+/ >>` |
 | Field label | `name: symbol` | `lhs: expr` |
 | Alias group | `(body => name)` | `(a b => pair)` |
 | Precedence (alternative) | `body %prec.TYPE [N]` | `expr '+' expr %prec.left 1` |
@@ -47,6 +48,21 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
 tree-sitter's `token()` DSL function.
+
+A `<<! >>` token immediate expression is like `<< >>` but additionally requires
+that no whitespace precedes the token. It maps to tree-sitter's
+`token.immediate()` DSL function and is typically used to bind a suffix tightly
+to the preceding token:
+
+```bnf
+negative -> '-' <<! /[0-9]+/ >> ;
+```
+
+generates:
+
+```js
+negative: $ => seq('-', token.immediate(/[0-9]+/)),
+```
 
 A field label annotates a symbol with a named field in the generated AST,
 mapping to tree-sitter's `field()` DSL function.  The colon must be attached
