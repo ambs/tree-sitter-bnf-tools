@@ -132,6 +132,7 @@ impl Display for Production {
 
 pub struct Grammar {
     pub productions: Vec<Production>,
+    pub conflicts: Vec<Vec<String>>,
 }
 
 impl Display for Grammar {
@@ -153,6 +154,19 @@ impl Display for Scaffold<'_> {
         writeln!(f, "module.exports = grammar({{")?;
         writeln!(f, "  name: \"{}\",", self.name)?;
         writeln!(f)?;
+        if !self.grammar.conflicts.is_empty() {
+            writeln!(f, "  conflicts: $ => [")?;
+            for group in &self.grammar.conflicts {
+                let items = group
+                    .iter()
+                    .map(|n| format!("$.{n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(f, "    [{items}],")?;
+            }
+            writeln!(f, "  ],")?;
+            writeln!(f)?;
+        }
         writeln!(f, "  rules: {{")?;
         for production in &self.grammar.productions {
             writeln!(f, "    {}: $ => {},", production.name, production.body)?;
@@ -326,6 +340,7 @@ mod tests {
                     body: NonTerminal("a".into()),
                 },
             ],
+            conflicts: vec![],
         };
         assert_eq!(g.to_string(), "\na -> 'x'\nb -> $.a");
     }
@@ -337,6 +352,7 @@ mod tests {
                 name: "expr".into(),
                 body: TerminalLiteral("'x'".into()),
             }],
+            conflicts: vec![],
         };
         assert_eq!(
             Scaffold { grammar: &g, name: "expr" }.to_string(),
@@ -357,6 +373,7 @@ mod tests {
                     body: NonTerminal("a".into()),
                 },
             ],
+            conflicts: vec![],
         };
         let out = Scaffold {
             grammar: &g,
@@ -376,6 +393,7 @@ mod tests {
                 name: "r".into(),
                 body: TerminalLiteral("'y'".into()),
             }],
+            conflicts: vec![],
         };
         let out = Scaffold {
             grammar: &g,
@@ -383,5 +401,64 @@ mod tests {
         }
         .to_string();
         assert!(out.contains("name: \"mygrammar\""));
+    }
+
+    #[test]
+    fn scaffold_no_conflicts_omits_key() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            conflicts: vec![],
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+        }
+        .to_string();
+        assert!(!out.contains("conflicts"));
+    }
+
+    #[test]
+    fn scaffold_with_single_conflict_group() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "expr".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            conflicts: vec![vec!["expr".into(), "term".into()]],
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+        }
+        .to_string();
+        assert!(out.contains("  conflicts: $ => ["));
+        assert!(out.contains("    [$.expr, $.term],"));
+        assert!(out.contains("  ],"));
+        // conflicts block appears before rules block
+        assert!(out.find("conflicts").unwrap() < out.find("rules").unwrap());
+    }
+
+    #[test]
+    fn scaffold_with_multiple_conflict_groups() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            conflicts: vec![
+                vec!["a".into(), "b".into()],
+                vec!["c".into(), "d".into(), "e".into()],
+            ],
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+        }
+        .to_string();
+        assert!(out.contains("    [$.a, $.b],"));
+        assert!(out.contains("    [$.c, $.d, $.e],"));
     }
 }

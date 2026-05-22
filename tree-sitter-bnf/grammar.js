@@ -15,7 +15,9 @@ module.exports = grammar({
   conflicts: $ => [[$.symbolSeq, $.symbolSeqInner]],
 
   rules: {
-    grammar: $ => repeat1($.rule),
+    grammar: $ => repeat1(choice($.rule, $.conflictsDirective)),
+    conflictsDirective: $ => seq('%conflicts', $.conflictGroup, repeat(seq(',', $.conflictGroup))),
+    conflictGroup: $ => seq('[', $.nonTerminal, repeat(seq(',', $.nonTerminal)), ']'),
     rule: $ => seq(field('name', $.nonTerminal), '->', field('body', $.ruleBody), ';'),
     ruleBody: $ => seq($.symbolSeq, repeat(seq('|', $.symbolSeq))),
     symbolSeq: $ => seq(repeat1($.symbol), optional(field('prec', $.precAnnotation))),

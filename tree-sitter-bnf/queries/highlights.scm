@@ -28,6 +28,11 @@
 (precKind) @keyword.operator
 (integer) @number
 
+; Conflicts directive
+"%conflicts" @keyword
+"[" @punctuation.bracket
+"]" @punctuation.bracket
+
 ; Structural punctuation
 "->" @operator
 "|" @operator

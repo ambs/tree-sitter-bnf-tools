@@ -40,6 +40,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Alias group | `(body => name)` | `(a b => pair)` |
 | Precedence (alternative) | `body %prec.TYPE [N]` | `expr '+' expr %prec.left 1` |
 | Precedence (sub-expression) | `(body %prec.TYPE [N])` | `(a \| b %prec 1)` |
+| Conflicts directive | `%conflicts [r1, r2, ...]` | `%conflicts [expr, term]` |
 
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
@@ -141,6 +142,36 @@ Precedence annotations compose with field labels, kleene operators, and alias gr
 ops: (expr '+' expr %prec.left 1)*          # field + kleene + prec
 rule -> (expr '+' expr %prec.left 1 => add) ; # prec + alias in one group
 ```
+
+### Conflicts directive
+
+The `%conflicts` directive declares groups of rules that the parser is expected
+to be ambiguous about, mapping to the `conflicts` field in the generated
+`grammar.js`. tree-sitter uses a GLR parser and will abort grammar generation
+if it encounters an unexpected ambiguity; listing the conflict explicitly allows
+it to resolve the ambiguity at parse time instead.
+
+Each directive declares one or more conflict groups, where each group is a
+bracketed list of two or more rule names:
+
+```bnf
+%conflicts [expr, term]
+%conflicts [foo, bar, baz], [a, b]
+```
+
+Multiple `%conflicts` lines are allowed and additive — all groups across all
+directives are collected into a single `conflicts` array:
+
+```js
+conflicts: $ => [
+  [$.expr, $.term],
+  [$.foo, $.bar, $.baz],
+  [$.a, $.b],
+],
+```
+
+A warning is printed to stderr for any rule name referenced in a `%conflicts`
+group that has no corresponding rule definition in the same file.
 
 ### Not supported
 
