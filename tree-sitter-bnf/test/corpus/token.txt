@@ -103,3 +103,68 @@ kw_if -> << 'if' >>;
               (symbolSeq
                 (symbol
                   content: (literal))))))))))
+
+================================================================================
+Token immediate expression with single pattern
+================================================================================
+
+negative -> '-' <<! /[0-9]+/ >>;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))
+        (symbol
+          content: (tokenImmediateExpr
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (pattern))))))))))
+
+================================================================================
+Token immediate expression with sequence
+================================================================================
+
+identifier -> <<! /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (tokenImmediateExpr
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (pattern))
+                (symbol
+                  content: (pattern))))))))))
+
+================================================================================
+Token immediate expression with Kleene plus
+================================================================================
+
+digits -> <<! /[0-9]/ >>+;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (tokenImmediateExpr
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (pattern)))))
+          kleene: (plus))))))

@@ -72,6 +72,8 @@ pub enum GrammarNode {
     OneOrMore(Box<GrammarNode>),
     /// `token(…)` — forces the inner expression to be lexed as a single token.
     Token(Box<GrammarNode>),
+    /// `token.immediate(…)` — like `token`, but only matches when no whitespace precedes it.
+    TokenImmediate(Box<GrammarNode>),
     /// `field('name', …)` — attaches a named field to a child node.
     Field(String, Box<GrammarNode>),
     /// `alias(body, name)` — renames a node in the syntax tree.
@@ -123,6 +125,9 @@ impl Display for GrammarNode {
             }
             GrammarNode::Token(inner) => {
                 write!(f, "token({})", inner)
+            }
+            GrammarNode::TokenImmediate(inner) => {
+                write!(f, "token.immediate({})", inner)
             }
             GrammarNode::Field(name, inner) => {
                 write!(f, "field('{}', {})", name, inner)
@@ -349,6 +354,14 @@ mod tests {
         assert_eq!(
             Token(Box::new(TerminalPattern("/[0-9]+/".into()))).to_string(),
             "token(/[0-9]+/)"
+        );
+    }
+
+    #[test]
+    fn token_immediate_display() {
+        assert_eq!(
+            TokenImmediate(Box::new(TerminalPattern("/[0-9]+/".into()))).to_string(),
+            "token.immediate(/[0-9]+/)"
         );
     }
 
