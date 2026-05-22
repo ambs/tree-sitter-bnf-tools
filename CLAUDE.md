@@ -32,6 +32,20 @@ Then create the branch from the updated main.
 - [ ] Branch is up to date with `main` (`git rebase main`)
 - [ ] `make check` passes
 
+## Function documentation (issue #70)
+
+All public and private functions/methods must have a `///` doc comment describing their
+purpose. Use standard Rust doc comment style:
+
+```rust
+/// Short one-line summary.
+fn foo() { ... }
+```
+
+The `missing_docs` lint (enabled in `Cargo.toml`) enforces this for public items.
+File-level `#![allow(missing_docs)]` suppresses it for modules not yet fully documented;
+remove the suppressor once all items in the file are covered.
+
 ## PR description rules
 
 - Never include unticked checklist items in a PR description.

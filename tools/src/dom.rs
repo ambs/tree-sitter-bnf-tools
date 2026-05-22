@@ -1,12 +1,23 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
+/// Errors that can occur while converting a tree-sitter BNF parse tree into the DOM.
 #[derive(Debug)]
 pub enum ParseError {
-    UnexpectedNodeType { expected: String, got: String },
+    /// A node had a different kind than required; carries the expected and actual kind strings.
+    UnexpectedNodeType {
+        /// The node kind that was required at this position.
+        expected: String,
+        /// The node kind that was actually encountered.
+        got: String,
+    },
+    /// A node kind was not recognised by any visitor branch.
     UnknownNodeKind(String),
+    /// The left-hand side of a production rule was not a non-terminal.
     MalformedProduction,
+    /// The source text contains tree-sitter syntax errors.
     SyntaxError,
+    /// The tree-sitter parser returned no tree for the input.
     ParseFailed,
 }
 
@@ -28,25 +39,43 @@ impl Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// The flavour of tree-sitter precedence annotation.
 pub enum PrecKind {
+    /// `prec(n, …)` — plain (non-associative) precedence.
     Plain,
+    /// `prec.left(n, …)` — left-associative precedence.
     Left,
+    /// `prec.right(n, …)` — right-associative precedence.
     Right,
+    /// `prec.dynamic(n, …)` — dynamic precedence resolved at runtime.
     Dynamic,
 }
 
+/// A node in the grammar rule tree, mirroring tree-sitter combinator functions.
 pub enum GrammarNode {
+    /// `seq(…)` — an ordered sequence of sub-nodes.
     Sequence(Vec<GrammarNode>),
+    /// `choice(…)` — an ordered set of alternatives.
     Choice(Vec<GrammarNode>),
+    /// `optional(…)` — zero or one occurrence.
     Optional(Box<GrammarNode>),
+    /// A quoted string literal terminal (single- or double-quoted).
     TerminalLiteral(String),
+    /// A regex pattern terminal enclosed in `/…/`.
     TerminalPattern(String),
+    /// A reference to another grammar rule (`$.name`).
     NonTerminal(String),
+    /// `repeat(…)` — zero or more occurrences (Kleene star).
     ZeroOrMore(Box<GrammarNode>),
+    /// `repeat1(…)` — one or more occurrences (Kleene plus).
     OneOrMore(Box<GrammarNode>),
+    /// `token(…)` — forces the inner expression to be lexed as a single token.
     Token(Box<GrammarNode>),
+    /// `field('name', …)` — attaches a named field to a child node.
     Field(String, Box<GrammarNode>),
+    /// `alias(body, name)` — renames a node in the syntax tree.
     Alias(Box<GrammarNode>, Box<GrammarNode>),
+    /// `prec[.left|.right|.dynamic](level, …)` — precedence annotation.
     Prec(PrecKind, Option<u32>, Box<GrammarNode>),
 }
 
@@ -116,8 +145,11 @@ impl Display for GrammarNode {
     }
 }
 
+/// A single named grammar rule (`name -> body`).
 pub struct Production {
+    /// The rule name (left-hand side of `->`)
     pub name: String,
+    /// The rule body (right-hand side of `->`).
     pub body: GrammarNode,
 }
 
@@ -130,8 +162,11 @@ impl Display for Production {
     }
 }
 
+/// The complete grammar: all productions and any declared conflict groups.
 pub struct Grammar {
+    /// Ordered list of grammar rules.
     pub productions: Vec<Production>,
+    /// Conflict groups declared with `%conflicts`; each inner `Vec` is one group.
     pub conflicts: Vec<Vec<String>>,
 }
 
@@ -144,8 +179,11 @@ impl Display for Grammar {
     }
 }
 
+/// A wrapper that renders a [`Grammar`] as a complete `grammar.js` file.
 pub struct Scaffold<'a> {
+    /// The grammar to render.
     pub grammar: &'a Grammar,
+    /// The grammar name passed to tree-sitter's `grammar({ name: … })`.
     pub name: &'a str,
 }
 

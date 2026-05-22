@@ -4,6 +4,7 @@ use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Grammar, ParseError, PrecKind, Production};
 use tree_sitter::Node;
 
+/// Returns `Ok(())` if `node.kind() == node_type`, otherwise an [`ParseError::UnexpectedNodeType`] error.
 fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
     if node.kind() != node_type {
         Err(ParseError::UnexpectedNodeType {
@@ -15,6 +16,7 @@ fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
     }
 }
 
+/// Converts the root `grammar` tree-sitter node into a [`Grammar`] DOM.
 pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, ParseError> {
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar {
@@ -40,6 +42,7 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
     Ok(grammar)
 }
 
+/// Returns a warning string for every rule name referenced in `%conflicts` that has no definition.
 fn conflicts_check(grammar: &Grammar) -> Vec<String> {
     let known: HashSet<&str> = grammar
         .productions
@@ -59,12 +62,14 @@ fn conflicts_check(grammar: &Grammar) -> Vec<String> {
     warnings
 }
 
+/// Runs all grammar-level checks and prints any warnings to stderr.
 fn grammar_check(grammar: &Grammar) {
     for warning in conflicts_check(grammar) {
         eprintln!("{warning}");
     }
 }
 
+/// Converts a `conflictsDirective` node into a list of conflict groups (lists of rule names).
 fn visit_conflicts_directive(
     node: &Node<'_>,
     source_code: &str,
@@ -89,6 +94,7 @@ fn visit_conflicts_directive(
     Ok(groups)
 }
 
+/// Converts a `rule` node into a [`Production`].
 fn visit_rule(node: &Node<'_>, source_code: &str) -> Result<Production, ParseError> {
     ensure_node_type(node, "rule")?;
     let rule_name = node
@@ -104,16 +110,19 @@ fn visit_rule(node: &Node<'_>, source_code: &str) -> Result<Production, ParseErr
     Ok(Production { name, body })
 }
 
+/// Converts a `nonTerminal` node into a [`GrammarNode::NonTerminal`].
 fn visit_non_terminal(node: &Node<'_>, source_code: &str) -> GrammarNode {
     let text = node.utf8_text(source_code.as_bytes()).expect("valid UTF-8");
     NonTerminal(text.to_string())
 }
 
+/// Converts a `pattern` node into a [`GrammarNode::TerminalPattern`].
 fn visit_pattern(node: &Node<'_>, source_code: &str) -> GrammarNode {
     let text = node.utf8_text(source_code.as_bytes()).expect("valid UTF-8");
     TerminalPattern(text.to_string())
 }
 
+/// Normalises a BNF literal to tree-sitter single-quote form, converting double-quoted strings.
 fn normalize_literal(text: &str) -> String {
     if text.starts_with('"') {
         let inner = &text[1..text.len() - 1];
@@ -124,11 +133,13 @@ fn normalize_literal(text: &str) -> String {
     }
 }
 
+/// Converts a `literal` node into a [`GrammarNode::TerminalLiteral`], normalising quotes.
 fn visit_literal(node: &Node<'_>, source_code: &str) -> GrammarNode {
     let text = node.utf8_text(source_code.as_bytes()).expect("valid UTF-8");
     TerminalLiteral(normalize_literal(text))
 }
 
+/// Converts a `ruleBody` or `ruleBodyInner` node into a [`GrammarNode`], wrapping multiple alternatives in [`GrammarNode::Choice`].
 fn visit_rule_body(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let count = node.child_count() as u32;
     if count == 1 {
@@ -147,6 +158,7 @@ fn visit_rule_body(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, Pa
     }
 }
 
+/// Converts a `symbol` node, applying any Kleene quantifier and optional field label.
 fn visit_symbol(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let symbol = visit(
         &node
@@ -178,6 +190,7 @@ fn visit_symbol(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, Parse
     )
 }
 
+/// Extracts the precedence kind and optional numeric level from a `precAnnotation` node.
 fn parse_prec_annotation(
     node: &Node<'_>,
     source_code: &str,
@@ -207,6 +220,7 @@ fn parse_prec_annotation(
     Ok((kind, level))
 }
 
+/// Converts a `symbolSeq` or `symbolSeqInner` node into a sequence (or single node), wrapping with precedence if annotated.
 fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let prec_annotation = if let Some(n) = node.child_by_field_name("prec") {
         Some(parse_prec_annotation(&n, source_code)?)
@@ -236,6 +250,7 @@ fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
     })
 }
 
+/// Converts a `subSeq` node by delegating to its `body` field.
 fn visit_symbol_subseq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     visit(
         &node
@@ -245,6 +260,7 @@ fn visit_symbol_subseq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode
     )
 }
 
+/// Converts a `tokenExpr` node into a [`GrammarNode::Token`] wrapping its body.
 fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let inner = visit(
         &node
@@ -255,6 +271,7 @@ fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
     Ok(Token(Box::new(inner)))
 }
 
+/// Converts a `precGroup` node into a [`GrammarNode::Prec`] wrapping its body.
 fn visit_prec_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let body = visit(
         &node
@@ -269,6 +286,7 @@ fn visit_prec_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
     Ok(Prec(kind, level, Box::new(body)))
 }
 
+/// Converts an `aliasGroup` node into a [`GrammarNode::Alias`].
 fn visit_alias_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     let body = visit(
         &node
@@ -284,6 +302,7 @@ fn visit_alias_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, 
     Ok(Alias(Box::new(body), Box::new(name)))
 }
 
+/// Dispatches a tree-sitter node to the appropriate typed visitor by node kind.
 fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
     match node.kind() {
         "nonTerminal" => Ok(visit_non_terminal(node, source_code)),

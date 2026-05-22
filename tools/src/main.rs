@@ -1,4 +1,8 @@
+//! CLI tool for converting BNF grammars to tree-sitter `grammar.js` notation.
+
+/// DOM types representing the BNF grammar as a Rust value tree.
 mod dom;
+/// Visitor functions that walk a tree-sitter parse tree and build the DOM.
 mod visitors;
 
 use std::error::Error;
@@ -14,6 +18,7 @@ use clap::Parser;
 use crate::dom::{ParseError, Scaffold};
 use crate::visitors::visit_grammar;
 
+/// Command-line arguments for the `bnf-tools` binary.
 #[derive(Parser, Debug)]
 #[command(about = "Convert BNF grammars to tree-sitter notation")]
 struct Args {
@@ -37,12 +42,14 @@ struct Args {
     output_dir: Option<String>,
 }
 
+/// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
 fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
     output_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(grammar_name))
 }
 
+/// An error produced when an external command (e.g. `tree-sitter generate`) fails.
 #[derive(Debug)]
 struct CommandError(String);
 
@@ -54,6 +61,7 @@ impl fmt::Display for CommandError {
 
 impl Error for CommandError {}
 
+/// Writes `grammar.js` to the output directory and runs `tree-sitter generate` inside it.
 fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(), Box<dyn Error>> {
     let dir = resolve_output_dir(output_dir, scaffold.name);
     fs::create_dir_all(&dir)?;
@@ -69,6 +77,7 @@ fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(),
     Ok(())
 }
 
+/// Returns the grammar name: the explicit override if provided, or the filename stem.
 fn grammar_name(filename: &str, override_name: Option<&str>) -> String {
     override_name.map(str::to_string).unwrap_or_else(|| {
         Path::new(filename)
