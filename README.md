@@ -38,6 +38,8 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Token expression | `<< >>` | `<< /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>` |
 | Field label | `name: symbol` | `lhs: expr` |
 | Alias group | `(body => name)` | `(a b => pair)` |
+| Precedence (alternative) | `body %prec.TYPE [N]` | `expr '+' expr %prec.left 1` |
+| Precedence (sub-expression) | `(body %prec.TYPE [N])` | `(a \| b %prec 1)` |
 
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
@@ -88,6 +90,57 @@ kw_true: $ => alias(seq('t', 'r', 'u', 'e'), 'true'),
 ```
 
 Kleene operators and field labels compose with alias groups in the usual way.
+
+### Precedence annotations
+
+Precedence annotations map to tree-sitter's `prec`, `prec.left`, `prec.right`, and
+`prec.dynamic` DSL functions.
+
+**Annotating a whole alternative** (no parentheses needed):
+
+```bnf
+expr -> expr '+' expr  %prec.left 1
+      | expr '*' expr  %prec.left 2
+      | expr '^' expr  %prec.right 3
+      | '-' expr       %prec 4
+      ;
+```
+
+generates:
+
+```js
+expr: $ => choice(
+  prec.left(1, seq($.expr, '+', $.expr)),
+  prec.left(2, seq($.expr, '*', $.expr)),
+  prec.right(3, seq($.expr, '^', $.expr)),
+  prec(4, seq('-', $.expr)),
+),
+```
+
+**Annotating a sub-expression** using parentheses — `%prec` inside `()` applies to the
+whole body, mirroring the `=> alias` syntax:
+
+```bnf
+rule -> (a | b %prec 1) c ;    # prec wraps choice(a, b)
+rule -> (a | (b %prec 1)) c ;  # prec wraps only b
+```
+
+The four annotation kinds follow tree-sitter's naming. The level is optional for
+`.left` and `.right` (defaulting to 0), and required for `prec` and `.dynamic`:
+
+| Annotation | Level | Maps to |
+|---|---|---|
+| `%prec N` | required | `prec(N, ...)` |
+| `%prec.left` or `%prec.left N` | optional | `prec.left([N,] ...)` |
+| `%prec.right` or `%prec.right N` | optional | `prec.right([N,] ...)` |
+| `%prec.dynamic N` | required | `prec.dynamic(N, ...)` |
+
+Precedence annotations compose with field labels, kleene operators, and alias groups:
+
+```bnf
+ops: (expr '+' expr %prec.left 1)*          # field + kleene + prec
+rule -> (expr '+' expr %prec.left 1 => add) ; # prec + alias in one group
+```
 
 ### Not supported
 

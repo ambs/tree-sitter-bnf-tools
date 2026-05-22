@@ -1,0 +1,307 @@
+================================================================================
+prec suffix
+================================================================================
+
+expr -> a b %prec 2 ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          level: (integer))))))
+
+================================================================================
+prec.left suffix with level
+================================================================================
+
+expr -> a '+' a %prec.left 1 ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (literal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          level: (integer))))))
+
+================================================================================
+prec.right suffix with level
+================================================================================
+
+expr -> a '^' a %prec.right 3 ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (literal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          level: (integer))))))
+
+================================================================================
+prec.dynamic suffix with level
+================================================================================
+
+expr -> a b %prec.dynamic 5 ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          level: (integer))))))
+
+================================================================================
+prec.left suffix without level
+================================================================================
+
+expr -> a b %prec.left ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind))))))
+
+================================================================================
+prec.right suffix without level
+================================================================================
+
+expr -> a b %prec.right ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind))))))
+
+================================================================================
+prec suffix on first alternative only
+================================================================================
+
+expr -> a %prec 1 | b ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          level: (integer)))
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+precGroup wrapping choice
+================================================================================
+
+rule -> (a | b %prec 1) c ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (precGroup
+            body: (ruleBodyInner
+              (symbolSeqInner
+                (symbol
+                  content: (nonTerminal)))
+              (symbolSeqInner
+                (symbol
+                  content: (nonTerminal))))
+            annotation: (precAnnotation
+              kind: (precKind)
+              level: (integer))))
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+precGroup without level
+================================================================================
+
+rule -> (a b %prec.left) ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (precGroup
+            body: (ruleBodyInner
+              (symbolSeqInner
+                (symbol
+                  content: (nonTerminal))
+                (symbol
+                  content: (nonTerminal))))
+            annotation: (precAnnotation
+              kind: (precKind))))))))
+
+================================================================================
+precGroup with kleene operator
+================================================================================
+
+rule -> (a %prec 1)* ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (precGroup
+            body: (ruleBodyInner
+              (symbolSeqInner
+                (symbol
+                  content: (nonTerminal))))
+            annotation: (precAnnotation
+              kind: (precKind)
+              level: (integer)))
+          kleene: (asterisk))))))
+
+================================================================================
+precGroup with field label
+================================================================================
+
+rule -> items:(a %prec 1)* ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          label: (fieldLabel)
+          content: (precGroup
+            body: (ruleBodyInner
+              (symbolSeqInner
+                (symbol
+                  content: (nonTerminal))))
+            annotation: (precAnnotation
+              kind: (precKind)
+              level: (integer)))
+          kleene: (asterisk))))))
+
+================================================================================
+precGroup combined with alias
+================================================================================
+
+rule -> (a b %prec.left 1 => op) ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (aliasGroup
+            body: (ruleBody
+              (symbolSeq
+                (symbol
+                  content: (nonTerminal))
+                (symbol
+                  content: (nonTerminal))
+                prec: (precAnnotation
+                  kind: (precKind)
+                  level: (integer))))
+            alias: (aliasName
+              (nonTerminal))))))))
+
+================================================================================
+nested precGroups
+================================================================================
+
+rule -> (a | (b %prec 1)) ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (subSeq
+            body: (ruleBodyInner
+              (symbolSeqInner
+                (symbol
+                  content: (nonTerminal)))
+              (symbolSeqInner
+                (symbol
+                  content: (precGroup
+                    body: (ruleBodyInner
+                      (symbolSeqInner
+                        (symbol
+                          content: (nonTerminal))))
+                    annotation: (precAnnotation
+                      kind: (precKind)
+                      level: (integer))))))))))))

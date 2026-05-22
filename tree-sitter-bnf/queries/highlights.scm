@@ -23,6 +23,11 @@
 (aliasName (nonTerminal) @type)
 "=>" @operator
 
+; Precedence annotations
+"%" @operator
+(precKind) @keyword.operator
+(integer) @number
+
 ; Structural punctuation
 "->" @operator
 "|" @operator

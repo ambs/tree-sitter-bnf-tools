@@ -45,3 +45,13 @@ rule -> (a b => name) ;
 #            ^^ @operator
 #               ^^^^ @type
 #                   ^ @punctuation.bracket
+
+rule -> a b %prec.left 1 ;
+#           ^ @operator
+#            ^^^^^^^^^ @keyword.operator
+#                      ^ @number
+
+rule -> (a | b %prec 2) ;
+#              ^ @operator
+#               ^^^^ @keyword.operator
+#                    ^ @number
