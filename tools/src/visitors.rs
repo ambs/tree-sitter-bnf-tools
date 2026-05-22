@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Grammar, ParseError, PrecKind, Production};
 use tree_sitter::Node;
@@ -17,14 +19,74 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar {
         productions: Vec::new(),
+        conflicts: Vec::new(),
     };
     let count = node.child_count() as u32;
     for i in 0..count {
         let child = node.child(i).expect("child index in bounds");
-        let production = visit_rule(&child, source_code)?;
-        grammar.productions.push(production);
+        match child.kind() {
+            "rule" => {
+                grammar.productions.push(visit_rule(&child, source_code)?);
+            }
+            "conflictsDirective" => {
+                grammar
+                    .conflicts
+                    .extend(visit_conflicts_directive(&child, source_code)?);
+            }
+            _ => {}
+        }
     }
+    grammar_check(&grammar);
     Ok(grammar)
+}
+
+fn conflicts_check(grammar: &Grammar) -> Vec<String> {
+    let known: HashSet<&str> = grammar
+        .productions
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    let mut warnings = Vec::new();
+    for group in &grammar.conflicts {
+        for name in group {
+            if !known.contains(name.as_str()) {
+                warnings.push(format!(
+                    "warning: %conflicts references undefined rule '{name}'"
+                ));
+            }
+        }
+    }
+    warnings
+}
+
+fn grammar_check(grammar: &Grammar) {
+    for warning in conflicts_check(grammar) {
+        eprintln!("{warning}");
+    }
+}
+
+fn visit_conflicts_directive(
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<Vec<Vec<String>>, ParseError> {
+    let mut groups = Vec::new();
+    for i in 0..node.named_child_count() as u32 {
+        let child = node.named_child(i).expect("named child index in bounds");
+        if child.kind() == "conflictGroup" {
+            let names = (0..child.named_child_count() as u32)
+                .map(|j| {
+                    child
+                        .named_child(j)
+                        .expect("named child index in bounds")
+                        .utf8_text(source_code.as_bytes())
+                        .expect("valid UTF-8")
+                        .to_string()
+                })
+                .collect();
+            groups.push(names);
+        }
+    }
+    Ok(groups)
 }
 
 fn visit_rule(node: &Node<'_>, source_code: &str) -> Result<Production, ParseError> {
@@ -255,6 +317,15 @@ mod tests {
             .to_string()
             .trim()
             .to_string()
+    }
+
+    fn parse_grammar(src: &str) -> crate::dom::Grammar {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_bnf::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        visit_grammar(&tree.root_node(), src).unwrap()
     }
 
     #[test]
@@ -500,6 +571,60 @@ mod tests {
             parse("rule -> (a %prec 1)* ;"),
             "rule -> repeat(prec(1, $.a))"
         );
+    }
+
+    #[test]
+    fn conflicts_single_group() {
+        let g = parse_grammar("%conflicts [a, b]\na -> 'x' ;");
+        assert_eq!(g.conflicts, vec![vec!["a", "b"]]);
+    }
+
+    #[test]
+    fn conflicts_three_rules_in_group() {
+        let g = parse_grammar("%conflicts [a, b, c]\na -> 'x' ;");
+        assert_eq!(g.conflicts, vec![vec!["a", "b", "c"]]);
+    }
+
+    #[test]
+    fn conflicts_multiple_groups_one_line() {
+        let g = parse_grammar("%conflicts [a, b], [c, d]\na -> 'x' ;");
+        assert_eq!(g.conflicts, vec![vec!["a", "b"], vec!["c", "d"]]);
+    }
+
+    #[test]
+    fn conflicts_multiple_directives_are_additive() {
+        let g = parse_grammar("%conflicts [a, b]\n%conflicts [c, d]\na -> 'x' ;");
+        assert_eq!(g.conflicts, vec![vec!["a", "b"], vec!["c", "d"]]);
+    }
+
+    #[test]
+    fn conflicts_interleaved_with_rules() {
+        let g = parse_grammar("a -> 'x' ;\n%conflicts [a, b]\nb -> 'y' ;");
+        assert_eq!(g.conflicts, vec![vec!["a", "b"]]);
+        assert_eq!(g.productions.len(), 2);
+    }
+
+    #[test]
+    fn conflicts_undefined_rule_still_parses() {
+        let g = parse_grammar("%conflicts [a, ghost]\na -> 'x' ;");
+        assert_eq!(g.conflicts, vec![vec!["a", "ghost"]]);
+    }
+
+    #[test]
+    fn conflicts_check_warns_on_undefined_rule() {
+        let g = parse_grammar("%conflicts [a, ghost]\na -> 'x' ;");
+        let warnings = super::conflicts_check(&g);
+        assert_eq!(
+            warnings,
+            vec!["warning: %conflicts references undefined rule 'ghost'"]
+        );
+    }
+
+    #[test]
+    fn conflicts_check_no_warnings_when_all_rules_defined() {
+        let g = parse_grammar("%conflicts [a, b]\na -> 'x' ;\nb -> 'y' ;");
+        let warnings = super::conflicts_check(&g);
+        assert!(warnings.is_empty());
     }
 
     #[test]

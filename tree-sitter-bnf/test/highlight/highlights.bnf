@@ -55,3 +55,14 @@ rule -> (a | b %prec 2) ;
 #              ^ @operator
 #               ^^^^ @keyword.operator
 #                    ^ @number
+
+%conflicts [expr, term]
+# <- @keyword
+#          ^ @punctuation.bracket
+#                     ^ @punctuation.bracket
+
+%conflicts [a, b], [c, d]
+#          ^ @punctuation.bracket
+#               ^ @punctuation.bracket
+#                  ^ @punctuation.bracket
+#                       ^ @punctuation.bracket

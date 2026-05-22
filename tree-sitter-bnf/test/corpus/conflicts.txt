@@ -1,0 +1,120 @@
+================================================================================
+Single group, two rules
+================================================================================
+
+%conflicts [expr, term]
+expr -> term ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (conflictsDirective
+    (conflictGroup
+      (nonTerminal)
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Single group, three rules
+================================================================================
+
+%conflicts [a, b, c]
+a -> b ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (conflictsDirective
+    (conflictGroup
+      (nonTerminal)
+      (nonTerminal)
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple groups on one directive
+================================================================================
+
+%conflicts [a, b], [c, d]
+a -> b ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (conflictsDirective
+    (conflictGroup
+      (nonTerminal)
+      (nonTerminal))
+    (conflictGroup
+      (nonTerminal)
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple conflicts directives
+================================================================================
+
+%conflicts [a, b]
+%conflicts [c, d]
+a -> b ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (conflictsDirective
+    (conflictGroup
+      (nonTerminal)
+      (nonTerminal)))
+  (conflictsDirective
+    (conflictGroup
+      (nonTerminal)
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Directive interleaved with rules
+================================================================================
+
+a -> b ;
+%conflicts [a, b]
+b -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal)))))
+  (conflictsDirective
+    (conflictGroup
+      (nonTerminal)
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
