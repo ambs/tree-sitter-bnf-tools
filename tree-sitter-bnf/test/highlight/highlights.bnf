@@ -66,3 +66,8 @@ rule -> (a | b %prec 2) ;
 #               ^ @punctuation.bracket
 #                  ^ @punctuation.bracket
 #                       ^ @punctuation.bracket
+
+%inline _helper, _wrapper
+# <- @keyword
+#       ^^^^^^^ @variable
+#                ^^^^^^^^ @variable

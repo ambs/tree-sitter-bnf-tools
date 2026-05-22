@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
@@ -162,12 +163,60 @@ impl Display for Production {
     }
 }
 
-/// The complete grammar: all productions and any declared conflict groups.
+/// The complete grammar: all productions and any declared conflict or inline groups.
 pub struct Grammar {
     /// Ordered list of grammar rules.
     pub productions: Vec<Production>,
     /// Conflict groups declared with `%conflicts`; each inner `Vec` is one group.
     pub conflicts: Vec<Vec<String>>,
+    /// Rule names declared with `%inline` that should be inlined at every call site.
+    pub inline: Vec<String>,
+}
+
+impl Grammar {
+    /// Creates an empty grammar with no productions, conflicts, or inline rules.
+    pub fn new() -> Self {
+        Self {
+            productions: Vec::new(),
+            conflicts: Vec::new(),
+            inline: Vec::new(),
+        }
+    }
+
+    /// Returns the set of all defined rule names, used for cross-reference checks.
+    pub fn known_rules(&self) -> HashSet<&str> {
+        self.productions.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    /// Returns a warning for every rule name in `%conflicts` that has no definition.
+    fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<String> {
+        self.conflicts
+            .iter()
+            .flatten()
+            .filter(|name| !known.contains(name.as_str()))
+            .map(|name| format!("warning: %conflicts references undefined rule '{name}'"))
+            .collect()
+    }
+
+    /// Returns a warning for every rule name in `%inline` that has no definition.
+    fn inline_check(&self, known: &HashSet<&str>) -> Vec<String> {
+        self.inline
+            .iter()
+            .filter(|name| !known.contains(name.as_str()))
+            .map(|name| format!("warning: %inline references undefined rule '{name}'"))
+            .collect()
+    }
+
+    /// Runs all cross-reference checks and prints any warnings to stderr.
+    pub fn check(&self) {
+        let known = self.known_rules();
+        for warning in self.conflicts_check(&known) {
+            eprintln!("{warning}");
+        }
+        for warning in self.inline_check(&known) {
+            eprintln!("{warning}");
+        }
+    }
 }
 
 impl Display for Grammar {
@@ -192,6 +241,17 @@ impl Display for Scaffold<'_> {
         writeln!(f, "module.exports = grammar({{")?;
         writeln!(f, "  name: \"{}\",", self.name)?;
         writeln!(f)?;
+        if !self.grammar.inline.is_empty() {
+            let items = self
+                .grammar
+                .inline
+                .iter()
+                .map(|n| format!("$.{n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(f, "  inline: $ => [{items}],")?;
+            writeln!(f)?;
+        }
         if !self.grammar.conflicts.is_empty() {
             writeln!(f, "  conflicts: $ => [")?;
             for group in &self.grammar.conflicts {
@@ -378,7 +438,7 @@ mod tests {
                     body: NonTerminal("a".into()),
                 },
             ],
-            conflicts: vec![],
+            ..Grammar::new()
         };
         assert_eq!(g.to_string(), "\na -> 'x'\nb -> $.a");
     }
@@ -390,7 +450,7 @@ mod tests {
                 name: "expr".into(),
                 body: TerminalLiteral("'x'".into()),
             }],
-            conflicts: vec![],
+            ..Grammar::new()
         };
         assert_eq!(
             Scaffold { grammar: &g, name: "expr" }.to_string(),
@@ -411,7 +471,7 @@ mod tests {
                     body: NonTerminal("a".into()),
                 },
             ],
-            conflicts: vec![],
+            ..Grammar::new()
         };
         let out = Scaffold {
             grammar: &g,
@@ -431,7 +491,7 @@ mod tests {
                 name: "r".into(),
                 body: TerminalLiteral("'y'".into()),
             }],
-            conflicts: vec![],
+            ..Grammar::new()
         };
         let out = Scaffold {
             grammar: &g,
@@ -448,7 +508,7 @@ mod tests {
                 name: "a".into(),
                 body: TerminalLiteral("'x'".into()),
             }],
-            conflicts: vec![],
+            ..Grammar::new()
         };
         let out = Scaffold {
             grammar: &g,
@@ -466,6 +526,7 @@ mod tests {
                 body: TerminalLiteral("'x'".into()),
             }],
             conflicts: vec![vec!["expr".into(), "term".into()]],
+            ..Grammar::new()
         };
         let out = Scaffold {
             grammar: &g,
@@ -490,6 +551,7 @@ mod tests {
                 vec!["a".into(), "b".into()],
                 vec!["c".into(), "d".into(), "e".into()],
             ],
+            ..Grammar::new()
         };
         let out = Scaffold {
             grammar: &g,
@@ -498,5 +560,71 @@ mod tests {
         .to_string();
         assert!(out.contains("    [$.a, $.b],"));
         assert!(out.contains("    [$.c, $.d, $.e],"));
+    }
+
+    #[test]
+    fn conflicts_check_warns_on_undefined_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            conflicts: vec![vec!["a".into(), "ghost".into()]],
+            ..Grammar::new()
+        };
+        let warnings = g.conflicts_check(&g.known_rules());
+        assert_eq!(
+            warnings,
+            vec!["warning: %conflicts references undefined rule 'ghost'"]
+        );
+    }
+
+    #[test]
+    fn conflicts_check_no_warnings_when_all_rules_defined() {
+        let g = Grammar {
+            productions: vec![
+                Production {
+                    name: "a".into(),
+                    body: TerminalLiteral("'x'".into()),
+                },
+                Production {
+                    name: "b".into(),
+                    body: TerminalLiteral("'y'".into()),
+                },
+            ],
+            conflicts: vec![vec!["a".into(), "b".into()]],
+            ..Grammar::new()
+        };
+        assert!(g.conflicts_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn inline_check_warns_on_undefined_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            inline: vec!["ghost".into()],
+            ..Grammar::new()
+        };
+        let warnings = g.inline_check(&g.known_rules());
+        assert_eq!(
+            warnings,
+            vec!["warning: %inline references undefined rule 'ghost'"]
+        );
+    }
+
+    #[test]
+    fn inline_check_no_warnings_when_all_rules_defined() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            inline: vec!["a".into()],
+            ..Grammar::new()
+        };
+        assert!(g.inline_check(&g.known_rules()).is_empty());
     }
 }
