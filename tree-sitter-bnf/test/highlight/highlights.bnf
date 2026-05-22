@@ -71,3 +71,8 @@ rule -> (a | b %prec 2) ;
 # <- @keyword
 #       ^^^^^^^ @variable
 #                ^^^^^^^^ @variable
+
+%supertypes expression, statement
+# <- @keyword
+#           ^^^^^^^^^^ @variable
+#                       ^^^^^^^^^ @variable
