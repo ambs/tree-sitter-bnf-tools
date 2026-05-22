@@ -1,5 +1,5 @@
 use crate::dom::GrammarNode::{self, *};
-use crate::dom::{Grammar, ParseError, Production};
+use crate::dom::{Grammar, ParseError, PrecKind, Production};
 use tree_sitter::Node;
 
 fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
@@ -116,16 +116,62 @@ fn visit_symbol(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, Parse
     )
 }
 
-fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
-    let count = node.child_count() as u32;
-    if count == 1 {
-        visit(&node.child(0).expect("child 0 exists"), source_code)
+fn parse_prec_annotation(
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<(PrecKind, Option<u32>), ParseError> {
+    let kind_node = node
+        .child_by_field_name("kind")
+        .expect("precAnnotation has kind field");
+    let kind_text = kind_node
+        .utf8_text(source_code.as_bytes())
+        .expect("valid UTF-8");
+    let kind = match kind_text {
+        "prec" => PrecKind::Plain,
+        "prec.left" => PrecKind::Left,
+        "prec.right" => PrecKind::Right,
+        "prec.dynamic" => PrecKind::Dynamic,
+        other => return Err(ParseError::UnknownNodeKind(other.to_string())),
+    };
+    let level = if let Some(n) = node.child_by_field_name("level") {
+        let text = n.utf8_text(source_code.as_bytes()).expect("valid UTF-8");
+        Some(
+            text.parse::<u32>()
+                .map_err(|_| ParseError::MalformedProduction)?,
+        )
     } else {
-        let seq = (0..count)
+        None
+    };
+    Ok((kind, level))
+}
+
+fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+    let prec_annotation = if let Some(n) = node.child_by_field_name("prec") {
+        Some(parse_prec_annotation(&n, source_code)?)
+    } else {
+        None
+    };
+
+    let count = node.child_count() as u32;
+    let symbol_count = if prec_annotation.is_some() {
+        count - 1
+    } else {
+        count
+    };
+
+    let body = if symbol_count == 1 {
+        visit(&node.child(0).expect("child 0 exists"), source_code)?
+    } else {
+        let seq = (0..symbol_count)
             .map(|i| visit(&node.child(i).expect("child index in bounds"), source_code))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Sequence(seq))
-    }
+        Sequence(seq)
+    };
+
+    Ok(match prec_annotation {
+        Some((kind, level)) => Prec(kind, level, Box::new(body)),
+        None => body,
+    })
 }
 
 fn visit_symbol_subseq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
@@ -145,6 +191,20 @@ fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
         source_code,
     )?;
     Ok(Token(Box::new(inner)))
+}
+
+fn visit_prec_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+    let body = visit(
+        &node
+            .child_by_field_name("body")
+            .expect("precGroup has body field"),
+        source_code,
+    )?;
+    let annotation = node
+        .child_by_field_name("annotation")
+        .expect("precGroup has annotation field");
+    let (kind, level) = parse_prec_annotation(&annotation, source_code)?;
+    Ok(Prec(kind, level, Box::new(body)))
 }
 
 fn visit_alias_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
@@ -173,6 +233,9 @@ fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> 
         "subSeq" => visit_symbol_subseq(node, source_code),
         "aliasGroup" => visit_alias_group(node, source_code),
         "tokenExpr" => visit_token_expr(node, source_code),
+        "precGroup" => visit_prec_group(node, source_code),
+        "ruleBodyInner" => visit_rule_body(node, source_code),
+        "symbolSeqInner" => visit_symbol_seq(node, source_code),
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
     }
 }
@@ -367,6 +430,91 @@ mod tests {
         assert_eq!(
             parse("rule -> (a b => pair)* ;"),
             "rule -> repeat(alias(seq($.a, $.b), $.pair))"
+        );
+    }
+
+    #[test]
+    fn prec_plain_on_alternative() {
+        assert_eq!(parse("a -> b c %prec 2 ;"), "a -> prec(2, seq($.b, $.c))");
+    }
+
+    #[test]
+    fn prec_left_on_alternative() {
+        assert_eq!(
+            parse("expr -> expr '+' expr %prec.left 1 ;"),
+            "expr -> prec.left(1, seq($.expr, '+', $.expr))"
+        );
+    }
+
+    #[test]
+    fn prec_right_on_alternative() {
+        assert_eq!(
+            parse("expr -> expr '^' expr %prec.right 3 ;"),
+            "expr -> prec.right(3, seq($.expr, '^', $.expr))"
+        );
+    }
+
+    #[test]
+    fn prec_dynamic_on_alternative() {
+        assert_eq!(
+            parse("a -> b c %prec.dynamic 5 ;"),
+            "a -> prec.dynamic(5, seq($.b, $.c))"
+        );
+    }
+
+    #[test]
+    fn prec_left_no_level() {
+        assert_eq!(
+            parse("a -> b c %prec.left ;"),
+            "a -> prec.left(seq($.b, $.c))"
+        );
+    }
+
+    #[test]
+    fn prec_on_single_symbol_alternative() {
+        assert_eq!(
+            parse("rule -> if_stmt %prec 1 | other ;"),
+            "rule -> choice(prec(1, $.if_stmt), $.other)"
+        );
+    }
+
+    #[test]
+    fn prec_group_wraps_choice() {
+        assert_eq!(
+            parse("rule -> (a | b %prec 1) c ;"),
+            "rule -> seq(prec(1, choice($.a, $.b)), $.c)"
+        );
+    }
+
+    #[test]
+    fn prec_group_single_symbol() {
+        assert_eq!(
+            parse("rule -> (a %prec 1) b c ;"),
+            "rule -> seq(prec(1, $.a), $.b, $.c)"
+        );
+    }
+
+    #[test]
+    fn prec_group_with_kleene() {
+        assert_eq!(
+            parse("rule -> (a %prec 1)* ;"),
+            "rule -> repeat(prec(1, $.a))"
+        );
+    }
+
+    #[test]
+    fn prec_combined_with_alias() {
+        assert_eq!(
+            parse("rule -> (a b %prec.left 1 => op) ;"),
+            "rule -> alias(prec.left(1, seq($.a, $.b)), $.op)"
+        );
+    }
+
+    #[test]
+    fn prec_nested_groups() {
+        assert_eq!(
+            parse("rule -> (a | (b %prec 1)) ;"),
+            "rule -> choice($.a, prec(1, $.b))"
         );
     }
 }

@@ -28,6 +28,13 @@ impl Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+pub enum PrecKind {
+    Plain,
+    Left,
+    Right,
+    Dynamic,
+}
+
 pub enum GrammarNode {
     Sequence(Vec<GrammarNode>),
     Choice(Vec<GrammarNode>),
@@ -40,6 +47,7 @@ pub enum GrammarNode {
     Token(Box<GrammarNode>),
     Field(String, Box<GrammarNode>),
     Alias(Box<GrammarNode>, Box<GrammarNode>),
+    Prec(PrecKind, Option<u32>, Box<GrammarNode>),
 }
 
 impl Display for GrammarNode {
@@ -91,6 +99,18 @@ impl Display for GrammarNode {
             }
             GrammarNode::Alias(body, name) => {
                 write!(f, "alias({}, {})", body, name)
+            }
+            GrammarNode::Prec(kind, level, inner) => {
+                let name = match kind {
+                    PrecKind::Plain => "prec",
+                    PrecKind::Left => "prec.left",
+                    PrecKind::Right => "prec.right",
+                    PrecKind::Dynamic => "prec.dynamic",
+                };
+                match level {
+                    Some(n) => write!(f, "{}({}, {})", name, n, inner),
+                    None => write!(f, "{}({})", name, inner),
+                }
             }
         }
     }
@@ -211,6 +231,43 @@ mod tests {
             )
             .to_string(),
             "alias($.foo, $.bar)"
+        );
+    }
+
+    #[test]
+    fn prec_plain_display() {
+        assert_eq!(
+            Prec(PrecKind::Plain, Some(1), Box::new(NonTerminal("a".into()))).to_string(),
+            "prec(1, $.a)"
+        );
+    }
+
+    #[test]
+    fn prec_left_display() {
+        assert_eq!(
+            Prec(PrecKind::Left, Some(2), Box::new(NonTerminal("a".into()))).to_string(),
+            "prec.left(2, $.a)"
+        );
+    }
+
+    #[test]
+    fn prec_right_no_level_display() {
+        assert_eq!(
+            Prec(PrecKind::Right, None, Box::new(NonTerminal("a".into()))).to_string(),
+            "prec.right($.a)"
+        );
+    }
+
+    #[test]
+    fn prec_dynamic_display() {
+        assert_eq!(
+            Prec(
+                PrecKind::Dynamic,
+                Some(3),
+                Box::new(TerminalLiteral("'x'".into()))
+            )
+            .to_string(),
+            "prec.dynamic(3, 'x')"
         );
     }
 

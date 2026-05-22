@@ -71,11 +71,11 @@ expr -> ('a' | 'b')*;
       (symbolSeq
         (symbol
           content: (subSeq
-            body: (ruleBody
-              (symbolSeq
+            body: (ruleBodyInner
+              (symbolSeqInner
                 (symbol
                   content: (literal)))
-              (symbolSeq
+              (symbolSeqInner
                 (symbol
                   content: (literal)))))
           kleene: (asterisk))))))
