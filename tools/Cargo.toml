@@ -9,6 +9,9 @@ license = "MIT"
 name = "bnf-tools"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 tree-sitter-bnf = { path = "../tree-sitter-bnf" }
 tree-sitter = "0.26.8"
