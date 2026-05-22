@@ -40,8 +40,9 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Alias group | `(body => name)` | `(a b => pair)` |
 | Precedence (alternative) | `body %prec.TYPE [N]` | `expr '+' expr %prec.left 1` |
 | Precedence (sub-expression) | `(body %prec.TYPE [N])` | `(a \| b %prec 1)` |
-| Conflicts directive | `%conflicts [r1, r2, ...]` | `%conflicts [expr, term]` |
-| Inline directive    | `%inline r1, r2, ...`      | `%inline _helper, _wrapper` |
+| Conflicts directive    | `%conflicts [r1, r2, ...]`  | `%conflicts [expr, term]` |
+| Inline directive       | `%inline r1, r2, ...`       | `%inline _helper, _wrapper` |
+| Supertypes directive   | `%supertypes r1, r2, ...`   | `%supertypes expression, statement` |
 
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
@@ -196,6 +197,30 @@ inline: $ => [$.‌_helper, $._sep, $._wrapper],
 
 A warning is printed to stderr for any rule name referenced in `%inline` that
 has no corresponding rule definition in the same file.
+
+### Supertypes directive
+
+The `%supertypes` directive lists abstract rule names that act as union types
+over a set of concrete subtypes, mapping to the `supertypes` field in the
+generated `grammar.js`. Tree-sitter uses this information to produce richer
+type annotations in language bindings and in `node-types.json` — consumers
+see a named union type (e.g. `Expression`) rather than a flat list of node
+kinds.
+
+```bnf
+%supertypes expression
+%supertypes expression, statement, declaration
+```
+
+Multiple `%supertypes` lines are allowed and additive — all names are collected
+into a single `supertypes` array:
+
+```js
+supertypes: $ => [$.expression, $.statement, $.declaration],
+```
+
+A warning is printed to stderr for any rule name referenced in `%supertypes`
+that has no corresponding rule definition in the same file.
 
 ### Not supported
 

@@ -171,15 +171,18 @@ pub struct Grammar {
     pub conflicts: Vec<Vec<String>>,
     /// Rule names declared with `%inline` that should be inlined at every call site.
     pub inline: Vec<String>,
+    /// Abstract rule names declared with `%supertypes` that group concrete subtypes.
+    pub supertypes: Vec<String>,
 }
 
 impl Grammar {
-    /// Creates an empty grammar with no productions, conflicts, or inline rules.
+    /// Creates an empty grammar with no productions, conflicts, inline, or supertypes.
     pub fn new() -> Self {
         Self {
             productions: Vec::new(),
             conflicts: Vec::new(),
             inline: Vec::new(),
+            supertypes: Vec::new(),
         }
     }
 
@@ -207,6 +210,15 @@ impl Grammar {
             .collect()
     }
 
+    /// Returns a warning for every rule name in `%supertypes` that has no definition.
+    fn supertypes_check(&self, known: &HashSet<&str>) -> Vec<String> {
+        self.supertypes
+            .iter()
+            .filter(|name| !known.contains(name.as_str()))
+            .map(|name| format!("warning: %supertypes references undefined rule '{name}'"))
+            .collect()
+    }
+
     /// Runs all cross-reference checks and prints any warnings to stderr.
     pub fn check(&self) {
         let known = self.known_rules();
@@ -214,6 +226,9 @@ impl Grammar {
             eprintln!("{warning}");
         }
         for warning in self.inline_check(&known) {
+            eprintln!("{warning}");
+        }
+        for warning in self.supertypes_check(&known) {
             eprintln!("{warning}");
         }
     }
@@ -250,6 +265,17 @@ impl Display for Scaffold<'_> {
                 .collect::<Vec<_>>()
                 .join(", ");
             writeln!(f, "  inline: $ => [{items}],")?;
+            writeln!(f)?;
+        }
+        if !self.grammar.supertypes.is_empty() {
+            let items = self
+                .grammar
+                .supertypes
+                .iter()
+                .map(|n| format!("$.{n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(f, "  supertypes: $ => [{items}],")?;
             writeln!(f)?;
         }
         if !self.grammar.conflicts.is_empty() {
@@ -596,6 +622,72 @@ mod tests {
             ..Grammar::new()
         };
         assert!(g.conflicts_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn supertypes_check_warns_on_undefined_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            supertypes: vec!["ghost".into()],
+            ..Grammar::new()
+        };
+        let warnings = g.supertypes_check(&g.known_rules());
+        assert_eq!(
+            warnings,
+            vec!["warning: %supertypes references undefined rule 'ghost'"]
+        );
+    }
+
+    #[test]
+    fn supertypes_check_no_warnings_when_all_rules_defined() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "expression".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            supertypes: vec!["expression".into()],
+            ..Grammar::new()
+        };
+        assert!(g.supertypes_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn scaffold_with_supertypes() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "expression".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            supertypes: vec!["expression".into(), "statement".into()],
+            ..Grammar::new()
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+        }
+        .to_string();
+        assert!(out.contains("  supertypes: $ => [$.expression, $.statement],"));
+        assert!(out.find("supertypes").unwrap() < out.find("rules").unwrap());
+    }
+
+    #[test]
+    fn scaffold_no_supertypes_omits_key() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            ..Grammar::new()
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+        }
+        .to_string();
+        assert!(!out.contains("supertypes"));
     }
 
     #[test]

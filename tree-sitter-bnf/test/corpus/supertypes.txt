@@ -1,0 +1,86 @@
+================================================================================
+Single supertypes rule
+================================================================================
+
+%supertypes expression
+expression -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (supertypesDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Multiple rules in one directive
+================================================================================
+
+%supertypes expression, statement
+expression -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (supertypesDirective
+    (nonTerminal)
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Multiple supertypes directives
+================================================================================
+
+%supertypes expression
+%supertypes statement
+expression -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (supertypesDirective
+    (nonTerminal))
+  (supertypesDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Directive interleaved with rules
+================================================================================
+
+expression -> 'x' ;
+%supertypes expression
+statement -> 'y' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal)))))
+  (supertypesDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))

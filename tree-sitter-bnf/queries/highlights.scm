@@ -31,6 +31,7 @@
 ; Directives
 "%conflicts" @keyword
 "%inline" @keyword
+"%supertypes" @keyword
 "[" @punctuation.bracket
 "]" @punctuation.bracket
 

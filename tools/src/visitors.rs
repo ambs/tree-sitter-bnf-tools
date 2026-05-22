@@ -35,6 +35,11 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
                     .inline
                     .extend(visit_inline_directive(&child, source_code));
             }
+            "supertypesDirective" => {
+                grammar
+                    .supertypes
+                    .extend(visit_supertypes_directive(&child, source_code));
+            }
             _ => {}
         }
     }
@@ -44,6 +49,19 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
 
 /// Converts an `inlineDirective` node into a flat list of rule names.
 fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
+    (0..node.named_child_count() as u32)
+        .map(|i| {
+            node.named_child(i)
+                .expect("named child index in bounds")
+                .utf8_text(source_code.as_bytes())
+                .expect("valid UTF-8")
+                .to_string()
+        })
+        .collect()
+}
+
+/// Converts a `supertypesDirective` node into a flat list of rule names.
+fn visit_supertypes_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
     (0..node.named_child_count() as u32)
         .map(|i| {
             node.named_child(i)
@@ -644,6 +662,37 @@ mod tests {
     fn inline_undefined_rule_still_parses() {
         let g = parse_grammar("%inline ghost\na -> 'x' ;");
         assert_eq!(g.inline, vec!["ghost"]);
+    }
+
+    #[test]
+    fn supertypes_single_rule() {
+        let g = parse_grammar("%supertypes expression\nexpression -> 'x' ;");
+        assert_eq!(g.supertypes, vec!["expression"]);
+    }
+
+    #[test]
+    fn supertypes_multiple_rules_one_directive() {
+        let g = parse_grammar("%supertypes expression, statement\nexpression -> 'x' ;");
+        assert_eq!(g.supertypes, vec!["expression", "statement"]);
+    }
+
+    #[test]
+    fn supertypes_multiple_directives_are_additive() {
+        let g = parse_grammar("%supertypes expression\n%supertypes statement\nexpression -> 'x' ;");
+        assert_eq!(g.supertypes, vec!["expression", "statement"]);
+    }
+
+    #[test]
+    fn supertypes_interleaved_with_rules() {
+        let g = parse_grammar("expression -> 'x' ;\n%supertypes expression\nstatement -> 'y' ;");
+        assert_eq!(g.supertypes, vec!["expression"]);
+        assert_eq!(g.productions.len(), 2);
+    }
+
+    #[test]
+    fn supertypes_undefined_rule_still_parses() {
+        let g = parse_grammar("%supertypes ghost\na -> 'x' ;");
+        assert_eq!(g.supertypes, vec!["ghost"]);
     }
 
     #[test]
