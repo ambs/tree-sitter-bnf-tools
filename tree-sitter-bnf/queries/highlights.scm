@@ -28,8 +28,9 @@
 (precKind) @keyword.operator
 (integer) @number
 
-; Conflicts directive
+; Directives
 "%conflicts" @keyword
+"%inline" @keyword
 "[" @punctuation.bracket
 "]" @punctuation.bracket
 

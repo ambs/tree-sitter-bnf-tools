@@ -1,0 +1,86 @@
+================================================================================
+Single inline rule
+================================================================================
+
+%inline _helper
+a -> _helper ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (inlineDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple rules in one directive
+================================================================================
+
+%inline _helper, _wrapper
+a -> _helper ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (inlineDirective
+    (nonTerminal)
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple inline directives
+================================================================================
+
+%inline _helper
+%inline _wrapper
+a -> _helper ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (inlineDirective
+    (nonTerminal))
+  (inlineDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Directive interleaved with rules
+================================================================================
+
+a -> _helper ;
+%inline _helper
+_helper -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal)))))
+  (inlineDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))

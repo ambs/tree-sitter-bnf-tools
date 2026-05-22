@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Grammar, ParseError, PrecKind, Production};
 use tree_sitter::Node;
@@ -19,10 +17,7 @@ fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
 /// Converts the root `grammar` tree-sitter node into a [`Grammar`] DOM.
 pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, ParseError> {
     ensure_node_type(node, "grammar")?;
-    let mut grammar = Grammar {
-        productions: Vec::new(),
-        conflicts: Vec::new(),
-    };
+    let mut grammar = Grammar::new();
     let count = node.child_count() as u32;
     for i in 0..count {
         let child = node.child(i).expect("child index in bounds");
@@ -35,38 +30,29 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
                     .conflicts
                     .extend(visit_conflicts_directive(&child, source_code)?);
             }
+            "inlineDirective" => {
+                grammar
+                    .inline
+                    .extend(visit_inline_directive(&child, source_code));
+            }
             _ => {}
         }
     }
-    grammar_check(&grammar);
+    grammar.check();
     Ok(grammar)
 }
 
-/// Returns a warning string for every rule name referenced in `%conflicts` that has no definition.
-fn conflicts_check(grammar: &Grammar) -> Vec<String> {
-    let known: HashSet<&str> = grammar
-        .productions
-        .iter()
-        .map(|p| p.name.as_str())
-        .collect();
-    let mut warnings = Vec::new();
-    for group in &grammar.conflicts {
-        for name in group {
-            if !known.contains(name.as_str()) {
-                warnings.push(format!(
-                    "warning: %conflicts references undefined rule '{name}'"
-                ));
-            }
-        }
-    }
-    warnings
-}
-
-/// Runs all grammar-level checks and prints any warnings to stderr.
-fn grammar_check(grammar: &Grammar) {
-    for warning in conflicts_check(grammar) {
-        eprintln!("{warning}");
-    }
+/// Converts an `inlineDirective` node into a flat list of rule names.
+fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
+    (0..node.named_child_count() as u32)
+        .map(|i| {
+            node.named_child(i)
+                .expect("named child index in bounds")
+                .utf8_text(source_code.as_bytes())
+                .expect("valid UTF-8")
+                .to_string()
+        })
+        .collect()
 }
 
 /// Converts a `conflictsDirective` node into a list of conflict groups (lists of rule names).
@@ -630,20 +616,34 @@ mod tests {
     }
 
     #[test]
-    fn conflicts_check_warns_on_undefined_rule() {
-        let g = parse_grammar("%conflicts [a, ghost]\na -> 'x' ;");
-        let warnings = super::conflicts_check(&g);
-        assert_eq!(
-            warnings,
-            vec!["warning: %conflicts references undefined rule 'ghost'"]
-        );
+    fn inline_single_rule() {
+        let g = parse_grammar("%inline _helper\na -> _helper ;");
+        assert_eq!(g.inline, vec!["_helper"]);
     }
 
     #[test]
-    fn conflicts_check_no_warnings_when_all_rules_defined() {
-        let g = parse_grammar("%conflicts [a, b]\na -> 'x' ;\nb -> 'y' ;");
-        let warnings = super::conflicts_check(&g);
-        assert!(warnings.is_empty());
+    fn inline_multiple_rules_one_directive() {
+        let g = parse_grammar("%inline _a, _b\na -> _a ;");
+        assert_eq!(g.inline, vec!["_a", "_b"]);
+    }
+
+    #[test]
+    fn inline_multiple_directives_are_additive() {
+        let g = parse_grammar("%inline _a\n%inline _b\na -> _a ;");
+        assert_eq!(g.inline, vec!["_a", "_b"]);
+    }
+
+    #[test]
+    fn inline_interleaved_with_rules() {
+        let g = parse_grammar("a -> _h ;\n%inline _h\n_h -> 'x' ;");
+        assert_eq!(g.inline, vec!["_h"]);
+        assert_eq!(g.productions.len(), 2);
+    }
+
+    #[test]
+    fn inline_undefined_rule_still_parses() {
+        let g = parse_grammar("%inline ghost\na -> 'x' ;");
+        assert_eq!(g.inline, vec!["ghost"]);
     }
 
     #[test]

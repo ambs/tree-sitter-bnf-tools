@@ -41,6 +41,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Precedence (alternative) | `body %prec.TYPE [N]` | `expr '+' expr %prec.left 1` |
 | Precedence (sub-expression) | `(body %prec.TYPE [N])` | `(a \| b %prec 1)` |
 | Conflicts directive | `%conflicts [r1, r2, ...]` | `%conflicts [expr, term]` |
+| Inline directive    | `%inline r1, r2, ...`      | `%inline _helper, _wrapper` |
 
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
@@ -172,6 +173,29 @@ conflicts: $ => [
 
 A warning is printed to stderr for any rule name referenced in a `%conflicts`
 group that has no corresponding rule definition in the same file.
+
+### Inline directive
+
+The `%inline` directive lists rules that the parser generator should inline at
+every call site, mapping to the `inline` field in the generated `grammar.js`.
+Inlined rules are substituted at parse-table generation time — they never become
+parser states of their own. This is typically used for hidden helper rules
+(prefixed with `_`) that exist purely as structural glue.
+
+```bnf
+%inline _helper
+%inline _sep, _wrapper
+```
+
+Multiple `%inline` lines are allowed and additive — all names are collected into
+a single `inline` array:
+
+```js
+inline: $ => [$.‌_helper, $._sep, $._wrapper],
+```
+
+A warning is printed to stderr for any rule name referenced in `%inline` that
+has no corresponding rule definition in the same file.
 
 ### Not supported
 
