@@ -1,0 +1,99 @@
+# Grammar of the BNF dialect, expressed in itself.
+#
+# This file is the canonical human-readable specification of the syntax
+# accepted by ts-bnf-tool.  It mirrors tree-sitter-bnf/grammar.js and must
+# be kept in sync with it: any grammar change must be reflected here.
+#
+# Limitations of the self-description:
+#   - Rules whose names begin with _ are hidden nodes in tree-sitter (they
+#     never appear in the concrete syntax tree).  That distinction is not
+#     representable in this dialect; they are listed as regular rules.
+#   - Field-name annotations (name: symbol) are omitted for readability.
+#     They do not affect the language, only the AST.
+#
+# Run:  ts-bnf-tool grammar/bnf.bnf
+
+%extras    /\s/, comment
+%conflicts [symbolSeq, symbolSeqInner]
+%inline    _directive
+
+# ── Top-level ────────────────────────────────────────────────────────────────
+
+grammar             -> (rule | _directive)+ ;
+
+_directive          -> conflictsDirective
+                     | inlineDirective
+                     | supertypesDirective
+                     | extrasDirective
+                     ;
+
+# ── Grammar-level directives ─────────────────────────────────────────────────
+
+conflictsDirective  -> '%conflicts' conflictGroup (',' conflictGroup)* ;
+conflictGroup       -> '[' nonTerminal (',' nonTerminal)* ']' ;
+
+inlineDirective     -> '%inline' nonTerminal (',' nonTerminal)* ;
+
+supertypesDirective -> '%supertypes' nonTerminal (',' nonTerminal)* ;
+
+extrasDirective     -> '%extras' extrasItem (',' extrasItem)* ;
+extrasItem          -> pattern | nonTerminal ;
+
+# ── Rules and bodies ─────────────────────────────────────────────────────────
+
+rule                -> nonTerminal '->' ruleBody ';' ;
+ruleBody            -> symbolSeq ('|' symbolSeq)* ;
+symbolSeq           -> symbol+ precAnnotation? ;
+
+ruleBodyInner       -> symbolSeqInner ('|' symbolSeqInner)* ;
+symbolSeqInner      -> symbol+ ;
+
+symbol              -> fieldLabel? _symbolContent _kleeneOp? ;
+_symbolContent      -> nonTerminal
+                     | _terminal
+                     | subSeq
+                     | aliasGroup
+                     | tokenExpr
+                     | tokenImmediateExpr
+                     | precGroup
+                     ;
+
+# ── Grouping constructs ───────────────────────────────────────────────────────
+
+subSeq              -> '(' ruleBodyInner ')' ;
+aliasGroup          -> '(' ruleBody '=>' aliasName ')' ;
+aliasName           -> nonTerminal | literal ;
+tokenExpr           -> '<<' ruleBody '>>' ;
+tokenImmediateExpr  -> '<<!' ruleBody '>>' ;
+precGroup           -> '(' ruleBodyInner precAnnotation ')' ;
+
+# ── Kleene operators and field labels ─────────────────────────────────────────
+
+fieldLabel          -> /[A-Za-z_][A-Za-z0-9_]*:/ ;
+_kleeneOp           -> plus | asterisk | questionMark ;
+plus                -> '+' ;
+asterisk            -> '*' ;
+questionMark        -> '?' ;
+
+# ── Precedence annotations ────────────────────────────────────────────────────
+
+precAnnotation      -> '%' precKind integer? ;
+precKind            -> 'prec.dynamic' | 'prec.left' | 'prec.right' | 'prec' ;
+integer             -> /[0-9]+/ ;
+
+# ── Terminals ─────────────────────────────────────────────────────────────────
+
+_terminal           -> pattern | literal ;
+
+# Matches /…/ — a regex delimited by slashes, allowing character classes and
+# escape sequences inside.
+pattern             -> /\/([^\/\[\\]|\[[^\]]*\]|\\.)+\// ;
+
+# Single- or double-quoted string, forced into a single lexer token.
+literal             -> << /'([^'\\]|\\.)*'/ | /"([^"\\]|\\.)*"/ >> ;
+
+# Bare identifier.
+nonTerminal         -> /[A-Za-z_][A-Za-z0-9_]*/ ;
+
+# Line comment starting with #.
+comment             -> << '#' /.*/ >> ;
