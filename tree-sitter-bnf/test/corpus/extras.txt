@@ -1,0 +1,106 @@
+================================================================================
+Single pattern extra
+================================================================================
+
+%extras /\s/
+a -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (extrasDirective
+    (extrasItem
+      (pattern)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Pattern and rule reference
+================================================================================
+
+%extras /\s/, comment
+a -> 'x' ;
+comment -> '#' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (extrasDirective
+    (extrasItem
+      (pattern))
+    (extrasItem
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal)))))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Multiple extras directives
+================================================================================
+
+%extras /\s/
+%extras comment
+a -> 'x' ;
+comment -> '#' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (extrasDirective
+    (extrasItem
+      (pattern)))
+  (extrasDirective
+    (extrasItem
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal)))))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Directive interleaved with rules
+================================================================================
+
+a -> 'x' ;
+%extras /\s/
+b -> 'y' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal)))))
+  (extrasDirective
+    (extrasItem
+      (pattern)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))

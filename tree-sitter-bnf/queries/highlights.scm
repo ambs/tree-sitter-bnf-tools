@@ -32,6 +32,7 @@
 "%conflicts" @keyword
 "%inline" @keyword
 "%supertypes" @keyword
+"%extras" @keyword
 "[" @punctuation.bracket
 "]" @punctuation.bracket
 

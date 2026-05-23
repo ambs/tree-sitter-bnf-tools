@@ -40,6 +40,11 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
                     .supertypes
                     .extend(visit_supertypes_directive(&child, source_code));
             }
+            "extrasDirective" => {
+                grammar
+                    .extras
+                    .extend(visit_extras_directive(&child, source_code));
+            }
             _ => {}
         }
     }
@@ -49,6 +54,19 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
 
 /// Converts an `inlineDirective` node into a flat list of rule names.
 fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
+    (0..node.named_child_count() as u32)
+        .map(|i| {
+            node.named_child(i)
+                .expect("named child index in bounds")
+                .utf8_text(source_code.as_bytes())
+                .expect("valid UTF-8")
+                .to_string()
+        })
+        .collect()
+}
+
+/// Converts an `extrasDirective` node into a flat list of pattern strings and rule names.
+fn visit_extras_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
     (0..node.named_child_count() as u32)
         .map(|i| {
             node.named_child(i)
@@ -732,6 +750,37 @@ mod tests {
     fn supertypes_undefined_rule_still_parses() {
         let g = parse_grammar("%supertypes ghost\na -> 'x' ;");
         assert_eq!(g.supertypes, vec!["ghost"]);
+    }
+
+    #[test]
+    fn extras_single_pattern() {
+        let g = parse_grammar("%extras /\\s/\na -> 'x' ;");
+        assert_eq!(g.extras, vec!["/\\s/"]);
+    }
+
+    #[test]
+    fn extras_pattern_and_rule() {
+        let g = parse_grammar("%extras /\\s/, comment\na -> 'x' ;\ncomment -> '#' ;");
+        assert_eq!(g.extras, vec!["/\\s/", "comment"]);
+    }
+
+    #[test]
+    fn extras_multiple_directives_are_additive() {
+        let g = parse_grammar("%extras /\\s/\n%extras comment\na -> 'x' ;\ncomment -> '#' ;");
+        assert_eq!(g.extras, vec!["/\\s/", "comment"]);
+    }
+
+    #[test]
+    fn extras_interleaved_with_rules() {
+        let g = parse_grammar("a -> 'x' ;\n%extras /\\s/\nb -> 'y' ;");
+        assert_eq!(g.extras, vec!["/\\s/"]);
+        assert_eq!(g.productions.len(), 2);
+    }
+
+    #[test]
+    fn extras_undefined_rule_still_parses() {
+        let g = parse_grammar("%extras ghost\na -> 'x' ;");
+        assert_eq!(g.extras, vec!["ghost"]);
     }
 
     #[test]
