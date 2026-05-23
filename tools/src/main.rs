@@ -18,7 +18,7 @@ use clap::Parser;
 use crate::dom::{ParseError, Scaffold};
 use crate::visitors::visit_grammar;
 
-/// Command-line arguments for the `bnf-tools` binary.
+/// Command-line arguments for the `ts-bnf-tool` binary.
 #[derive(Parser, Debug)]
 #[command(about = "Convert BNF grammars to tree-sitter notation")]
 struct Args {
@@ -145,17 +145,17 @@ mod tests {
 
     #[test]
     fn generate_and_rules_only_conflict() {
-        assert!(parse(&["bnf-tools", "--generate", "--rules-only", "f.bnf"]).is_err());
+        assert!(parse(&["ts-bnf-tool", "--generate", "--rules-only", "f.bnf"]).is_err());
     }
 
     #[test]
     fn output_dir_requires_generate() {
-        assert!(parse(&["bnf-tools", "--output-dir", "/tmp", "f.bnf"]).is_err());
+        assert!(parse(&["ts-bnf-tool", "--output-dir", "/tmp", "f.bnf"]).is_err());
     }
 
     #[test]
     fn generate_alone_is_valid() {
-        let args = parse(&["bnf-tools", "--generate", "f.bnf"]).unwrap();
+        let args = parse(&["ts-bnf-tool", "--generate", "f.bnf"]).unwrap();
         assert!(args.generate);
         assert!(!args.rules_only);
         assert!(args.output_dir.is_none());
@@ -163,21 +163,21 @@ mod tests {
 
     #[test]
     fn generate_with_output_dir_is_valid() {
-        let args = parse(&["bnf-tools", "--generate", "--output-dir", "/tmp", "f.bnf"]).unwrap();
+        let args = parse(&["ts-bnf-tool", "--generate", "--output-dir", "/tmp", "f.bnf"]).unwrap();
         assert!(args.generate);
         assert_eq!(args.output_dir.as_deref(), Some("/tmp"));
     }
 
     #[test]
     fn rules_only_alone_is_valid() {
-        let args = parse(&["bnf-tools", "--rules-only", "f.bnf"]).unwrap();
+        let args = parse(&["ts-bnf-tool", "--rules-only", "f.bnf"]).unwrap();
         assert!(args.rules_only);
         assert!(!args.generate);
     }
 
     #[test]
     fn help_flag_exits_successfully_and_lists_all_flags() {
-        let err = Args::try_parse_from(["bnf-tools", "--help"]).unwrap_err();
+        let err = Args::try_parse_from(["ts-bnf-tool", "--help"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
         let help = err.to_string();
         assert!(help.contains("--rules-only"));

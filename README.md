@@ -8,7 +8,7 @@ that converts BNF grammars into tree-sitter `grammar.js` notation.
 | Directory | Description |
 |-----------|-------------|
 | `tree-sitter-bnf/` | Tree-sitter grammar and language bindings (Rust, Node.js, C) |
-| `tools/` | `bnf-tools` CLI — converts BNF files to tree-sitter notation |
+| `tools/` | `ts-bnf-tool` CLI — converts BNF files to tree-sitter notation |
 
 Both modules are independent and can be split into separate repositories in the future.
 
@@ -278,9 +278,9 @@ The following constructs from other BNF/EBNF variants are **not** recognised:
 | Case-insensitive literals | `%i"text"` | Not implemented |
 
 If your grammar uses any of the unsupported constructs, convert them to the
-supported equivalents before running `bnf-tools`.
+supported equivalents before running `ts-bnf-tool`.
 
-## bnf-tools
+## ts-bnf-tool
 
 Converts a `.bnf` file to tree-sitter notation.
 
@@ -288,13 +288,13 @@ Converts a `.bnf` file to tree-sitter notation.
 
 ```sh
 make build
-# binary is at target/release/bnf-tools after: make release
+# binary is at target/release/ts-bnf-tool after: make release
 ```
 
 **Usage**
 
 ```sh
-bnf-tools [OPTIONS] <file.bnf>
+ts-bnf-tool [OPTIONS] <file.bnf>
 
 Options:
   --name <NAME>          Grammar name (default: filename stem)
@@ -314,7 +314,7 @@ expr -> term ('+' term)* ;
 term -> /[0-9]+/ | '(' expr ')' ;
 ```
 
-Running `bnf-tools expr.bnf` outputs:
+Running `ts-bnf-tool expr.bnf` outputs:
 
 ```js
 module.exports = grammar({
@@ -330,7 +330,7 @@ module.exports = grammar({
 **Print rule bodies only**
 
 ```sh
-bnf-tools --rules-only expr.bnf
+ts-bnf-tool --rules-only expr.bnf
 ```
 
 ```
@@ -341,11 +341,11 @@ term -> choice(/[0-9]+/, seq('(', $.expr, ')'))
 **Generate a tree-sitter project**
 
 ```sh
-bnf-tools --generate expr.bnf
+ts-bnf-tool --generate expr.bnf
 # creates ./expr/grammar.js and runs tree-sitter generate
 # producing ./expr/src/parser.c
 
-bnf-tools --generate --output-dir ~/parsers/arithmetic --name arithmetic expr.bnf
+ts-bnf-tool --generate --output-dir ~/parsers/arithmetic --name arithmetic expr.bnf
 # creates the project at the specified path with an explicit grammar name
 ```
 

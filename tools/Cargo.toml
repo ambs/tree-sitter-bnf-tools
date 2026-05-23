@@ -1,12 +1,12 @@
 [package]
-name = "bnf-tools"
+name = "ts-bnf-tool"
 version = "0.1.0"
 edition = "2021"
-description = "CLI tools for working with BNF grammars"
+description = "CLI tool for converting BNF grammars to tree-sitter notation"
 license = "MIT"
 
 [[bin]]
-name = "bnf-tools"
+name = "ts-bnf-tool"
 path = "src/main.rs"
 
 [lints]
