@@ -23,7 +23,8 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
         let child = node.child(i).expect("child index in bounds");
         match child.kind() {
             "rule" => {
-                grammar.productions.push(visit_rule(&child, source_code)?);
+                let prod = visit_rule(&mut grammar, &child, source_code)?;
+                grammar.productions.push(prod);
             }
             "conflictsDirective" => {
                 grammar
@@ -117,7 +118,11 @@ fn visit_conflicts_directive(
 }
 
 /// Converts a `rule` node into a [`Production`].
-fn visit_rule(node: &Node<'_>, source_code: &str) -> Result<Production, ParseError> {
+fn visit_rule(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<Production, ParseError> {
     ensure_node_type(node, "rule")?;
     let rule_name = node
         .child_by_field_name("name")
@@ -125,16 +130,20 @@ fn visit_rule(node: &Node<'_>, source_code: &str) -> Result<Production, ParseErr
     let rule_body = node
         .child_by_field_name("body")
         .expect("rule has body field");
-    let NonTerminal(name) = visit(&rule_name, source_code)? else {
-        return Err(ParseError::MalformedProduction);
-    };
-    let body = visit(&rule_body, source_code)?;
+    // Extract LHS name directly — it is a definition, not an rhs reference.
+    ensure_node_type(&rule_name, "nonTerminal")?;
+    let name = rule_name
+        .utf8_text(source_code.as_bytes())
+        .expect("valid UTF-8")
+        .to_string();
+    let body = visit(grammar, &rule_body, source_code)?;
     Ok(Production { name, body })
 }
 
-/// Converts a `nonTerminal` node into a [`GrammarNode::NonTerminal`].
-fn visit_non_terminal(node: &Node<'_>, source_code: &str) -> GrammarNode {
+/// Converts a `nonTerminal` node into a [`GrammarNode::NonTerminal`] and records the name.
+fn visit_non_terminal(grammar: &mut Grammar, node: &Node<'_>, source_code: &str) -> GrammarNode {
     let text = node.utf8_text(source_code.as_bytes()).expect("valid UTF-8");
+    grammar.rhs_nonterminals.insert(text.to_string());
     NonTerminal(text.to_string())
 }
 
@@ -162,15 +171,24 @@ fn visit_literal(node: &Node<'_>, source_code: &str) -> GrammarNode {
 }
 
 /// Converts a `ruleBody` or `ruleBodyInner` node into a [`GrammarNode`], wrapping multiple alternatives in [`GrammarNode::Choice`].
-fn visit_rule_body(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit_rule_body(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     let count = node.child_count() as u32;
     if count == 1 {
-        visit(&node.child(0).expect("child 0 exists"), source_code)
+        visit(
+            grammar,
+            &node.child(0).expect("child 0 exists"),
+            source_code,
+        )
     } else {
         let mut choice = Vec::new();
         let mut i: u32 = 0;
         while i < count {
             choice.push(visit(
+                grammar,
                 &node.child(i).expect("child index in bounds"),
                 source_code,
             )?);
@@ -181,8 +199,13 @@ fn visit_rule_body(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, Pa
 }
 
 /// Converts a `symbol` node, applying any Kleene quantifier and optional field label.
-fn visit_symbol(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit_symbol(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     let symbol = visit(
+        grammar,
         &node
             .child_by_field_name("content")
             .expect("symbol has content field"),
@@ -243,7 +266,11 @@ fn parse_prec_annotation(
 }
 
 /// Converts a `symbolSeq` or `symbolSeqInner` node into a sequence (or single node), wrapping with precedence if annotated.
-fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit_symbol_seq(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     let prec_annotation = if let Some(n) = node.child_by_field_name("prec") {
         Some(parse_prec_annotation(&n, source_code)?)
     } else {
@@ -258,10 +285,20 @@ fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
     };
 
     let body = if symbol_count == 1 {
-        visit(&node.child(0).expect("child 0 exists"), source_code)?
+        visit(
+            grammar,
+            &node.child(0).expect("child 0 exists"),
+            source_code,
+        )?
     } else {
         let seq = (0..symbol_count)
-            .map(|i| visit(&node.child(i).expect("child index in bounds"), source_code))
+            .map(|i| {
+                visit(
+                    grammar,
+                    &node.child(i).expect("child index in bounds"),
+                    source_code,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
         Sequence(seq)
     };
@@ -273,8 +310,13 @@ fn visit_symbol_seq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
 }
 
 /// Converts a `subSeq` node by delegating to its `body` field.
-fn visit_symbol_subseq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit_symbol_subseq(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     visit(
+        grammar,
         &node
             .child_by_field_name("body")
             .expect("subSeq has body field"),
@@ -283,8 +325,13 @@ fn visit_symbol_subseq(node: &Node<'_>, source_code: &str) -> Result<GrammarNode
 }
 
 /// Converts a `tokenExpr` node into a [`GrammarNode::Token`] wrapping its body.
-fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit_token_expr(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     let inner = visit(
+        grammar,
         &node
             .child_by_field_name("body")
             .expect("tokenExpr has body field"),
@@ -295,10 +342,12 @@ fn visit_token_expr(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
 
 /// Converts a `tokenImmediateExpr` node into a [`GrammarNode::TokenImmediate`] wrapping its body.
 fn visit_token_immediate_expr(
+    grammar: &mut Grammar,
     node: &Node<'_>,
     source_code: &str,
 ) -> Result<GrammarNode, ParseError> {
     let inner = visit(
+        grammar,
         &node
             .child_by_field_name("body")
             .expect("tokenImmediateExpr has body field"),
@@ -308,8 +357,13 @@ fn visit_token_immediate_expr(
 }
 
 /// Converts a `precGroup` node into a [`GrammarNode::Prec`] wrapping its body.
-fn visit_prec_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit_prec_group(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     let body = visit(
+        grammar,
         &node
             .child_by_field_name("body")
             .expect("precGroup has body field"),
@@ -323,8 +377,13 @@ fn visit_prec_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, P
 }
 
 /// Converts an `aliasGroup` node into a [`GrammarNode::Alias`].
-fn visit_alias_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit_alias_group(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     let body = visit(
+        grammar,
         &node
             .child_by_field_name("body")
             .expect("aliasGroup has body field"),
@@ -334,26 +393,30 @@ fn visit_alias_group(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, 
         .child_by_field_name("alias")
         .expect("aliasGroup has alias field");
     let name_child = alias_node.child(0).expect("aliasName has a child");
-    let name = visit(&name_child, source_code)?;
+    let name = visit(grammar, &name_child, source_code)?;
     Ok(Alias(Box::new(body), Box::new(name)))
 }
 
 /// Dispatches a tree-sitter node to the appropriate typed visitor by node kind.
-fn visit(node: &Node<'_>, source_code: &str) -> Result<GrammarNode, ParseError> {
+fn visit(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<GrammarNode, ParseError> {
     match node.kind() {
-        "nonTerminal" => Ok(visit_non_terminal(node, source_code)),
-        "ruleBody" => visit_rule_body(node, source_code),
-        "symbolSeq" => visit_symbol_seq(node, source_code),
-        "symbol" => visit_symbol(node, source_code),
+        "nonTerminal" => Ok(visit_non_terminal(grammar, node, source_code)),
+        "ruleBody" => visit_rule_body(grammar, node, source_code),
+        "symbolSeq" => visit_symbol_seq(grammar, node, source_code),
+        "symbol" => visit_symbol(grammar, node, source_code),
         "pattern" => Ok(visit_pattern(node, source_code)),
         "literal" => Ok(visit_literal(node, source_code)),
-        "subSeq" => visit_symbol_subseq(node, source_code),
-        "aliasGroup" => visit_alias_group(node, source_code),
-        "tokenExpr" => visit_token_expr(node, source_code),
-        "tokenImmediateExpr" => visit_token_immediate_expr(node, source_code),
-        "precGroup" => visit_prec_group(node, source_code),
-        "ruleBodyInner" => visit_rule_body(node, source_code),
-        "symbolSeqInner" => visit_symbol_seq(node, source_code),
+        "subSeq" => visit_symbol_subseq(grammar, node, source_code),
+        "aliasGroup" => visit_alias_group(grammar, node, source_code),
+        "tokenExpr" => visit_token_expr(grammar, node, source_code),
+        "tokenImmediateExpr" => visit_token_immediate_expr(grammar, node, source_code),
+        "precGroup" => visit_prec_group(grammar, node, source_code),
+        "ruleBodyInner" => visit_rule_body(grammar, node, source_code),
+        "symbolSeqInner" => visit_symbol_seq(grammar, node, source_code),
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
     }
 }
