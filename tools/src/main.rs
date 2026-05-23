@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::fs::File;
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -22,7 +22,7 @@ use crate::visitors::visit_grammar;
 #[derive(Parser, Debug)]
 #[command(about = "Convert BNF grammars to tree-sitter notation")]
 struct Args {
-    /// Input BNF file
+    /// Input BNF file, or `-` to read from stdin
     filename: String,
 
     /// Output rule bodies only, without grammar.js boilerplate
@@ -78,8 +78,12 @@ fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(),
 }
 
 /// Returns the grammar name: the explicit override if provided, or the filename stem.
+/// Stdin (`-`) has no stem, so it defaults to `"grammar"`.
 fn grammar_name(filename: &str, override_name: Option<&str>) -> String {
     override_name.map(str::to_string).unwrap_or_else(|| {
+        if filename == "-" {
+            return "grammar".to_string();
+        }
         Path::new(filename)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -91,9 +95,12 @@ fn grammar_name(filename: &str, override_name: Option<&str>) -> String {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    let mut file = File::open(&args.filename)?;
     let mut source_code = String::new();
-    file.read_to_string(&mut source_code)?;
+    if args.filename == "-" {
+        io::stdin().read_to_string(&mut source_code)?;
+    } else {
+        File::open(&args.filename)?.read_to_string(&mut source_code)?;
+    }
 
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -184,6 +191,22 @@ mod tests {
         assert!(help.contains("--generate"));
         assert!(help.contains("--name"));
         assert!(help.contains("--output-dir"));
+    }
+
+    #[test]
+    fn stdin_dash_is_valid_filename() {
+        let args = parse(&["ts-bnf-tool", "-"]).unwrap();
+        assert_eq!(args.filename, "-");
+    }
+
+    #[test]
+    fn grammar_name_stdin_defaults_to_grammar() {
+        assert_eq!(grammar_name("-", None), "grammar");
+    }
+
+    #[test]
+    fn grammar_name_stdin_respects_override() {
+        assert_eq!(grammar_name("-", Some("mygrammar")), "mygrammar");
     }
 
     #[test]
