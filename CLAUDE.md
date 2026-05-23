@@ -46,6 +46,12 @@ The `missing_docs` lint (enabled in `Cargo.toml`) enforces this for public items
 File-level `#![allow(missing_docs)]` suppresses it for modules not yet fully documented;
 remove the suppressor once all items in the file are covered.
 
+## Grammar self-description
+
+`grammar/bnf.bnf` is the BNF dialect's own grammar expressed in itself.
+It must be kept in sync with `tree-sitter-bnf/grammar.js`: any change to the
+grammar rules must be reflected in this file.
+
 ## PR description rules
 
 - Never include unticked checklist items in a PR description.
