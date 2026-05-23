@@ -44,6 +44,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Conflicts directive    | `%conflicts [r1, r2, ...]`  | `%conflicts [expr, term]` |
 | Inline directive       | `%inline r1, r2, ...`       | `%inline _helper, _wrapper` |
 | Supertypes directive   | `%supertypes r1, r2, ...`   | `%supertypes expression, statement` |
+| Extras directive       | `%extras item, ...`         | `%extras /\s/, comment` |
 
 A `<< >>` token expression marks its contents as an atomic lexer terminal — no
 whitespace or extras are allowed between its parts. It maps directly to
@@ -237,6 +238,30 @@ supertypes: $ => [$.expression, $.statement, $.declaration],
 
 A warning is printed to stderr for any rule name referenced in `%supertypes`
 that has no corresponding rule definition in the same file.
+
+### Extras directive
+
+The `%extras` directive declares tokens that may appear anywhere in the input,
+mapping to the `extras` field in the generated `grammar.js`. Each item is
+either a regex pattern (for anonymous extras such as whitespace) or a bare rule
+name (for named extras such as a comment rule).
+
+```bnf
+%extras /\s/
+%extras /\s/, comment
+```
+
+Multiple `%extras` lines are allowed and additive — all items are collected into
+a single `extras` array:
+
+```js
+extras: $ => [/\s/, $.comment],
+```
+
+When no `%extras` directive is present, tree-sitter's built-in default applies
+(whitespace is skipped everywhere). A warning is printed to stderr for any rule
+name referenced in `%extras` that has no corresponding rule definition in the
+same file.
 
 ### Not supported
 

@@ -178,16 +178,19 @@ pub struct Grammar {
     pub inline: Vec<String>,
     /// Abstract rule names declared with `%supertypes` that group concrete subtypes.
     pub supertypes: Vec<String>,
+    /// Extra items declared with `%extras`; each is either a regex pattern (starts with `/`) or a rule name.
+    pub extras: Vec<String>,
 }
 
 impl Grammar {
-    /// Creates an empty grammar with no productions, conflicts, inline, or supertypes.
+    /// Creates an empty grammar with no productions, conflicts, inline, supertypes, or extras.
     pub fn new() -> Self {
         Self {
             productions: Vec::new(),
             conflicts: Vec::new(),
             inline: Vec::new(),
             supertypes: Vec::new(),
+            extras: Vec::new(),
         }
     }
 
@@ -224,6 +227,15 @@ impl Grammar {
             .collect()
     }
 
+    /// Returns a warning for every rule reference in `%extras` that has no definition.
+    fn extras_check(&self, known: &HashSet<&str>) -> Vec<String> {
+        self.extras
+            .iter()
+            .filter(|item| !item.starts_with('/') && !known.contains(item.as_str()))
+            .map(|name| format!("warning: %extras references undefined rule '{name}'"))
+            .collect()
+    }
+
     /// Runs all cross-reference checks and prints any warnings to stderr.
     pub fn check(&self) {
         let known = self.known_rules();
@@ -234,6 +246,9 @@ impl Grammar {
             eprintln!("{warning}");
         }
         for warning in self.supertypes_check(&known) {
+            eprintln!("{warning}");
+        }
+        for warning in self.extras_check(&known) {
             eprintln!("{warning}");
         }
     }
@@ -261,6 +276,23 @@ impl Display for Scaffold<'_> {
         writeln!(f, "module.exports = grammar({{")?;
         writeln!(f, "  name: \"{}\",", self.name)?;
         writeln!(f)?;
+        if !self.grammar.extras.is_empty() {
+            let items = self
+                .grammar
+                .extras
+                .iter()
+                .map(|item| {
+                    if item.starts_with('/') {
+                        item.clone()
+                    } else {
+                        format!("$.{item}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(f, "  extras: $ => [{items}],")?;
+            writeln!(f)?;
+        }
         if !self.grammar.inline.is_empty() {
             let items = self
                 .grammar
@@ -731,5 +763,90 @@ mod tests {
             ..Grammar::new()
         };
         assert!(g.inline_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn scaffold_with_extras_pattern_and_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            extras: vec!["/\\s/".into(), "comment".into()],
+            ..Grammar::new()
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+        }
+        .to_string();
+        assert!(out.contains("  extras: $ => [/\\s/, $.comment],"));
+        assert!(out.find("extras").unwrap() < out.find("rules").unwrap());
+    }
+
+    #[test]
+    fn scaffold_no_extras_omits_key() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            ..Grammar::new()
+        };
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+        }
+        .to_string();
+        assert!(!out.contains("extras"));
+    }
+
+    #[test]
+    fn extras_check_warns_on_undefined_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            extras: vec!["/\\s/".into(), "ghost".into()],
+            ..Grammar::new()
+        };
+        let warnings = g.extras_check(&g.known_rules());
+        assert_eq!(
+            warnings,
+            vec!["warning: %extras references undefined rule 'ghost'"]
+        );
+    }
+
+    #[test]
+    fn extras_check_no_warning_for_pattern() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "a".into(),
+                body: TerminalLiteral("'x'".into()),
+            }],
+            extras: vec!["/\\s/".into()],
+            ..Grammar::new()
+        };
+        assert!(g.extras_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn extras_check_no_warnings_when_rule_defined() {
+        let g = Grammar {
+            productions: vec![
+                Production {
+                    name: "a".into(),
+                    body: TerminalLiteral("'x'".into()),
+                },
+                Production {
+                    name: "comment".into(),
+                    body: TerminalLiteral("'#'".into()),
+                },
+            ],
+            extras: vec!["/\\s/".into(), "comment".into()],
+            ..Grammar::new()
+        };
+        assert!(g.extras_check(&g.known_rules()).is_empty());
     }
 }
