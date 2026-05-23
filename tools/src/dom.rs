@@ -182,6 +182,31 @@ pub struct Grammar {
     pub extras: Vec<String>,
 }
 
+/// Collects every non-terminal name referenced anywhere inside `node`.
+fn all_nonterminals(node: &GrammarNode) -> Vec<&str> {
+    match node {
+        // Base case: this node itself is the reference we want.
+        GrammarNode::NonTerminal(name) => vec![name.as_str()],
+        // Recurse into every child and concatenate results.
+        GrammarNode::Sequence(nodes) | GrammarNode::Choice(nodes) => {
+            nodes.iter().flat_map(all_nonterminals).collect()
+        }
+        // Single-child wrappers: just recurse into the inner node.
+        GrammarNode::Optional(inner)
+        | GrammarNode::ZeroOrMore(inner)
+        | GrammarNode::OneOrMore(inner)
+        | GrammarNode::Token(inner)
+        | GrammarNode::TokenImmediate(inner) => all_nonterminals(inner),
+        // Field label and precedence are transparent wrappers.
+        GrammarNode::Field(_, inner) => all_nonterminals(inner),
+        GrammarNode::Prec(_, _, inner) => all_nonterminals(inner),
+        // Only traverse the body; the alias name is an AST label, not a rule reference.
+        GrammarNode::Alias(body, _) => all_nonterminals(body),
+        // Terminals have no non-terminal references.
+        GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => vec![],
+    }
+}
+
 impl Grammar {
     /// Creates an empty grammar with no productions, conflicts, inline, supertypes, or extras.
     pub fn new() -> Self {
@@ -236,19 +261,34 @@ impl Grammar {
             .collect()
     }
 
+    /// Returns a warning for every non-terminal referenced in a rule body that has no definition.
+    /// Deduplicates within each rule to avoid repeated warnings for the same missing name.
+    fn undefined_refs_check(&self, known: &HashSet<&str>) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for prod in &self.productions {
+            let mut seen = HashSet::new();
+            for name in all_nonterminals(&prod.body) {
+                if !known.contains(name) && seen.insert(name) {
+                    warnings.push(format!(
+                        "warning: rule '{}' references undefined rule '{name}'",
+                        prod.name
+                    ));
+                }
+            }
+        }
+        warnings
+    }
+
     /// Runs all cross-reference checks and prints any warnings to stderr.
     pub fn check(&self) {
         let known = self.known_rules();
-        for warning in self.conflicts_check(&known) {
-            eprintln!("{warning}");
-        }
-        for warning in self.inline_check(&known) {
-            eprintln!("{warning}");
-        }
-        for warning in self.supertypes_check(&known) {
-            eprintln!("{warning}");
-        }
-        for warning in self.extras_check(&known) {
+        let mut warnings = Vec::new();
+        warnings.extend(self.conflicts_check(&known));
+        warnings.extend(self.inline_check(&known));
+        warnings.extend(self.supertypes_check(&known));
+        warnings.extend(self.extras_check(&known));
+        warnings.extend(self.undefined_refs_check(&known));
+        for warning in warnings {
             eprintln!("{warning}");
         }
     }
@@ -848,5 +888,55 @@ mod tests {
             ..Grammar::new()
         };
         assert!(g.extras_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn undefined_refs_check_warns_on_missing_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "expr".into(),
+                body: NonTerminal("term".into()),
+            }],
+            ..Grammar::new()
+        };
+        let warnings = g.undefined_refs_check(&g.known_rules());
+        assert_eq!(
+            warnings,
+            vec!["warning: rule 'expr' references undefined rule 'term'"]
+        );
+    }
+
+    #[test]
+    fn undefined_refs_check_no_warning_when_defined() {
+        let g = Grammar {
+            productions: vec![
+                Production {
+                    name: "expr".into(),
+                    body: NonTerminal("term".into()),
+                },
+                Production {
+                    name: "term".into(),
+                    body: TerminalLiteral("'x'".into()),
+                },
+            ],
+            ..Grammar::new()
+        };
+        assert!(g.undefined_refs_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn undefined_refs_check_deduplicates_within_rule() {
+        let g = Grammar {
+            productions: vec![Production {
+                name: "expr".into(),
+                body: Sequence(vec![
+                    NonTerminal("ghost".into()),
+                    NonTerminal("ghost".into()),
+                ]),
+            }],
+            ..Grammar::new()
+        };
+        let warnings = g.undefined_refs_check(&g.known_rules());
+        assert_eq!(warnings.len(), 1);
     }
 }
