@@ -3,6 +3,9 @@
 A [tree-sitter](https://tree-sitter.github.io/) grammar for BNF, plus a CLI tool
 that converts BNF grammars into tree-sitter `grammar.js` notation.
 
+New to the tool? Start with the **[tutorial](docs/tutorial.md)** for a guided
+introduction with examples. This README is a reference for the full syntax.
+
 ## Repository structure
 
 | Directory | Description |
