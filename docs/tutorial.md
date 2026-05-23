@@ -426,16 +426,6 @@ The resulting directory is a complete tree-sitter language package, ready for
 
 ## What is not supported
 
-A few constructs from other BNF/EBNF variants are not recognized:
-
-| Construct | Example | Use instead |
-|-----------|---------|-------------|
-| `::=` / `:` / `=` separator | `expr ::= term` | `expr -> term ;` |
-| Angle-bracket non-terminals | `<expr>` | `expr` |
-| `[optional]` bracket notation | `['+'?]` | `'+'?` |
-| `{repetition}` curly-brace notation | `{term}` | `term*` |
-| Empty (epsilon) alternatives | `a \| ` | add an explicit empty rule |
-| ABNF character codes | `%x41` | use a literal or pattern |
-
-If your grammar uses any of these, convert them to the supported equivalents
-before running `ts-bnf-tool`.
+A few constructs from other BNF/EBNF variants are not recognized. See the
+[Not supported](../README.md#not-supported) section in the README for the full
+list and recommended replacements.
