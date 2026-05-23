@@ -403,6 +403,20 @@ stdout. Redirect it to a file:
 ts-bnf-tool json.bnf > grammar.js
 ```
 
+You can also read from stdin by passing `-` as the filename, which is useful
+in pipelines:
+
+```sh
+cat json.bnf | ts-bnf-tool - > grammar.js
+```
+
+When reading from stdin the grammar name defaults to `grammar`; use `--name`
+to set a specific name:
+
+```sh
+cat json.bnf | ts-bnf-tool --name json - > grammar.js
+```
+
 ### Step 4 — generate a ready-to-use tree-sitter project
 
 `--generate` writes `grammar.js` to a directory and runs `tree-sitter generate`
