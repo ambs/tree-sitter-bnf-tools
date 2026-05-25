@@ -8,33 +8,46 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
+use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 use ts_bnf_tool::dom::{ParseError, Scaffold};
 use ts_bnf_tool::visitors::visit_grammar;
 
-/// Command-line arguments for the `ts-bnf-tool` binary.
+/// Top-level CLI for `ts-bnf-tool`.
 #[derive(Parser, Debug)]
-#[command(about = "Convert BNF grammars to tree-sitter notation")]
-struct Args {
-    /// Input BNF file, or `-` to read from stdin
-    filename: String,
+#[command(about = "BNF grammar analysis and conversion tool")]
+struct Cli {
+    /// The subcommand to run.
+    #[command(subcommand)]
+    command: Subcommands,
+}
 
-    /// Output rule bodies only, without grammar.js boilerplate
-    #[arg(long, conflicts_with = "generate")]
-    rules_only: bool,
-
-    /// Generate a full tree-sitter project in the output directory
-    #[arg(long)]
-    generate: bool,
-
-    /// Grammar name (default: filename stem)
-    #[arg(long)]
-    name: Option<String>,
-
-    /// Output directory for --generate (default: ./<name>)
-    #[arg(long, requires = "generate")]
-    output_dir: Option<String>,
+/// The available subcommands.
+#[derive(Subcommand, Debug)]
+enum Subcommands {
+    /// Convert BNF grammar to tree-sitter grammar.js notation (default)
+    Convert {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+        /// Output rule bodies only, without grammar.js boilerplate
+        #[arg(long, conflicts_with = "generate")]
+        rules_only: bool,
+        /// Generate a full tree-sitter project in the output directory
+        #[arg(long)]
+        generate: bool,
+        /// Grammar name (default: filename stem)
+        #[arg(long)]
+        name: Option<String>,
+        /// Output directory for --generate (default: ./<name>)
+        #[arg(long, requires = "generate")]
+        output_dir: Option<String>,
+    },
+    /// Print FIRST sets for each rule in the grammar
+    Firsts {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+    },
 }
 
 /// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
@@ -87,50 +100,102 @@ fn grammar_name(filename: &str, override_name: Option<&str>) -> String {
     })
 }
 
+/// Reads the BNF source from `filename`, parsing it into a grammar.
+fn load_grammar_source(filename: &str) -> Result<String, Box<dyn Error>> {
+    let mut source = String::new();
+    if filename == "-" {
+        io::stdin().read_to_string(&mut source)?;
+    } else {
+        File::open(filename)?.read_to_string(&mut source)?;
+    }
+    Ok(source)
+}
+
+/// Formats a single [`FirstTerminal`] for display: its raw string value as stored.
+fn display_terminal<'a>(t: &'a FirstTerminal<'a>) -> &'a str {
+    match t {
+        FirstTerminal::Literal(s) | FirstTerminal::Pattern(s) => s,
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    let mut source_code = String::new();
-    if args.filename == "-" {
-        io::stdin().read_to_string(&mut source_code)?;
-    } else {
-        File::open(&args.filename)?.read_to_string(&mut source_code)?;
-    }
+    match cli.command {
+        Subcommands::Convert {
+            filename,
+            rules_only,
+            generate,
+            name,
+            output_dir,
+        } => {
+            let source_code = load_grammar_source(&filename)?;
 
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_bnf::LANGUAGE.into())
-        .expect("Error loading BNF grammar");
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_bnf::LANGUAGE.into())
+                .expect("Error loading BNF grammar");
 
-    let tree = parser
-        .parse(&source_code, None)
-        .ok_or(ParseError::ParseFailed)?;
+            let tree = parser
+                .parse(&source_code, None)
+                .ok_or(ParseError::ParseFailed)?;
 
-    let root_node = tree.root_node();
-    if root_node.has_error() {
-        return Err(ParseError::SyntaxError.into());
-    }
-
-    let grammar = visit_grammar(&root_node, &source_code)?;
-
-    let name = grammar_name(&args.filename, args.name.as_deref());
-
-    if args.rules_only {
-        println!("{}", grammar);
-    } else if args.generate {
-        let scaffold = Scaffold {
-            grammar: &grammar,
-            name: &name,
-        };
-        run_generate(&scaffold, args.output_dir.as_deref())?;
-    } else {
-        println!(
-            "{}",
-            Scaffold {
-                grammar: &grammar,
-                name: &name
+            let root_node = tree.root_node();
+            if root_node.has_error() {
+                return Err(ParseError::SyntaxError.into());
             }
-        );
+
+            let grammar = visit_grammar(&root_node, &source_code)?;
+            let name = grammar_name(&filename, name.as_deref());
+
+            if rules_only {
+                println!("{}", grammar);
+            } else if generate {
+                let scaffold = Scaffold {
+                    grammar: &grammar,
+                    name: &name,
+                };
+                run_generate(&scaffold, output_dir.as_deref())?;
+            } else {
+                println!(
+                    "{}",
+                    Scaffold {
+                        grammar: &grammar,
+                        name: &name
+                    }
+                );
+            }
+        }
+
+        Subcommands::Firsts { filename } => {
+            let source_code = load_grammar_source(&filename)?;
+
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_bnf::LANGUAGE.into())
+                .expect("Error loading BNF grammar");
+
+            let tree = parser
+                .parse(&source_code, None)
+                .ok_or(ParseError::ParseFailed)?;
+
+            let root_node = tree.root_node();
+            if root_node.has_error() {
+                return Err(ParseError::SyntaxError.into());
+            }
+
+            let grammar = visit_grammar(&root_node, &source_code)?;
+            let sets = first_sets(&grammar);
+
+            let mut rules: Vec<&str> = sets.keys().copied().collect();
+            rules.sort_unstable();
+
+            for rule in rules {
+                let mut terminals: Vec<&str> = sets[rule].iter().map(display_terminal).collect();
+                terminals.sort_unstable();
+                println!("{}: {}", rule, terminals.join(", "));
+            }
+        }
     }
 
     Ok(())
@@ -141,57 +206,77 @@ mod tests {
     use super::*;
     use clap::Parser;
 
-    fn parse(args: &[&str]) -> Result<Args, clap::Error> {
-        Args::try_parse_from(args)
+    fn parse_convert(args: &[&str]) -> Result<Cli, clap::Error> {
+        // Prepend "convert" so tests exercise the subcommand directly.
+        let full: Vec<&str> = std::iter::once("ts-bnf-tool")
+            .chain(std::iter::once("convert"))
+            .chain(args.iter().copied())
+            .collect();
+        Cli::try_parse_from(full)
+    }
+
+    fn convert_fields(cli: Cli) -> (String, bool, bool, Option<String>, Option<String>) {
+        match cli.command {
+            Subcommands::Convert {
+                filename,
+                rules_only,
+                generate,
+                name,
+                output_dir,
+            } => (filename, rules_only, generate, name, output_dir),
+            _ => panic!("expected Convert"),
+        }
     }
 
     #[test]
     fn generate_and_rules_only_conflict() {
-        assert!(parse(&["ts-bnf-tool", "--generate", "--rules-only", "f.bnf"]).is_err());
+        assert!(parse_convert(&["--generate", "--rules-only", "f.bnf"]).is_err());
     }
 
     #[test]
     fn output_dir_requires_generate() {
-        assert!(parse(&["ts-bnf-tool", "--output-dir", "/tmp", "f.bnf"]).is_err());
+        assert!(parse_convert(&["--output-dir", "/tmp", "f.bnf"]).is_err());
     }
 
     #[test]
     fn generate_alone_is_valid() {
-        let args = parse(&["ts-bnf-tool", "--generate", "f.bnf"]).unwrap();
-        assert!(args.generate);
-        assert!(!args.rules_only);
-        assert!(args.output_dir.is_none());
+        let (_, rules_only, generate, _, output_dir) =
+            convert_fields(parse_convert(&["--generate", "f.bnf"]).unwrap());
+        assert!(generate);
+        assert!(!rules_only);
+        assert!(output_dir.is_none());
     }
 
     #[test]
     fn generate_with_output_dir_is_valid() {
-        let args = parse(&["ts-bnf-tool", "--generate", "--output-dir", "/tmp", "f.bnf"]).unwrap();
-        assert!(args.generate);
-        assert_eq!(args.output_dir.as_deref(), Some("/tmp"));
+        let (_, _, generate, _, output_dir) = convert_fields(
+            parse_convert(&["--generate", "--output-dir", "/tmp", "f.bnf"]).unwrap(),
+        );
+        assert!(generate);
+        assert_eq!(output_dir.as_deref(), Some("/tmp"));
     }
 
     #[test]
     fn rules_only_alone_is_valid() {
-        let args = parse(&["ts-bnf-tool", "--rules-only", "f.bnf"]).unwrap();
-        assert!(args.rules_only);
-        assert!(!args.generate);
+        let (_, rules_only, generate, _, _) =
+            convert_fields(parse_convert(&["--rules-only", "f.bnf"]).unwrap());
+        assert!(rules_only);
+        assert!(!generate);
     }
 
     #[test]
-    fn help_flag_exits_successfully_and_lists_all_flags() {
-        let err = Args::try_parse_from(["ts-bnf-tool", "--help"]).unwrap_err();
+    fn help_flag_lists_subcommands() {
+        let err = Cli::try_parse_from(["ts-bnf-tool", "--help"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
         let help = err.to_string();
-        assert!(help.contains("--rules-only"));
-        assert!(help.contains("--generate"));
-        assert!(help.contains("--name"));
-        assert!(help.contains("--output-dir"));
+        assert!(help.contains("convert"));
+        assert!(help.contains("firsts"));
     }
 
     #[test]
     fn stdin_dash_is_valid_filename() {
-        let args = parse(&["ts-bnf-tool", "-"]).unwrap();
-        assert_eq!(args.filename, "-");
+        let (filename, ..) = convert_fields(parse_convert(&["-"]).unwrap());
+        assert_eq!(filename, "-");
     }
 
     #[test]
@@ -218,5 +303,14 @@ mod tests {
             resolve_output_dir(None, "mygrammar"),
             PathBuf::from("mygrammar")
         );
+    }
+
+    #[test]
+    fn firsts_subcommand_parses_filename() {
+        let cli = Cli::try_parse_from(["ts-bnf-tool", "firsts", "grammar.bnf"]).unwrap();
+        match cli.command {
+            Subcommands::Firsts { filename } => assert_eq!(filename, "grammar.bnf"),
+            _ => panic!("expected Firsts"),
+        }
     }
 }

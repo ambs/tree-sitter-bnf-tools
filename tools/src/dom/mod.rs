@@ -1,3 +1,5 @@
+/// Semantic analyses over a parsed grammar (FIRST sets, nullability, …).
+pub mod analysis;
 /// Parse and conversion error types.
 mod error;
 /// The complete grammar structure and cross-reference validation.
