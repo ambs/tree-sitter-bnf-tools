@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+#### `ts-bnf-tool`
+- **Breaking:** subcommand is now required. `ts-bnf-tool <file>` no longer works;
+  use `ts-bnf-tool convert <file>` instead.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added

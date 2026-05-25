@@ -50,9 +50,6 @@ enum Subcommands {
     },
 }
 
-/// Known subcommand names; used by the default-injection logic in `main`.
-const SUBCOMMANDS: &[&str] = &["convert", "firsts"];
-
 /// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
 fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
     output_dir
@@ -122,24 +119,7 @@ fn display_terminal<'a>(t: &'a FirstTerminal<'a>) -> &'a str {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Inject "convert" when the first argument is not a known subcommand or a
-    // help/version flag, so that `ts-bnf-tool <file>` keeps working.
-    let raw: Vec<String> = std::env::args().collect();
-    let args: Vec<String> = if raw.len() >= 2
-        && !SUBCOMMANDS.contains(&raw[1].as_str())
-        && raw[1] != "--help"
-        && raw[1] != "-h"
-        && raw[1] != "--version"
-        && raw[1] != "-V"
-    {
-        let mut v = raw;
-        v.insert(1, "convert".to_string());
-        v
-    } else {
-        raw
-    };
-
-    let cli = Cli::parse_from(args);
+    let cli = Cli::parse();
 
     match cli.command {
         Subcommands::Convert {
@@ -334,33 +314,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn default_injection_inserts_convert() {
-        // Simulate the injection logic: a bare filename → "convert" is prepended.
-        let raw = vec!["ts-bnf-tool".to_string(), "grammar.bnf".to_string()];
-        let injected: Vec<String> = if raw.len() >= 2
-            && !SUBCOMMANDS.contains(&raw[1].as_str())
-            && raw[1] != "--help"
-            && raw[1] != "-h"
-        {
-            let mut v = raw;
-            v.insert(1, "convert".to_string());
-            v
-        } else {
-            raw
-        };
-        let cli = Cli::try_parse_from(injected).unwrap();
-        assert!(matches!(cli.command, Subcommands::Convert { .. }));
-    }
-
-    #[test]
-    fn default_injection_skips_help() {
-        let raw = vec!["ts-bnf-tool".to_string(), "--help".to_string()];
-        // --help is excluded from injection
-        let should_inject = raw.len() >= 2
-            && !SUBCOMMANDS.contains(&raw[1].as_str())
-            && raw[1] != "--help"
-            && raw[1] != "-h";
-        assert!(!should_inject);
-    }
 }
