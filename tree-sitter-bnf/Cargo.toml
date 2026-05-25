@@ -1,14 +1,14 @@
 [package]
 name = "tree-sitter-bnf"
 description = "A simple BNF syntax parser"
-version = "0.1.0"
-authors = ["Alberto Simões <ambs@cpan.org>"]
-license = "MIT"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
 readme = "README.md"
 keywords = ["incremental", "parsing", "tree-sitter", "bnf"]
 categories = ["parser-implementations", "parsing", "text-editors"]
 repository = "https://github.com/tree-sitter/tree-sitter-bnf"
-edition = "2021"
 autoexamples = false
 
 build = "bindings/rust/build.rs"

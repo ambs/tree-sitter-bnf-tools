@@ -1,9 +1,10 @@
 [package]
 name = "ts-bnf-tool"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "CLI tool for converting BNF grammars to tree-sitter notation"
-license = "MIT"
 
 [[bin]]
 name = "ts-bnf-tool"

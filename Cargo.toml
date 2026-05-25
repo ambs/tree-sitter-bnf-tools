@@ -2,6 +2,12 @@
 members = ["tree-sitter-bnf", "tools"]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Alberto Simões <ambs@cpan.org>"]
+
 [workspace.lints.rust]
 missing_docs = "warn"
 
