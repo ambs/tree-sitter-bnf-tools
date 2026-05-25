@@ -35,6 +35,6 @@ jobs:
       - run: make fmt-check
       - run: make lint
       - run: make test
-      - run: cargo package -p tree-sitter-bnf --no-verify
+      - run: cargo package -p tree-sitter-bnf --no-verify --allow-dirty
       # ts-bnf-tool packaging requires tree-sitter-bnf to be on crates.io first;
-      # add `cargo package -p ts-bnf-tool --no-verify` here after first publish.
+      # add `cargo package -p ts-bnf-tool --no-verify --allow-dirty` here after first publish.
