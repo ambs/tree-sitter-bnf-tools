@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "CLI tool for converting BNF grammars to tree-sitter notation"
+repository = "https://github.com/ambs/tree-sitter-bnf-tools"
+readme = "../README.md"
+keywords = ["bnf", "tree-sitter", "parser", "grammar", "cli"]
+categories = ["command-line-utilities", "parser-implementations"]
 
 [[bin]]
 name = "ts-bnf-tool"
