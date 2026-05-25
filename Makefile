@@ -44,10 +44,10 @@ fmt-check: ## Check formatting without modifying
 	$(CARGO) fmt --check
 
 publish: ## Publish crates to crates.io (tree-sitter-bnf first, then ts-bnf-tool)
-	$(CARGO) publish -p tree-sitter-bnf
+	$(CARGO) publish -p tree-sitter-bnf --allow-dirty
 	@echo "Waiting for crates.io index to update..."
 	sleep 30
-	$(CARGO) publish -p ts-bnf-tool
+	$(CARGO) publish -p ts-bnf-tool --allow-dirty
 
 clean: ## Remove build artifacts
 	$(CARGO) clean
