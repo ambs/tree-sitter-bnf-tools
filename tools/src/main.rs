@@ -1,10 +1,5 @@
 //! CLI tool for converting BNF grammars to tree-sitter `grammar.js` notation.
 
-/// DOM types representing the BNF grammar as a Rust value tree.
-mod dom;
-/// Visitor functions that walk a tree-sitter parse tree and build the DOM.
-mod visitors;
-
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -15,8 +10,8 @@ use std::process::Command;
 
 use clap::Parser;
 
-use crate::dom::{ParseError, Scaffold};
-use crate::visitors::visit_grammar;
+use ts_bnf_tool::dom::{ParseError, Scaffold};
+use ts_bnf_tool::visitors::visit_grammar;
 
 /// Command-line arguments for the `ts-bnf-tool` binary.
 #[derive(Parser, Debug)]

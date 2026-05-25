@@ -10,6 +10,10 @@ readme = "../README.md"
 keywords = ["bnf", "tree-sitter", "parser", "grammar", "cli"]
 categories = ["command-line-utilities", "parser-implementations"]
 
+[lib]
+name = "ts_bnf_tool"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ts-bnf-tool"
 path = "src/main.rs"
