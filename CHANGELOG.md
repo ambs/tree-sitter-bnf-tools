@@ -1,0 +1,37 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+## [0.1.0] - 2026-05-25
+
+### Added
+
+#### `tree-sitter-bnf`
+- Tree-sitter grammar and Rust bindings for a BNF dialect
+- Syntax highlight queries (`highlights.scm`, `injections.scm`, `locals.scm`, `tags.scm`, `indents.scm`)
+- Self-describing grammar (`grammar/bnf.bnf`)
+
+#### `ts-bnf-tool`
+- Convert `.bnf` files to tree-sitter `grammar.js` notation (default output)
+- `--rules-only`: print rule bodies without boilerplate
+- `--generate`: write `grammar.js` and run `tree-sitter generate` in one step
+- `--name`, `--output-dir`: control grammar name and output location
+- Read from stdin via `-` filename
+- BNF dialect features:
+  - Literals (`'text'`, `"text"`), patterns (`/regex/`), non-terminal references
+  - Sequences, alternatives (`|`), grouping
+  - Kleene operators: `*`, `+`, `?`
+  - Token expressions (`<< >>`) and token-immediate expressions (`<<! >>`)
+  - Field labels (`name: symbol`)
+  - Alias groups (`(body => name)`)
+  - Precedence annotations (`%prec`, `%prec.left`, `%prec.right`, `%prec.dynamic`)
+  - Grammar directives: `%conflicts`, `%inline`, `%supertypes`, `%extras`
+  - Line comments (`#`)
+  - Warning on undefined rule references in directive and rule bodies
+
+[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ambs/tree-sitter-bnf-tools/releases/tag/v0.1.0
