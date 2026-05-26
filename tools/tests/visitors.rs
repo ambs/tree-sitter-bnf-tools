@@ -11,6 +11,7 @@ fn parse(src: &str) -> String {
     let tree = parser.parse(src, None).unwrap();
     visit_grammar(&tree.root_node(), src)
         .unwrap()
+        .0
         .to_string()
         .trim()
         .to_string()
@@ -22,7 +23,7 @@ fn parse_grammar(src: &str) -> Grammar {
         .set_language(&tree_sitter_bnf::LANGUAGE.into())
         .unwrap();
     let tree = parser.parse(src, None).unwrap();
-    visit_grammar(&tree.root_node(), src).unwrap()
+    visit_grammar(&tree.root_node(), src).unwrap().0
 }
 
 #[test]

@@ -11,7 +11,7 @@ use std::process::Command;
 use clap::{Parser, Subcommand};
 
 use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
-use ts_bnf_tool::dom::{ParseError, Scaffold};
+use ts_bnf_tool::dom::{Grammar, ParseError, Scaffold};
 use ts_bnf_tool::visitors::visit_grammar;
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -45,6 +45,11 @@ enum Subcommands {
     },
     /// Print FIRST sets for each rule in the grammar
     Firsts {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+    },
+    /// Run all static checks and exit non-zero on any issue (for CI)
+    Check {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
     },
@@ -111,6 +116,30 @@ fn load_grammar_source(filename: &str) -> Result<String, Box<dyn Error>> {
     Ok(source)
 }
 
+/// Parses `filename` into a grammar DOM.
+///
+/// Prints any diagnostic warnings to stderr.
+/// Returns the grammar and `true` if any warnings were emitted.
+fn parse_file(filename: &str) -> Result<(Grammar, bool), Box<dyn Error>> {
+    let source_code = load_grammar_source(filename)?;
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .expect("Error loading BNF grammar");
+    let tree = parser
+        .parse(&source_code, None)
+        .ok_or(ParseError::ParseFailed)?;
+    let root_node = tree.root_node();
+    if root_node.has_error() {
+        return Err(ParseError::SyntaxError.into());
+    }
+    let (grammar, warnings) = visit_grammar(&root_node, &source_code)?;
+    for w in &warnings {
+        eprintln!("{w}");
+    }
+    Ok((grammar, !warnings.is_empty()))
+}
+
 /// Formats a single [`FirstTerminal`] for display: its raw string value as stored.
 fn display_terminal<'a>(t: &'a FirstTerminal<'a>) -> &'a str {
     match t {
@@ -129,23 +158,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             name,
             output_dir,
         } => {
-            let source_code = load_grammar_source(&filename)?;
-
-            let mut parser = tree_sitter::Parser::new();
-            parser
-                .set_language(&tree_sitter_bnf::LANGUAGE.into())
-                .expect("Error loading BNF grammar");
-
-            let tree = parser
-                .parse(&source_code, None)
-                .ok_or(ParseError::ParseFailed)?;
-
-            let root_node = tree.root_node();
-            if root_node.has_error() {
-                return Err(ParseError::SyntaxError.into());
-            }
-
-            let grammar = visit_grammar(&root_node, &source_code)?;
+            let (grammar, _) = parse_file(&filename)?;
             let name = grammar_name(&filename, name.as_deref());
 
             if rules_only {
@@ -168,23 +181,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         Subcommands::Firsts { filename } => {
-            let source_code = load_grammar_source(&filename)?;
-
-            let mut parser = tree_sitter::Parser::new();
-            parser
-                .set_language(&tree_sitter_bnf::LANGUAGE.into())
-                .expect("Error loading BNF grammar");
-
-            let tree = parser
-                .parse(&source_code, None)
-                .ok_or(ParseError::ParseFailed)?;
-
-            let root_node = tree.root_node();
-            if root_node.has_error() {
-                return Err(ParseError::SyntaxError.into());
-            }
-
-            let grammar = visit_grammar(&root_node, &source_code)?;
+            let (grammar, _) = parse_file(&filename)?;
             let sets = first_sets(&grammar);
 
             let mut rules: Vec<&str> = sets.keys().copied().collect();
@@ -194,6 +191,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut terminals: Vec<&str> = sets[rule].iter().map(display_terminal).collect();
                 terminals.sort_unstable();
                 println!("{}: {}", rule, terminals.join(", "));
+            }
+        }
+
+        Subcommands::Check { filename } => {
+            let (_, had_warnings) = parse_file(&filename)?;
+            if had_warnings {
+                std::process::exit(1);
             }
         }
     }
@@ -271,6 +275,25 @@ mod tests {
         let help = err.to_string();
         assert!(help.contains("convert"));
         assert!(help.contains("firsts"));
+        assert!(help.contains("check"));
+    }
+
+    #[test]
+    fn check_subcommand_parses_filename() {
+        let cli = Cli::try_parse_from(["ts-bnf-tool", "check", "grammar.bnf"]).unwrap();
+        match cli.command {
+            Subcommands::Check { filename } => assert_eq!(filename, "grammar.bnf"),
+            _ => panic!("expected Check"),
+        }
+    }
+
+    #[test]
+    fn check_subcommand_accepts_stdin_dash() {
+        let cli = Cli::try_parse_from(["ts-bnf-tool", "check", "-"]).unwrap();
+        match cli.command {
+            Subcommands::Check { filename } => assert_eq!(filename, "-"),
+            _ => panic!("expected Check"),
+        }
     }
 
     #[test]

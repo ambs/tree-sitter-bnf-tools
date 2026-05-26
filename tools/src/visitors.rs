@@ -15,7 +15,12 @@ fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
 }
 
 /// Converts the root `grammar` tree-sitter node into a [`Grammar`] DOM.
-pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, ParseError> {
+///
+/// Returns the grammar and any diagnostic messages from cross-reference checks.
+pub fn visit_grammar(
+    node: &Node<'_>,
+    source_code: &str,
+) -> Result<(Grammar, Vec<String>), ParseError> {
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar::new();
     let count = node.child_count() as u32;
@@ -49,8 +54,8 @@ pub fn visit_grammar(node: &Node<'_>, source_code: &str) -> Result<Grammar, Pars
             _ => {}
         }
     }
-    grammar.check();
-    Ok(grammar)
+    let warnings = grammar.check();
+    Ok((grammar, warnings))
 }
 
 /// Converts an `inlineDirective` node into a flat list of rule names.
