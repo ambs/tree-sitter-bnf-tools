@@ -146,6 +146,7 @@ Options:
   --rules-only           Print rule bodies only, without grammar.js boilerplate
   --generate             Write grammar.js to a directory and run tree-sitter generate
   --output-dir <DIR>     Output directory for --generate (default: ./<name>)
+  -n, --no-check         Skip static checks; suppress all warnings and convert unconditionally
 ```
 
 **Print rule bodies only**
