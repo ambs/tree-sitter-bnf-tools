@@ -1,4 +1,4 @@
-//! Semantic analyses over a [`Grammar`]: FIRST sets, and more to come.
+//! Semantic analyses over a [`Grammar`]: FIRST sets, left-recursion detection, and more to come.
 //!
 //! All functions are pure: they take a `&Grammar` and return computed results
 //! without modifying the grammar.
@@ -8,6 +8,7 @@
 //! | Function | Returns | Purpose |
 //! |---|---|---|
 //! | [`first_sets`] | Leading terminals per rule | LL(1) feasibility checks |
+//! | [`left_recursive_rules`] | Left-recursive rule names | Detect rules tree-sitter cannot handle |
 //!
 //! # FIRST sets
 //!

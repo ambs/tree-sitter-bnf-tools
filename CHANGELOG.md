@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### `ts-bnf-tool`
+- `firsts` subcommand: prints the FIRST set of each rule — the terminals that
+  can appear as the first token of any string derived from that rule
+- `check` subcommand: runs all static checks and exits non-zero on any issue;
+  designed for CI pipelines
+- Left-recursion detection in `check`: flags directly and mutually left-recursive
+  rules with a diagnostic warning; tree-sitter cannot generate a parser for
+  left-recursive grammars
+
 ### Changed
 
 #### `ts-bnf-tool`
