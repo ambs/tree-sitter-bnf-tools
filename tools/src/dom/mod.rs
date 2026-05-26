@@ -1,8 +1,8 @@
-/// Semantic analyses over a parsed grammar (FIRST sets, nullability, …).
+/// Semantic analyses over a parsed grammar (FIRST sets, left-recursion, …).
 pub mod analysis;
 /// Parse and conversion error types.
 mod error;
-/// The complete grammar structure and cross-reference validation.
+/// Cross-reference and structural validation checks on a [`Grammar`].
 mod grammar;
 /// Core grammar node types and their Display representations.
 mod nodes;
@@ -10,9 +10,11 @@ mod nodes;
 mod production;
 /// Renders a [`Grammar`] as a complete `grammar.js` file.
 mod scaffold;
+/// The [`Grammar`] struct and its basic impls.
+mod types;
 
 pub use error::ParseError;
-pub use grammar::Grammar;
 pub use nodes::{GrammarNode, PrecKind};
 pub use production::Production;
 pub use scaffold::Scaffold;
+pub use types::Grammar;

@@ -36,8 +36,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::grammar::Grammar;
 use super::nodes::GrammarNode;
+use super::types::Grammar;
 
 /// Returns `true` if `node` can produce the empty string given the current
 /// set of known-nullable non-terminal names.
@@ -169,6 +169,167 @@ fn collect_first<'g>(
 /// placeholder for a future full implementation.
 fn nullable_rules(_grammar: &Grammar) -> HashSet<&str> {
     HashSet::new()
+}
+
+/// Collects the non-terminals that can appear as the leftmost symbol of `node`.
+///
+/// Similar to [`collect_first`] but tracks non-terminal names instead of terminal
+/// symbols.  Returns `true` if `node` can produce the empty string.
+fn collect_leading_nts<'g>(
+    node: &'g GrammarNode,
+    nullable: &HashSet<&str>,
+    result: &mut HashSet<&'g str>,
+) -> bool {
+    match node {
+        GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => false,
+        GrammarNode::NonTerminal(name) => {
+            result.insert(name.as_str());
+            nullable.contains(name.as_str())
+        }
+        GrammarNode::Sequence(children) => {
+            for child in children {
+                if !collect_leading_nts(child, nullable, result) {
+                    return false;
+                }
+            }
+            true
+        }
+        GrammarNode::Choice(children) => {
+            let mut any_nullable = false;
+            for child in children {
+                if collect_leading_nts(child, nullable, result) {
+                    any_nullable = true;
+                }
+            }
+            any_nullable
+        }
+        GrammarNode::Optional(inner) | GrammarNode::ZeroOrMore(inner) => {
+            collect_leading_nts(inner, nullable, result);
+            true
+        }
+        GrammarNode::OneOrMore(inner)
+        | GrammarNode::Token(inner)
+        | GrammarNode::TokenImmediate(inner) => collect_leading_nts(inner, nullable, result),
+        GrammarNode::Field(_, inner) => collect_leading_nts(inner, nullable, result),
+        GrammarNode::Alias(body, _) => collect_leading_nts(body, nullable, result),
+        GrammarNode::Prec(_, _, inner) => collect_leading_nts(inner, nullable, result),
+    }
+}
+
+/// Returns the left-recursive rules in the grammar, sorted alphabetically.
+///
+/// Each element is `(rule_name, is_direct)`:
+/// - `is_direct = true`: the rule's body can immediately start with the rule
+///   itself (e.g. `expr ::= expr '+' term | term`).
+/// - `is_direct = false`: the rule is mutually left-recursive — it starts with
+///   another rule that transitively starts with it (e.g. `A ::= B …` and
+///   `B ::= A …`).
+///
+/// Tree-sitter cannot handle either form; both cause cryptic parse failures at
+/// grammar-generation time.
+///
+/// # Examples
+///
+/// Direct left-recursion:
+///
+/// ```
+/// use ts_bnf_tool::dom::{Grammar, GrammarNode, Production};
+/// use ts_bnf_tool::dom::analysis::left_recursive_rules;
+///
+/// // expr ::= expr '+' 'n' | 'n'
+/// let g = Grammar {
+///     productions: vec![
+///         Production { name: "expr".into(), body: GrammarNode::Choice(vec![
+///             GrammarNode::Sequence(vec![
+///                 GrammarNode::NonTerminal("expr".into()),
+///                 GrammarNode::TerminalLiteral("'+'".into()),
+///                 GrammarNode::TerminalLiteral("'n'".into()),
+///             ]),
+///             GrammarNode::TerminalLiteral("'n'".into()),
+///         ])},
+///     ],
+///     ..Grammar::new()
+/// };
+/// let lr = left_recursive_rules(&g);
+/// assert_eq!(lr, vec![("expr", true)]);
+/// ```
+///
+/// Mutual left-recursion:
+///
+/// ```
+/// use ts_bnf_tool::dom::{Grammar, GrammarNode, Production};
+/// use ts_bnf_tool::dom::analysis::left_recursive_rules;
+///
+/// // a ::= b 'x' | 'a'   b ::= a 'y' | 'b'
+/// let g = Grammar {
+///     productions: vec![
+///         Production { name: "a".into(), body: GrammarNode::Choice(vec![
+///             GrammarNode::Sequence(vec![
+///                 GrammarNode::NonTerminal("b".into()),
+///                 GrammarNode::TerminalLiteral("'x'".into()),
+///             ]),
+///             GrammarNode::TerminalLiteral("'a'".into()),
+///         ])},
+///         Production { name: "b".into(), body: GrammarNode::Choice(vec![
+///             GrammarNode::Sequence(vec![
+///                 GrammarNode::NonTerminal("a".into()),
+///                 GrammarNode::TerminalLiteral("'y'".into()),
+///             ]),
+///             GrammarNode::TerminalLiteral("'b'".into()),
+///         ])},
+///     ],
+///     ..Grammar::new()
+/// };
+/// let lr = left_recursive_rules(&g);
+/// assert_eq!(lr, vec![("a", false), ("b", false)]);
+/// ```
+pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
+    let nullable = nullable_rules(grammar);
+
+    // One-step: direct leading non-terminals of each rule's body.
+    let one_step: HashMap<&str, HashSet<&str>> = grammar
+        .productions
+        .iter()
+        .map(|p| {
+            let mut result = HashSet::new();
+            collect_leading_nts(&p.body, &nullable, &mut result);
+            (p.name.as_str(), result)
+        })
+        .collect();
+
+    // Transitive closure via fixpoint.
+    let mut transitive = one_step.clone();
+    loop {
+        let snapshot = transitive.clone();
+        let mut changed = false;
+        for prod in &grammar.productions {
+            let rule = prod.name.as_str();
+            let extra: HashSet<&str> = snapshot[rule]
+                .iter()
+                .flat_map(|nt| snapshot.get(nt).into_iter().flatten().copied())
+                .collect();
+            let entry = transitive.get_mut(rule).unwrap();
+            for nt in extra {
+                if entry.insert(nt) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut result: Vec<(&str, bool)> = transitive
+        .iter()
+        .filter(|(rule, nts)| nts.contains(*rule))
+        .map(|(rule, _)| {
+            let is_direct = one_step[*rule].contains(*rule);
+            (*rule, is_direct)
+        })
+        .collect();
+    result.sort_unstable_by_key(|(name, _)| *name);
+    result
 }
 
 /// Computes the FIRST sets for all non-terminals in the grammar.
