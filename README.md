@@ -5,6 +5,7 @@ that converts BNF grammars into tree-sitter `grammar.js` notation.
 
 New to the tool? Start with the **[tutorial](docs/tutorial.md)** for a guided
 introduction with examples. This README is a reference for the full syntax.
+Want syntax highlighting in your editor? See the **[editor setup guide](docs/editors.md)**.
 
 ## Repository structure
 

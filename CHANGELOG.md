@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### `tree-sitter-bnf`
 - `folds.scm`: fold query that marks each `rule` node as foldable, making long
   grammars navigable in editors that support tree-sitter folding
+- `docs/editors.md`: step-by-step setup guide for Neovim (nvim-treesitter) and
+  Helix, covering parser installation, query file placement, and filetype registration
 
 #### `ts-bnf-tool`
 - `firsts` subcommand: prints the FIRST set of each rule — the terminals that
