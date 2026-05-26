@@ -90,8 +90,8 @@ impl Grammar {
             .collect()
     }
 
-    /// Runs all cross-reference checks and prints any warnings to stderr.
-    pub fn check(&self) {
+    /// Runs all cross-reference checks and returns any diagnostic messages.
+    pub fn check(&self) -> Vec<String> {
         let known = self.known_rules();
         let mut warnings = Vec::new();
         warnings.extend(self.conflicts_check(&known));
@@ -99,9 +99,7 @@ impl Grammar {
         warnings.extend(self.supertypes_check(&known));
         warnings.extend(self.extras_check(&known));
         warnings.extend(self.undefined_refs_check(&known));
-        for warning in warnings {
-            eprintln!("{warning}");
-        }
+        warnings
     }
 }
 
