@@ -26,11 +26,25 @@ git merge --ff-only origin/main
 
 Then create the branch from the updated main.
 
+## Changelog
+
+Every PR that adds, changes, or removes user-facing behaviour must include an
+entry in `CHANGELOG.md` under `## [Unreleased]`.
+
+- **Added** — new subcommands, flags, syntax, or query files
+- **Changed** — behaviour changes to existing features (breaking changes noted explicitly)
+- **Fixed** — bug fixes visible to users
+- **Removed** — deprecated items that are now gone
+
+Internal refactors, test additions, and CI changes that have no effect on the
+user-visible interface do not need a changelog entry.
+
 ## Checklist before opening
 
 - [ ] `main` is up to date with `origin/main` (`git fetch origin && git merge --ff-only origin/main`)
 - [ ] Branch is up to date with `main` (`git rebase main`)
 - [ ] `make check` passes
+- [ ] `CHANGELOG.md` updated for any user-facing change
 
 ## Function documentation (issue #70)
 
