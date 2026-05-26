@@ -42,6 +42,9 @@ enum Subcommands {
         /// Output directory for --generate (default: ./<name>)
         #[arg(long, requires = "generate")]
         output_dir: Option<String>,
+        /// Skip static checks; suppress all warnings and convert unconditionally
+        #[arg(long, short = 'n')]
+        no_check: bool,
     },
     /// Print FIRST sets for each rule in the grammar
     Firsts {
@@ -118,9 +121,10 @@ fn load_grammar_source(filename: &str) -> Result<String, Box<dyn Error>> {
 
 /// Parses `filename` into a grammar DOM.
 ///
-/// Prints any diagnostic warnings to stderr.
-/// Returns the grammar and `true` if any warnings were emitted.
-fn parse_file(filename: &str) -> Result<(Grammar, bool), Box<dyn Error>> {
+/// When `run_checks` is `true`, diagnostic warnings are printed to stderr and
+/// the returned bool indicates whether any were emitted.  When `false`, checks
+/// are suppressed and the bool is always `false`.
+fn parse_file(filename: &str, run_checks: bool) -> Result<(Grammar, bool), Box<dyn Error>> {
     let source_code = load_grammar_source(filename)?;
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -134,10 +138,14 @@ fn parse_file(filename: &str) -> Result<(Grammar, bool), Box<dyn Error>> {
         return Err(ParseError::SyntaxError.into());
     }
     let (grammar, warnings) = visit_grammar(&root_node, &source_code)?;
-    for w in &warnings {
-        eprintln!("{w}");
+    if run_checks {
+        for w in &warnings {
+            eprintln!("{w}");
+        }
+        Ok((grammar, !warnings.is_empty()))
+    } else {
+        Ok((grammar, false))
     }
-    Ok((grammar, !warnings.is_empty()))
 }
 
 /// Formats a single [`FirstTerminal`] for display: its raw string value as stored.
@@ -157,8 +165,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             generate,
             name,
             output_dir,
+            no_check,
         } => {
-            let (grammar, _) = parse_file(&filename)?;
+            let (grammar, _) = parse_file(&filename, !no_check)?;
             let name = grammar_name(&filename, name.as_deref());
 
             if rules_only {
@@ -181,7 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         Subcommands::Firsts { filename } => {
-            let (grammar, _) = parse_file(&filename)?;
+            let (grammar, _) = parse_file(&filename, true)?;
             let sets = first_sets(&grammar);
 
             let mut rules: Vec<&str> = sets.keys().copied().collect();
@@ -195,7 +204,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         Subcommands::Check { filename } => {
-            let (_, had_warnings) = parse_file(&filename)?;
+            let (_, had_warnings) = parse_file(&filename, true)?;
             if had_warnings {
                 std::process::exit(1);
             }
@@ -219,7 +228,7 @@ mod tests {
         Cli::try_parse_from(full)
     }
 
-    fn convert_fields(cli: Cli) -> (String, bool, bool, Option<String>, Option<String>) {
+    fn convert_fields(cli: Cli) -> (String, bool, bool, Option<String>, Option<String>, bool) {
         match cli.command {
             Subcommands::Convert {
                 filename,
@@ -227,7 +236,8 @@ mod tests {
                 generate,
                 name,
                 output_dir,
-            } => (filename, rules_only, generate, name, output_dir),
+                no_check,
+            } => (filename, rules_only, generate, name, output_dir, no_check),
             _ => panic!("expected Convert"),
         }
     }
@@ -244,7 +254,7 @@ mod tests {
 
     #[test]
     fn generate_alone_is_valid() {
-        let (_, rules_only, generate, _, output_dir) =
+        let (_, rules_only, generate, _, output_dir, _) =
             convert_fields(parse_convert(&["--generate", "f.bnf"]).unwrap());
         assert!(generate);
         assert!(!rules_only);
@@ -253,7 +263,7 @@ mod tests {
 
     #[test]
     fn generate_with_output_dir_is_valid() {
-        let (_, _, generate, _, output_dir) = convert_fields(
+        let (_, _, generate, _, output_dir, _) = convert_fields(
             parse_convert(&["--generate", "--output-dir", "/tmp", "f.bnf"]).unwrap(),
         );
         assert!(generate);
@@ -262,10 +272,28 @@ mod tests {
 
     #[test]
     fn rules_only_alone_is_valid() {
-        let (_, rules_only, generate, _, _) =
+        let (_, rules_only, generate, _, _, _) =
             convert_fields(parse_convert(&["--rules-only", "f.bnf"]).unwrap());
         assert!(rules_only);
         assert!(!generate);
+    }
+
+    #[test]
+    fn no_check_flag_is_false_by_default() {
+        let (.., no_check) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
+        assert!(!no_check);
+    }
+
+    #[test]
+    fn no_check_long_flag_sets_true() {
+        let (.., no_check) = convert_fields(parse_convert(&["--no-check", "f.bnf"]).unwrap());
+        assert!(no_check);
+    }
+
+    #[test]
+    fn no_check_short_flag_sets_true() {
+        let (.., no_check) = convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
+        assert!(no_check);
     }
 
     #[test]

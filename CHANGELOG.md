@@ -16,6 +16,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Left-recursion detection in `check`: flags directly and mutually left-recursive
   rules with a diagnostic warning; tree-sitter cannot generate a parser for
   left-recursive grammars
+- `convert --no-check` (`-n`): skips all static checks and suppresses warnings,
+  converting unconditionally; useful when warnings are expected or handled elsewhere
 
 ### Changed
 
