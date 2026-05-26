@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### `tree-sitter-bnf`
+- `folds.scm`: fold query that marks each `rule` node as foldable, making long
+  grammars navigable in editors that support tree-sitter folding
+
 #### `ts-bnf-tool`
 - `firsts` subcommand: prints the FIRST set of each rule — the terminals that
   can appear as the first token of any string derived from that rule

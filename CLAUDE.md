@@ -26,7 +26,7 @@ git merge --ff-only origin/main
 
 Then create the branch from the updated main.
 
-## Changelog (issue #38)
+## Changelog
 
 Every PR that adds, changes, or removes user-facing behaviour must include an
 entry in `CHANGELOG.md` under `## [Unreleased]`.
