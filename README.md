@@ -126,7 +126,7 @@ expr -> term ('+' term)* ;
 term -> /[0-9]+/ | '(' expr ')' ;
 ```
 
-Running `ts-bnf-tool convert expr.bnf` (or just `ts-bnf-tool expr.bnf`) outputs:
+Running `ts-bnf-tool convert expr.bnf` outputs:
 
 ```js
 module.exports = grammar({
