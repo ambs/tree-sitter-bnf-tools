@@ -103,15 +103,18 @@ make build
 **Usage**
 
 ```sh
-ts-bnf-tool [OPTIONS] <file.bnf>
-
-Options:
-  --name <NAME>          Grammar name (default: filename stem)
-  --rules-only           Print rule bodies only, without grammar.js boilerplate
-  --generate             Write grammar.js to a directory and run tree-sitter generate
-  --output-dir <DIR>     Output directory for --generate (default: ./<name>)
-  -h, --help             Print help
+ts-bnf-tool <SUBCOMMAND> [OPTIONS] <file.bnf>
 ```
+
+Pass `-` as the filename to read from stdin.
+
+| Subcommand | Purpose |
+|------------|---------|
+| `convert` | Convert BNF to `grammar.js` (default) |
+| `firsts` | Print FIRST sets for each rule |
+| `check` | Run static checks; exit non-zero on any issue |
+
+### convert
 
 **Print a complete `grammar.js` scaffold** (default)
 
@@ -123,7 +126,7 @@ expr -> term ('+' term)* ;
 term -> /[0-9]+/ | '(' expr ')' ;
 ```
 
-Running `ts-bnf-tool expr.bnf` outputs:
+Running `ts-bnf-tool convert expr.bnf` outputs:
 
 ```js
 module.exports = grammar({
@@ -136,10 +139,19 @@ module.exports = grammar({
 });
 ```
 
+Options:
+
+```
+  --name <NAME>          Grammar name (default: filename stem)
+  --rules-only           Print rule bodies only, without grammar.js boilerplate
+  --generate             Write grammar.js to a directory and run tree-sitter generate
+  --output-dir <DIR>     Output directory for --generate (default: ./<name>)
+```
+
 **Print rule bodies only**
 
 ```sh
-ts-bnf-tool --rules-only expr.bnf
+ts-bnf-tool convert --rules-only expr.bnf
 ```
 
 ```
@@ -150,13 +162,57 @@ term -> choice(/[0-9]+/, seq('(', $.expr, ')'))
 **Generate a tree-sitter project**
 
 ```sh
-ts-bnf-tool --generate expr.bnf
+ts-bnf-tool convert --generate expr.bnf
 # creates ./expr/grammar.js and runs tree-sitter generate
 # producing ./expr/src/parser.c
 
-ts-bnf-tool --generate --output-dir ~/parsers/arithmetic --name arithmetic expr.bnf
+ts-bnf-tool convert --generate --output-dir ~/parsers/arithmetic --name arithmetic expr.bnf
 # creates the project at the specified path with an explicit grammar name
 ```
+
+### firsts
+
+Prints the FIRST set of each rule — the set of terminals that can appear as the
+first token of any string the rule can produce. Useful for spotting LL(1)
+ambiguities: if two alternatives in a `choice(…)` share a terminal in their
+FIRST sets, a single token of look-ahead cannot distinguish them.
+
+```sh
+ts-bnf-tool firsts expr.bnf
+```
+
+```
+expr: '+', /[0-9]+/, '('
+term: /[0-9]+/, '('
+```
+
+### check
+
+Runs all static checks and exits with a non-zero status if any issue is found.
+Designed for CI pipelines.
+
+```sh
+ts-bnf-tool check grammar.bnf
+```
+
+Checks performed:
+
+| Check | Example warning |
+|-------|----------------|
+| Undefined rule references | `warning: undefined rule reference 'foo'` |
+| Undefined `%conflicts` rules | `warning: %conflicts references undefined rule 'foo'` |
+| Undefined `%inline` rules | `warning: %inline references undefined rule 'foo'` |
+| Undefined `%supertypes` rules | `warning: %supertypes references undefined rule 'foo'` |
+| Undefined `%extras` rules | `warning: %extras references undefined rule 'foo'` |
+| Direct left-recursion | `warning: rule 'expr' is directly left-recursive` |
+| Mutual left-recursion | `warning: rule 'a' is mutually left-recursive` |
+
+Left-recursive rules are flagged because tree-sitter cannot handle them — they
+cause cryptic failures during parser generation. A rule is *directly*
+left-recursive if its own name can appear as the first symbol of one of its
+alternatives (e.g. `expr -> expr '+' term | term`). It is *mutually*
+left-recursive if two or more rules form a cycle where each can start with
+the next (e.g. `a -> b 'x' | 'a'` and `b -> a 'y' | 'b'`).
 
 ## Development
 

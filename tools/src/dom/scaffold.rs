@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
-use super::grammar::Grammar;
+use super::types::Grammar;
 
 /// A wrapper that renders a [`Grammar`] as a complete `grammar.js` file.
 pub struct Scaffold<'a> {

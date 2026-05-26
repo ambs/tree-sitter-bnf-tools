@@ -438,6 +438,81 @@ The resulting directory is a complete tree-sitter language package, ready for
 
 ---
 
+---
+
+## Analysing a grammar
+
+### Checking for issues
+
+`ts-bnf-tool check` runs all static checks on a grammar file and exits with a
+non-zero status if any issue is found. This makes it easy to wire into a CI
+pipeline:
+
+```sh
+ts-bnf-tool check json.bnf
+echo $?   # 0 if clean, 1 if any warnings
+```
+
+Detected issues include undefined rule references, directives that name
+non-existent rules, and left-recursive rules. Left-recursion is particularly
+important because tree-sitter cannot generate a parser for left-recursive
+grammars and the resulting error messages are cryptic.
+
+A directly left-recursive rule references itself as the first symbol of one of
+its alternatives:
+
+```bnf
+# BAD — directly left-recursive
+expr -> expr '+' term | term ;
+```
+
+```
+warning: rule 'expr' is directly left-recursive
+```
+
+Fix it by rewriting the grammar to use right-recursion or a repetition operator:
+
+```bnf
+# OK — right-recursive (or use repeat)
+expr -> term ('+' term)* ;
+```
+
+Mutual left-recursion arises when two or more rules form a cycle:
+
+```bnf
+# BAD — mutually left-recursive
+a -> b 'x' | 'a' ;
+b -> a 'y' | 'b' ;
+```
+
+```
+warning: rule 'a' is mutually left-recursive
+warning: rule 'b' is mutually left-recursive
+```
+
+### Inspecting FIRST sets
+
+`ts-bnf-tool firsts` prints the FIRST set of each rule — the set of terminals
+that can appear as the very first token of any string the rule can derive. This
+is useful for understanding LL(1) feasibility: if two alternatives in a
+`choice(…)` share a terminal, a single token of look-ahead cannot tell them
+apart.
+
+```sh
+ts-bnf-tool firsts json.bnf
+```
+
+```
+array: '['
+number: /\-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+object: '{'
+pair: '"'
+string: '"'
+value: '"', '[', 'false', 'null', 'true', '{', /\-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+```
+
+---
+
 ## What is not supported
 
 A few constructs from other BNF/EBNF variants are not recognized. See the
