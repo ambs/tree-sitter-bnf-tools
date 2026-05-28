@@ -68,8 +68,8 @@ pub fn visit_grammar(
     Ok((grammar, warnings))
 }
 
-/// Converts an `inlineDirective` node into a flat list of rule names.
-fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
+/// Collects the UTF-8 text of every named child of `node` into a `Vec<String>`.
+fn collect_named_text_children(node: &Node<'_>, source_code: &str) -> Vec<String> {
     (0..node.named_child_count() as u32)
         .map(|i| {
             node.named_child(i)
@@ -79,32 +79,21 @@ fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+/// Converts an `inlineDirective` node into a flat list of rule names.
+fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
+    collect_named_text_children(node, source_code)
 }
 
 /// Converts an `extrasDirective` node into a flat list of pattern strings and rule names.
 fn visit_extras_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
-    (0..node.named_child_count() as u32)
-        .map(|i| {
-            node.named_child(i)
-                .expect("named child index in bounds")
-                .utf8_text(source_code.as_bytes())
-                .expect("valid UTF-8")
-                .to_string()
-        })
-        .collect()
+    collect_named_text_children(node, source_code)
 }
 
 /// Converts a `supertypesDirective` node into a flat list of rule names.
 fn visit_supertypes_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
-    (0..node.named_child_count() as u32)
-        .map(|i| {
-            node.named_child(i)
-                .expect("named child index in bounds")
-                .utf8_text(source_code.as_bytes())
-                .expect("valid UTF-8")
-                .to_string()
-        })
-        .collect()
+    collect_named_text_children(node, source_code)
 }
 
 /// Converts a `conflictsDirective` node into a list of conflict groups (lists of rule names).
