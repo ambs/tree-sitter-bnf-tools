@@ -1,29 +1,14 @@
 //! Integration tests for the BNF → grammar.js visitor pipeline.
 
 use ts_bnf_tool::dom::Grammar;
-use ts_bnf_tool::visitors::visit_grammar;
+use ts_bnf_tool::visitors::parse_source;
 
 fn parse(src: &str) -> String {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_bnf::LANGUAGE.into())
-        .unwrap();
-    let tree = parser.parse(src, None).unwrap();
-    visit_grammar(&tree.root_node(), src)
-        .unwrap()
-        .0
-        .to_string()
-        .trim()
-        .to_string()
+    parse_source(src).unwrap().0.to_string().trim().to_string()
 }
 
 fn parse_grammar(src: &str) -> Grammar {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_bnf::LANGUAGE.into())
-        .unwrap();
-    let tree = parser.parse(src, None).unwrap();
-    visit_grammar(&tree.root_node(), src).unwrap().0
+    parse_source(src).unwrap().0
 }
 
 #[test]

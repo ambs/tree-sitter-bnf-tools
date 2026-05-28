@@ -2,6 +2,16 @@ use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
 use tree_sitter::Node;
 
+/// Parses a BNF source string and returns the [`Grammar`] DOM and any diagnostics.
+pub fn parse_source(src: &str) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .map_err(|_| ParseError::ParseFailed)?;
+    let tree = parser.parse(src, None).ok_or(ParseError::ParseFailed)?;
+    visit_grammar(&tree.root_node(), src)
+}
+
 /// Returns `Ok(())` if `node.kind() == node_type`, otherwise an [`ParseError::UnexpectedNodeType`] error.
 fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
     if node.kind() != node_type {
