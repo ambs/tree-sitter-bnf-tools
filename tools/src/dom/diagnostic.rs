@@ -62,7 +62,10 @@ mod tests {
     #[test]
     fn error_display() {
         let d = Diagnostic::error("rule 'expr' is directly left-recursive");
-        assert_eq!(d.to_string(), "error: rule 'expr' is directly left-recursive");
+        assert_eq!(
+            d.to_string(),
+            "error: rule 'expr' is directly left-recursive"
+        );
     }
 
     #[test]

@@ -11,7 +11,9 @@ impl Grammar {
             .iter()
             .flatten()
             .filter(|name| !known.contains(name.as_str()))
-            .map(|name| Diagnostic::warning(format!("%conflicts references undefined rule '{name}'")))
+            .map(|name| {
+                Diagnostic::warning(format!("%conflicts references undefined rule '{name}'"))
+            })
             .collect()
     }
 
@@ -29,7 +31,9 @@ impl Grammar {
         self.supertypes
             .iter()
             .filter(|name| !known.contains(name.as_str()))
-            .map(|name| Diagnostic::warning(format!("%supertypes references undefined rule '{name}'")))
+            .map(|name| {
+                Diagnostic::warning(format!("%supertypes references undefined rule '{name}'"))
+            })
             .collect()
     }
 
@@ -356,6 +360,8 @@ mod tests {
             ..Grammar::new()
         };
         let diagnostics = g.check();
-        assert!(!diagnostics.iter().any(|d| d.message.contains("left-recursive")));
+        assert!(!diagnostics
+            .iter()
+            .any(|d| d.message.contains("left-recursive")));
     }
 }

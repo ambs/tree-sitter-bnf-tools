@@ -124,7 +124,10 @@ fn load_grammar_source(filename: &str) -> Result<String, Box<dyn Error>> {
 /// When `run_checks` is `true`, the returned [`Vec<Diagnostic>`] contains all diagnostics
 /// from cross-reference and static checks.  When `false`, checks are suppressed and the
 /// returned vec is always empty.
-fn parse_file(filename: &str, run_checks: bool) -> Result<(Grammar, Vec<Diagnostic>), Box<dyn Error>> {
+fn parse_file(
+    filename: &str,
+    run_checks: bool,
+) -> Result<(Grammar, Vec<Diagnostic>), Box<dyn Error>> {
     let source_code = load_grammar_source(filename)?;
     let mut parser = tree_sitter::Parser::new();
     parser
