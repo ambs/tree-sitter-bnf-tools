@@ -15,6 +15,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Helix, covering parser installation, query file placement, and filetype registration
 
 #### `ts-bnf-tool`
+- `visitors::parse_source`: new public library function that parses a BNF source
+  string and returns the `Grammar` DOM and diagnostics, eliminating duplicated
+  parser setup boilerplate in consumers
 - `firsts` subcommand: prints the FIRST set of each rule — the terminals that
   can appear as the first token of any string derived from that rule
 - `check` subcommand: runs all static checks and exits non-zero on any issue;
