@@ -70,6 +70,9 @@ impl Grammar {
     }
 
     /// Runs all cross-reference checks and returns any diagnostics.
+    ///
+    /// Diagnostics are sorted by message so output is stable across runs regardless
+    /// of `HashSet` iteration order in the individual checks.
     pub fn check(&self) -> Vec<Diagnostic> {
         let known = self.known_rules();
         let mut diagnostics = Vec::new();
@@ -79,6 +82,7 @@ impl Grammar {
         diagnostics.extend(self.extras_check(&known));
         diagnostics.extend(self.undefined_refs_check(&known));
         diagnostics.extend(self.left_recursive_check());
+        diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
     }
 }
@@ -281,6 +285,18 @@ mod tests {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("ghost".into());
         assert_eq!(g.undefined_refs_check(&g.known_rules()).len(), 1);
+    }
+
+    #[test]
+    fn check_diagnostics_are_sorted_by_message() {
+        let mut g = Grammar::new();
+        g.rhs_nonterminals.insert("zebra".into());
+        g.rhs_nonterminals.insert("alpha".into());
+        g.rhs_nonterminals.insert("middle".into());
+        let messages: Vec<String> = g.check().iter().map(|d| d.message.clone()).collect();
+        let mut sorted = messages.clone();
+        sorted.sort();
+        assert_eq!(messages, sorted);
     }
 
     #[test]

@@ -28,6 +28,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `convert --no-check` (`-n`): skips all static checks and suppresses warnings,
   converting unconditionally; useful when warnings are expected or handled elsewhere
 
+### Fixed
+
+#### `ts-bnf-tool`
+- `check` subcommand: diagnostic output is now sorted alphabetically by message,
+  giving stable, reproducible warnings regardless of `HashSet` iteration order
+
 ### Changed
 
 #### `ts-bnf-tool`
