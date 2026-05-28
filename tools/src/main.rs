@@ -11,7 +11,7 @@ use std::process::Command;
 use clap::{Parser, Subcommand};
 
 use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
-use ts_bnf_tool::dom::{Grammar, ParseError, Scaffold};
+use ts_bnf_tool::dom::{Diagnostic, Grammar, ParseError, Scaffold, Severity};
 use ts_bnf_tool::visitors::visit_grammar;
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -121,10 +121,13 @@ fn load_grammar_source(filename: &str) -> Result<String, Box<dyn Error>> {
 
 /// Parses `filename` into a grammar DOM.
 ///
-/// When `run_checks` is `true`, diagnostic warnings are printed to stderr and
-/// the returned bool indicates whether any were emitted.  When `false`, checks
-/// are suppressed and the bool is always `false`.
-fn parse_file(filename: &str, run_checks: bool) -> Result<(Grammar, bool), Box<dyn Error>> {
+/// When `run_checks` is `true`, the returned [`Vec<Diagnostic>`] contains all diagnostics
+/// from cross-reference and static checks.  When `false`, checks are suppressed and the
+/// returned vec is always empty.
+fn parse_file(
+    filename: &str,
+    run_checks: bool,
+) -> Result<(Grammar, Vec<Diagnostic>), Box<dyn Error>> {
     let source_code = load_grammar_source(filename)?;
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -137,14 +140,11 @@ fn parse_file(filename: &str, run_checks: bool) -> Result<(Grammar, bool), Box<d
     if root_node.has_error() {
         return Err(ParseError::SyntaxError.into());
     }
-    let (grammar, warnings) = visit_grammar(&root_node, &source_code)?;
+    let (grammar, diagnostics) = visit_grammar(&root_node, &source_code)?;
     if run_checks {
-        for w in &warnings {
-            eprintln!("{w}");
-        }
-        Ok((grammar, !warnings.is_empty()))
+        Ok((grammar, diagnostics))
     } else {
-        Ok((grammar, false))
+        Ok((grammar, Vec::new()))
     }
 }
 
@@ -167,7 +167,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             output_dir,
             no_check,
         } => {
-            let (grammar, _) = parse_file(&filename, !no_check)?;
+            let (grammar, diagnostics) = parse_file(&filename, !no_check)?;
+            for d in &diagnostics {
+                eprintln!("{d}");
+            }
+            if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+                return Err(
+                    "grammar has errors; conversion aborted (use --no-check to convert anyway)"
+                        .into(),
+                );
+            }
             let name = grammar_name(&filename, name.as_deref());
 
             if rules_only {
@@ -190,7 +199,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         Subcommands::Firsts { filename } => {
-            let (grammar, _) = parse_file(&filename, true)?;
+            let (grammar, diagnostics) = parse_file(&filename, true)?;
+            for d in &diagnostics {
+                eprintln!("{d}");
+            }
             let sets = first_sets(&grammar);
 
             let mut rules: Vec<&str> = sets.keys().copied().collect();
@@ -204,8 +216,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         Subcommands::Check { filename } => {
-            let (_, had_warnings) = parse_file(&filename, true)?;
-            if had_warnings {
+            let (_, diagnostics) = parse_file(&filename, true)?;
+            for d in &diagnostics {
+                eprintln!("{d}");
+            }
+            let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
+            let has_warnings = diagnostics.iter().any(|d| d.severity == Severity::Warning);
+            if has_errors {
+                std::process::exit(2);
+            } else if has_warnings {
                 std::process::exit(1);
             }
         }
