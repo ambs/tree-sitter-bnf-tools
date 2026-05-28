@@ -1,5 +1,5 @@
 use crate::dom::GrammarNode::{self, *};
-use crate::dom::{Grammar, ParseError, PrecKind, Production};
+use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
 use tree_sitter::Node;
 
 /// Returns `Ok(())` if `node.kind() == node_type`, otherwise an [`ParseError::UnexpectedNodeType`] error.
@@ -16,11 +16,11 @@ fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
 
 /// Converts the root `grammar` tree-sitter node into a [`Grammar`] DOM.
 ///
-/// Returns the grammar and any diagnostic messages from cross-reference checks.
+/// Returns the grammar and any diagnostics from cross-reference checks.
 pub fn visit_grammar(
     node: &Node<'_>,
     source_code: &str,
-) -> Result<(Grammar, Vec<String>), ParseError> {
+) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar::new();
     let count = node.child_count() as u32;

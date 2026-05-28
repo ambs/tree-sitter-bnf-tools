@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `check` subcommand: runs all static checks and exits non-zero on any issue;
   designed for CI pipelines
 - Left-recursion detection in `check`: flags directly and mutually left-recursive
-  rules with a diagnostic warning; tree-sitter cannot generate a parser for
+  rules with a diagnostic error; tree-sitter cannot generate a parser for
   left-recursive grammars
 - `convert --no-check` (`-n`): skips all static checks and suppresses warnings,
   converting unconditionally; useful when warnings are expected or handled elsewhere
@@ -30,6 +30,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### `ts-bnf-tool`
 - **Breaking:** subcommand is now required. `ts-bnf-tool <file>` no longer works;
   use `ts-bnf-tool convert <file>` instead.
+- Diagnostics now carry a severity level (`error` or `warning`). Left-recursion
+  is now an **error** (previously a warning); `convert` aborts on errors unless
+  `--no-check` is passed. `check` exits **2** on errors, **1** on warnings-only,
+  and **0** when clean.
 
 ## [0.1.0] - 2026-05-25
 

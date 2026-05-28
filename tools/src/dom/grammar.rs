@@ -1,77 +1,81 @@
 use std::collections::HashSet;
 
 use super::analysis::left_recursive_rules;
+use super::diagnostic::Diagnostic;
 use super::types::Grammar;
 
 impl Grammar {
     /// Returns a warning for every rule name in `%conflicts` that has no definition.
-    fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<String> {
+    fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.conflicts
             .iter()
             .flatten()
             .filter(|name| !known.contains(name.as_str()))
-            .map(|name| format!("warning: %conflicts references undefined rule '{name}'"))
+            .map(|name| Diagnostic::warning(format!("%conflicts references undefined rule '{name}'")))
             .collect()
     }
 
     /// Returns a warning for every rule name in `%inline` that has no definition.
-    fn inline_check(&self, known: &HashSet<&str>) -> Vec<String> {
+    fn inline_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.inline
             .iter()
             .filter(|name| !known.contains(name.as_str()))
-            .map(|name| format!("warning: %inline references undefined rule '{name}'"))
+            .map(|name| Diagnostic::warning(format!("%inline references undefined rule '{name}'")))
             .collect()
     }
 
     /// Returns a warning for every rule name in `%supertypes` that has no definition.
-    fn supertypes_check(&self, known: &HashSet<&str>) -> Vec<String> {
+    fn supertypes_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.supertypes
             .iter()
             .filter(|name| !known.contains(name.as_str()))
-            .map(|name| format!("warning: %supertypes references undefined rule '{name}'"))
+            .map(|name| Diagnostic::warning(format!("%supertypes references undefined rule '{name}'")))
             .collect()
     }
 
     /// Returns a warning for every rule reference in `%extras` that has no definition.
-    fn extras_check(&self, known: &HashSet<&str>) -> Vec<String> {
+    fn extras_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.extras
             .iter()
             .filter(|item| !item.starts_with('/') && !known.contains(item.as_str()))
-            .map(|name| format!("warning: %extras references undefined rule '{name}'"))
+            .map(|name| Diagnostic::warning(format!("%extras references undefined rule '{name}'")))
             .collect()
     }
 
     /// Returns a warning for every non-terminal referenced in a rule body that has no definition.
-    fn undefined_refs_check(&self, known: &HashSet<&str>) -> Vec<String> {
+    fn undefined_refs_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.rhs_nonterminals
             .iter()
             .filter(|name| !known.contains(name.as_str()))
-            .map(|name| format!("warning: undefined rule reference '{name}'"))
+            .map(|name| Diagnostic::warning(format!("undefined rule reference '{name}'")))
             .collect()
     }
 
-    /// Returns a warning for every left-recursive rule (direct or mutual).
-    fn left_recursive_check(&self) -> Vec<String> {
+    /// Returns an error for every left-recursive rule (direct or mutual).
+    ///
+    /// Left-recursion is an error, not a warning, because tree-sitter cannot generate a
+    /// parser for a left-recursive grammar regardless of any other options.
+    fn left_recursive_check(&self) -> Vec<Diagnostic> {
         left_recursive_rules(self)
             .into_iter()
             .map(|(rule, is_direct)| {
                 let kind = if is_direct { "directly" } else { "mutually" };
-                format!("warning: rule '{rule}' is {kind} left-recursive")
+                Diagnostic::error(format!("rule '{rule}' is {kind} left-recursive"))
             })
             .collect()
     }
 
-    /// Runs all cross-reference checks and returns any diagnostic messages.
-    pub fn check(&self) -> Vec<String> {
+    /// Runs all cross-reference checks and returns any diagnostics.
+    pub fn check(&self) -> Vec<Diagnostic> {
         let known = self.known_rules();
-        let mut warnings = Vec::new();
-        warnings.extend(self.conflicts_check(&known));
-        warnings.extend(self.inline_check(&known));
-        warnings.extend(self.supertypes_check(&known));
-        warnings.extend(self.extras_check(&known));
-        warnings.extend(self.undefined_refs_check(&known));
-        warnings.extend(self.left_recursive_check());
-        warnings
+        let mut diagnostics = Vec::new();
+        diagnostics.extend(self.conflicts_check(&known));
+        diagnostics.extend(self.inline_check(&known));
+        diagnostics.extend(self.supertypes_check(&known));
+        diagnostics.extend(self.extras_check(&known));
+        diagnostics.extend(self.undefined_refs_check(&known));
+        diagnostics.extend(self.left_recursive_check());
+        diagnostics
     }
 }
 
@@ -79,7 +83,12 @@ impl Grammar {
 mod tests {
     use super::*;
     use crate::dom::GrammarNode::TerminalLiteral;
-    use crate::dom::Production;
+    use crate::dom::{Production, Severity};
+
+    /// Renders each diagnostic to its full display string for easy comparison.
+    fn strs(diagnostics: &[Diagnostic]) -> Vec<String> {
+        diagnostics.iter().map(|d| d.to_string()).collect()
+    }
 
     #[test]
     fn grammar_display() {
@@ -109,9 +118,8 @@ mod tests {
             conflicts: vec![vec!["a".into(), "ghost".into()]],
             ..Grammar::new()
         };
-        let warnings = g.conflicts_check(&g.known_rules());
         assert_eq!(
-            warnings,
+            strs(&g.conflicts_check(&g.known_rules())),
             vec!["warning: %conflicts references undefined rule 'ghost'"]
         );
     }
@@ -145,9 +153,8 @@ mod tests {
             supertypes: vec!["ghost".into()],
             ..Grammar::new()
         };
-        let warnings = g.supertypes_check(&g.known_rules());
         assert_eq!(
-            warnings,
+            strs(&g.supertypes_check(&g.known_rules())),
             vec!["warning: %supertypes references undefined rule 'ghost'"]
         );
     }
@@ -175,9 +182,8 @@ mod tests {
             inline: vec!["ghost".into()],
             ..Grammar::new()
         };
-        let warnings = g.inline_check(&g.known_rules());
         assert_eq!(
-            warnings,
+            strs(&g.inline_check(&g.known_rules())),
             vec!["warning: %inline references undefined rule 'ghost'"]
         );
     }
@@ -205,9 +211,8 @@ mod tests {
             extras: vec!["/\\s/".into(), "ghost".into()],
             ..Grammar::new()
         };
-        let warnings = g.extras_check(&g.known_rules());
         assert_eq!(
-            warnings,
+            strs(&g.extras_check(&g.known_rules())),
             vec!["warning: %extras references undefined rule 'ghost'"]
         );
     }
@@ -248,8 +253,10 @@ mod tests {
     fn undefined_refs_check_warns_on_missing_rule() {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("term".into());
-        let warnings = g.undefined_refs_check(&g.known_rules());
-        assert_eq!(warnings, vec!["warning: undefined rule reference 'term'"]);
+        assert_eq!(
+            strs(&g.undefined_refs_check(&g.known_rules())),
+            vec!["warning: undefined rule reference 'term'"]
+        );
     }
 
     #[test]
@@ -269,8 +276,7 @@ mod tests {
     fn undefined_refs_check_deduplicates() {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("ghost".into());
-        let warnings = g.undefined_refs_check(&g.known_rules());
-        assert_eq!(warnings.len(), 1);
+        assert_eq!(g.undefined_refs_check(&g.known_rules()).len(), 1);
     }
 
     #[test]
@@ -290,10 +296,12 @@ mod tests {
             }],
             ..Grammar::new()
         };
-        let warnings = g.check();
-        assert!(warnings
-            .iter()
-            .any(|w| w.contains("expr") && w.contains("directly left-recursive")));
+        let diagnostics = g.check();
+        assert!(diagnostics.iter().any(|d| {
+            d.severity == Severity::Error
+                && d.message.contains("expr")
+                && d.message.contains("directly left-recursive")
+        }));
     }
 
     #[test]
@@ -318,13 +326,17 @@ mod tests {
             ],
             ..Grammar::new()
         };
-        let warnings = g.check();
-        assert!(warnings
-            .iter()
-            .any(|w| w.contains("'a'") && w.contains("mutually left-recursive")));
-        assert!(warnings
-            .iter()
-            .any(|w| w.contains("'b'") && w.contains("mutually left-recursive")));
+        let diagnostics = g.check();
+        assert!(diagnostics.iter().any(|d| {
+            d.severity == Severity::Error
+                && d.message.contains("'a'")
+                && d.message.contains("mutually left-recursive")
+        }));
+        assert!(diagnostics.iter().any(|d| {
+            d.severity == Severity::Error
+                && d.message.contains("'b'")
+                && d.message.contains("mutually left-recursive")
+        }));
     }
 
     #[test]
@@ -343,7 +355,7 @@ mod tests {
             }],
             ..Grammar::new()
         };
-        let warnings = g.check();
-        assert!(!warnings.iter().any(|w| w.contains("left-recursive")));
+        let diagnostics = g.check();
+        assert!(!diagnostics.iter().any(|d| d.message.contains("left-recursive")));
     }
 }
