@@ -34,8 +34,8 @@ mod tests {
         let p = Production {
             name: "expr".into(),
             body: NonTerminal("a".into()),
-            line: 0,
-            filename: String::new(),
+            line: 1,
+            filename: "test.bnf".into(),
         };
         assert_eq!(p.to_string(), "expr -> $.a");
     }

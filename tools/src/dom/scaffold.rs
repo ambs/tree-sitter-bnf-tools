@@ -94,9 +94,9 @@ impl Display for Scaffold<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{cg, di, p};
+    use crate::dom::test_utils::{cg, di, p, p_named};
     use crate::dom::GrammarNode::TerminalLiteral;
-    use crate::dom::{Grammar, GrammarNode, Production};
+    use crate::dom::{Grammar, GrammarNode};
 
     fn s<'a>(grammar: &'a Grammar, name: &'a str) -> Scaffold<'a> {
         Scaffold {
@@ -107,27 +107,18 @@ mod tests {
         }
     }
 
-    fn prod_with_file(name: &str, body: GrammarNode, filename: &str) -> Production {
-        Production {
-            name: name.into(),
-            body,
-            line: 0,
-            filename: filename.into(),
-        }
-    }
-
     #[test]
     fn scaffold_single_rule() {
         let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
         assert_eq!(
             s(&g, "expr").to_string(),
-            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    // :0\n    expr: $ => 'x',\n  }\n});"
+            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    // test.bnf:1\n    expr: $ => 'x',\n  }\n});"
         );
     }
 
     #[test]
     fn scaffold_source_comment_uses_production_filename() {
-        let g = Grammar::from_rules([prod_with_file(
+        let g = Grammar::from_rules([p_named(
             "expr",
             TerminalLiteral("'x'".into()),
             "grammar.bnf",
@@ -139,16 +130,12 @@ mod tests {
             no_header: true,
         }
         .to_string();
-        assert!(out.contains("    // grammar.bnf:0\n    expr: $ => 'x',"));
+        assert!(out.contains("    // grammar.bnf:1\n    expr: $ => 'x',"));
     }
 
     #[test]
     fn scaffold_source_comment_uses_stdin_placeholder() {
-        let g = Grammar::from_rules([prod_with_file(
-            "r",
-            TerminalLiteral("'y'".into()),
-            "<stdin>",
-        )]);
+        let g = Grammar::from_rules([p_named("r", TerminalLiteral("'y'".into()), "<stdin>")]);
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -156,7 +143,7 @@ mod tests {
             no_header: true,
         }
         .to_string();
-        assert!(out.contains("    // <stdin>:0"));
+        assert!(out.contains("    // <stdin>:1"));
     }
 
     #[test]
