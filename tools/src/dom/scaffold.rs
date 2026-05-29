@@ -22,10 +22,10 @@ impl Display for Scaffold<'_> {
                 .extras
                 .iter()
                 .map(|item| {
-                    if item.starts_with('/') {
-                        item.clone()
+                    if item.name.starts_with('/') {
+                        item.name.clone()
                     } else {
-                        format!("$.{item}")
+                        format!("$.{}", item.name)
                     }
                 })
                 .collect::<Vec<_>>()
@@ -38,7 +38,7 @@ impl Display for Scaffold<'_> {
                 .grammar
                 .inline
                 .iter()
-                .map(|n| format!("$.{n}"))
+                .map(|item| format!("$.{}", item.name))
                 .collect::<Vec<_>>()
                 .join(", ");
             writeln!(f, "  inline: $ => [{items}],")?;
@@ -49,7 +49,7 @@ impl Display for Scaffold<'_> {
                 .grammar
                 .supertypes
                 .iter()
-                .map(|n| format!("$.{n}"))
+                .map(|item| format!("$.{}", item.name))
                 .collect::<Vec<_>>()
                 .join(", ");
             writeln!(f, "  supertypes: $ => [{items}],")?;
@@ -59,6 +59,7 @@ impl Display for Scaffold<'_> {
             writeln!(f, "  conflicts: $ => [")?;
             for group in &self.grammar.conflicts {
                 let items = group
+                    .rules
                     .iter()
                     .map(|n| format!("$.{n}"))
                     .collect::<Vec<_>>()
@@ -80,15 +81,9 @@ impl Display for Scaffold<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dom::test_utils::{cg, di, p};
     use crate::dom::GrammarNode::TerminalLiteral;
-    use crate::dom::{Grammar, GrammarNode, Production};
-
-    fn p(name: &str, body: GrammarNode) -> Production {
-        Production {
-            name: name.into(),
-            body,
-        }
-    }
+    use crate::dom::{Grammar, GrammarNode};
 
     #[test]
     fn scaffold_single_rule() {
@@ -141,7 +136,7 @@ mod tests {
     #[test]
     fn scaffold_with_single_conflict_group() {
         let mut g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
-        g.conflicts = vec![vec!["expr".into(), "term".into()]];
+        g.conflicts = vec![cg(&["expr", "term"], 0)];
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -156,10 +151,7 @@ mod tests {
     #[test]
     fn scaffold_with_multiple_conflict_groups() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.conflicts = vec![
-            vec!["a".into(), "b".into()],
-            vec!["c".into(), "d".into(), "e".into()],
-        ];
+        g.conflicts = vec![cg(&["a", "b"], 0), cg(&["c", "d", "e"], 0)];
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -172,7 +164,7 @@ mod tests {
     #[test]
     fn scaffold_with_supertypes() {
         let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
-        g.supertypes = vec!["expression".into(), "statement".into()];
+        g.supertypes = vec![di("expression", 0), di("statement", 0)];
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -196,7 +188,7 @@ mod tests {
     #[test]
     fn scaffold_with_extras_pattern_and_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.extras = vec!["/\\s/".into(), "comment".into()];
+        g.extras = vec![di("/\\s/", 0), di("comment", 0)];
         let out = Scaffold {
             grammar: &g,
             name: "g",

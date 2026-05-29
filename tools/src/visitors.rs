@@ -1,3 +1,4 @@
+use crate::dom::directive::{ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
 use tree_sitter::Node;
@@ -68,44 +69,49 @@ pub fn visit_grammar(
     Ok((grammar, warnings))
 }
 
-/// Collects the UTF-8 text of every named child of `node` into a `Vec<String>`.
-fn collect_named_text_children(node: &Node<'_>, source_code: &str) -> Vec<String> {
+/// Collects every named child of `node` into a [`Vec<DirectiveItem>`], recording the
+/// directive's 1-based source line for each entry.
+fn collect_directive_items(node: &Node<'_>, source_code: &str) -> Vec<DirectiveItem> {
+    let line = node.start_position().row + 1;
     (0..node.named_child_count() as u32)
         .map(|i| {
-            node.named_child(i)
+            let name = node
+                .named_child(i)
                 .expect("named child index in bounds")
                 .utf8_text(source_code.as_bytes())
                 .expect("valid UTF-8")
-                .to_string()
+                .to_string();
+            DirectiveItem { name, line }
         })
         .collect()
 }
 
-/// Converts an `inlineDirective` node into a flat list of rule names.
-fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
-    collect_named_text_children(node, source_code)
+/// Converts an `inlineDirective` node into a list of [`DirectiveItem`]s.
+fn visit_inline_directive(node: &Node<'_>, source_code: &str) -> Vec<DirectiveItem> {
+    collect_directive_items(node, source_code)
 }
 
-/// Converts an `extrasDirective` node into a flat list of pattern strings and rule names.
-fn visit_extras_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
-    collect_named_text_children(node, source_code)
+/// Converts an `extrasDirective` node into a list of [`DirectiveItem`]s.
+fn visit_extras_directive(node: &Node<'_>, source_code: &str) -> Vec<DirectiveItem> {
+    collect_directive_items(node, source_code)
 }
 
-/// Converts a `supertypesDirective` node into a flat list of rule names.
-fn visit_supertypes_directive(node: &Node<'_>, source_code: &str) -> Vec<String> {
-    collect_named_text_children(node, source_code)
+/// Converts a `supertypesDirective` node into a list of [`DirectiveItem`]s.
+fn visit_supertypes_directive(node: &Node<'_>, source_code: &str) -> Vec<DirectiveItem> {
+    collect_directive_items(node, source_code)
 }
 
-/// Converts a `conflictsDirective` node into a list of conflict groups (lists of rule names).
+/// Converts a `conflictsDirective` node into a list of [`ConflictGroup`]s.
 fn visit_conflicts_directive(
     node: &Node<'_>,
     source_code: &str,
-) -> Result<Vec<Vec<String>>, ParseError> {
+) -> Result<Vec<ConflictGroup>, ParseError> {
+    let line = node.start_position().row + 1;
     let mut groups = Vec::new();
     for i in 0..node.named_child_count() as u32 {
         let child = node.named_child(i).expect("named child index in bounds");
         if child.kind() == "conflictGroup" {
-            let names = (0..child.named_child_count() as u32)
+            let rules = (0..child.named_child_count() as u32)
                 .map(|j| {
                     child
                         .named_child(j)
@@ -115,7 +121,7 @@ fn visit_conflicts_directive(
                         .to_string()
                 })
                 .collect();
-            groups.push(names);
+            groups.push(ConflictGroup { rules, line });
         }
     }
     Ok(groups)
@@ -141,7 +147,8 @@ fn visit_rule(
         .expect("valid UTF-8")
         .to_string();
     let body = visit(grammar, &rule_body, source_code)?;
-    Ok(Production { name, body })
+    let line = node.start_position().row + 1;
+    Ok(Production { name, body, line })
 }
 
 /// Converts a `nonTerminal` node into a [`GrammarNode::NonTerminal`] and records the name.
