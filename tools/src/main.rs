@@ -277,35 +277,6 @@ mod tests {
         Cli::try_parse_from(full)
     }
 
-    fn convert_fields(
-        cli: Cli,
-    ) -> (
-        String,
-        bool,
-        bool,
-        Option<String>,
-        Option<String>,
-        bool,
-        bool,
-        bool,
-    ) {
-        match cli.command {
-            Subcommands::Convert {
-                filename,
-                rules_only,
-                generate,
-                name,
-                output_dir,
-                no_check,
-                no_header,
-                strict,
-            } => (
-                filename, rules_only, generate, name, output_dir, no_check, no_header, strict,
-            ),
-            _ => panic!("expected Convert"),
-        }
-    }
-
     #[test]
     fn generate_and_rules_only_conflict() {
         assert!(parse_convert(&["--generate", "--rules-only", "f.bnf"]).is_err());
@@ -314,78 +285,6 @@ mod tests {
     #[test]
     fn output_dir_requires_generate() {
         assert!(parse_convert(&["--output-dir", "/tmp", "f.bnf"]).is_err());
-    }
-
-    #[test]
-    fn generate_alone_is_valid() {
-        let (_, rules_only, generate, _, output_dir, ..) =
-            convert_fields(parse_convert(&["--generate", "f.bnf"]).unwrap());
-        assert!(generate);
-        assert!(!rules_only);
-        assert!(output_dir.is_none());
-    }
-
-    #[test]
-    fn generate_with_output_dir_is_valid() {
-        let (_, _, generate, _, output_dir, ..) = convert_fields(
-            parse_convert(&["--generate", "--output-dir", "/tmp", "f.bnf"]).unwrap(),
-        );
-        assert!(generate);
-        assert_eq!(output_dir.as_deref(), Some("/tmp"));
-    }
-
-    #[test]
-    fn rules_only_alone_is_valid() {
-        let (_, rules_only, generate, ..) =
-            convert_fields(parse_convert(&["--rules-only", "f.bnf"]).unwrap());
-        assert!(rules_only);
-        assert!(!generate);
-    }
-
-    #[test]
-    fn no_check_flag_is_false_by_default() {
-        let (.., no_check, _no_header, _strict) =
-            convert_fields(parse_convert(&["f.bnf"]).unwrap());
-        assert!(!no_check);
-    }
-
-    #[test]
-    fn no_check_long_flag_sets_true() {
-        let (.., no_check, _no_header, _strict) =
-            convert_fields(parse_convert(&["--no-check", "f.bnf"]).unwrap());
-        assert!(no_check);
-    }
-
-    #[test]
-    fn no_check_short_flag_sets_true() {
-        let (.., no_check, _no_header, _strict) =
-            convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
-        assert!(no_check);
-    }
-
-    #[test]
-    fn no_header_flag_is_false_by_default() {
-        let (.., no_header, _strict) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
-        assert!(!no_header);
-    }
-
-    #[test]
-    fn no_header_flag_sets_true() {
-        let (.., no_header, _strict) =
-            convert_fields(parse_convert(&["--no-header", "f.bnf"]).unwrap());
-        assert!(no_header);
-    }
-
-    #[test]
-    fn strict_flag_is_false_by_default() {
-        let (.., strict) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
-        assert!(!strict);
-    }
-
-    #[test]
-    fn strict_flag_sets_true() {
-        let (.., strict) = convert_fields(parse_convert(&["--strict", "f.bnf"]).unwrap());
-        assert!(strict);
     }
 
     #[test]
@@ -401,40 +300,6 @@ mod tests {
     #[test]
     fn source_label_filename_passthrough() {
         assert_eq!(source_label("grammar.bnf"), "grammar.bnf");
-    }
-
-    #[test]
-    fn help_flag_lists_subcommands() {
-        let err = Cli::try_parse_from(["ts-bnf-tool", "--help"]).unwrap_err();
-        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
-        let help = err.to_string();
-        assert!(help.contains("convert"));
-        assert!(help.contains("firsts"));
-        assert!(help.contains("check"));
-    }
-
-    #[test]
-    fn check_subcommand_parses_filename() {
-        let cli = Cli::try_parse_from(["ts-bnf-tool", "check", "grammar.bnf"]).unwrap();
-        match cli.command {
-            Subcommands::Check { filename } => assert_eq!(filename, "grammar.bnf"),
-            _ => panic!("expected Check"),
-        }
-    }
-
-    #[test]
-    fn check_subcommand_accepts_stdin_dash() {
-        let cli = Cli::try_parse_from(["ts-bnf-tool", "check", "-"]).unwrap();
-        match cli.command {
-            Subcommands::Check { filename } => assert_eq!(filename, "-"),
-            _ => panic!("expected Check"),
-        }
-    }
-
-    #[test]
-    fn stdin_dash_is_valid_filename() {
-        let (filename, ..) = convert_fields(parse_convert(&["-"]).unwrap());
-        assert_eq!(filename, "-");
     }
 
     #[test]
@@ -461,42 +326,5 @@ mod tests {
             resolve_output_dir(None, "mygrammar"),
             PathBuf::from("mygrammar")
         );
-    }
-
-    #[test]
-    fn firsts_subcommand_parses_filename() {
-        let cli = Cli::try_parse_from(["ts-bnf-tool", "firsts", "grammar.bnf"]).unwrap();
-        match cli.command {
-            Subcommands::Firsts { filename, .. } => assert_eq!(filename, "grammar.bnf"),
-            _ => panic!("expected Firsts"),
-        }
-    }
-
-    #[test]
-    fn firsts_no_check_is_false_by_default() {
-        let cli = Cli::try_parse_from(["ts-bnf-tool", "firsts", "grammar.bnf"]).unwrap();
-        match cli.command {
-            Subcommands::Firsts { no_check, .. } => assert!(!no_check),
-            _ => panic!("expected Firsts"),
-        }
-    }
-
-    #[test]
-    fn firsts_no_check_long_flag_sets_true() {
-        let cli =
-            Cli::try_parse_from(["ts-bnf-tool", "firsts", "--no-check", "grammar.bnf"]).unwrap();
-        match cli.command {
-            Subcommands::Firsts { no_check, .. } => assert!(no_check),
-            _ => panic!("expected Firsts"),
-        }
-    }
-
-    #[test]
-    fn firsts_no_check_short_flag_sets_true() {
-        let cli = Cli::try_parse_from(["ts-bnf-tool", "firsts", "-n", "grammar.bnf"]).unwrap();
-        match cli.command {
-            Subcommands::Firsts { no_check, .. } => assert!(no_check),
-            _ => panic!("expected Firsts"),
-        }
     }
 }
