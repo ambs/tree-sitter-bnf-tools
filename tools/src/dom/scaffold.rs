@@ -83,6 +83,7 @@ impl Display for Scaffold<'_> {
         }
         writeln!(f, "  rules: {{")?;
         for production in self.grammar.productions.values() {
+            writeln!(f, "    // {}:{}", production.filename, production.line)?;
             writeln!(f, "    {}: $ => {},", production.name, production.body)?;
         }
         writeln!(f, "  }}")?;
@@ -93,7 +94,7 @@ impl Display for Scaffold<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{cg, di, p};
+    use crate::dom::test_utils::{cg, di, p, p_named};
     use crate::dom::GrammarNode::TerminalLiteral;
     use crate::dom::{Grammar, GrammarNode};
 
@@ -111,8 +112,38 @@ mod tests {
         let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
         assert_eq!(
             s(&g, "expr").to_string(),
-            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    expr: $ => 'x',\n  }\n});"
+            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    // test.bnf:1\n    expr: $ => 'x',\n  }\n});"
         );
+    }
+
+    #[test]
+    fn scaffold_source_comment_uses_production_filename() {
+        let g = Grammar::from_rules([p_named(
+            "expr",
+            TerminalLiteral("'x'".into()),
+            "grammar.bnf",
+        )]);
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+            source: "grammar.bnf",
+            no_header: true,
+        }
+        .to_string();
+        assert!(out.contains("    // grammar.bnf:1\n    expr: $ => 'x',"));
+    }
+
+    #[test]
+    fn scaffold_source_comment_uses_stdin_placeholder() {
+        let g = Grammar::from_rules([p_named("r", TerminalLiteral("'y'".into()), "<stdin>")]);
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+            source: "<stdin>",
+            no_header: true,
+        }
+        .to_string();
+        assert!(out.contains("    // <stdin>:1"));
     }
 
     #[test]

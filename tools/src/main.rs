@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 
 use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 use ts_bnf_tool::dom::{Diagnostic, Grammar, ParseError, Scaffold, Severity};
-use ts_bnf_tool::visitors::visit_grammar;
+use ts_bnf_tool::visitors::{visit_grammar, SourceFile};
 
 /// Top-level CLI for `ts-bnf-tool`.
 #[derive(Parser, Debug)]
@@ -158,7 +158,11 @@ fn parse_file(
     if root_node.has_error() {
         return Err(ParseError::SyntaxError.into());
     }
-    let (grammar, diagnostics) = visit_grammar(&root_node, &source_code)?;
+    let ctx = SourceFile {
+        source: &source_code,
+        filename,
+    };
+    let (grammar, diagnostics) = visit_grammar(&root_node, &ctx)?;
     if run_checks {
         Ok((grammar, diagnostics))
     } else {
