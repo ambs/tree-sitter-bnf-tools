@@ -15,6 +15,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Helix, covering parser installation, query file placement, and filetype registration
 
 #### `ts-bnf-tool`
+- `firsts --no-check` (`-n`): skips all static checks and suppresses warnings,
+  mirroring the same flag on `convert`
 - `visitors::parse_source`: new public library function that parses a BNF source
   string and returns the `Grammar` DOM and diagnostics, eliminating duplicated
   parser setup boilerplate in consumers

@@ -50,6 +50,9 @@ enum Subcommands {
     Firsts {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
+        /// Skip static checks and suppress all warnings
+        #[arg(long, short = 'n')]
+        no_check: bool,
     },
     /// Run all static checks and exit non-zero on any issue (for CI)
     Check {
@@ -198,8 +201,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        Subcommands::Firsts { filename } => {
-            let (grammar, diagnostics) = parse_file(&filename, true)?;
+        Subcommands::Firsts { filename, no_check } => {
+            let (grammar, diagnostics) = parse_file(&filename, !no_check)?;
             for d in &diagnostics {
                 eprintln!("{d}");
             }
@@ -379,7 +382,35 @@ mod tests {
     fn firsts_subcommand_parses_filename() {
         let cli = Cli::try_parse_from(["ts-bnf-tool", "firsts", "grammar.bnf"]).unwrap();
         match cli.command {
-            Subcommands::Firsts { filename } => assert_eq!(filename, "grammar.bnf"),
+            Subcommands::Firsts { filename, .. } => assert_eq!(filename, "grammar.bnf"),
+            _ => panic!("expected Firsts"),
+        }
+    }
+
+    #[test]
+    fn firsts_no_check_is_false_by_default() {
+        let cli = Cli::try_parse_from(["ts-bnf-tool", "firsts", "grammar.bnf"]).unwrap();
+        match cli.command {
+            Subcommands::Firsts { no_check, .. } => assert!(!no_check),
+            _ => panic!("expected Firsts"),
+        }
+    }
+
+    #[test]
+    fn firsts_no_check_long_flag_sets_true() {
+        let cli =
+            Cli::try_parse_from(["ts-bnf-tool", "firsts", "--no-check", "grammar.bnf"]).unwrap();
+        match cli.command {
+            Subcommands::Firsts { no_check, .. } => assert!(no_check),
+            _ => panic!("expected Firsts"),
+        }
+    }
+
+    #[test]
+    fn firsts_no_check_short_flag_sets_true() {
+        let cli = Cli::try_parse_from(["ts-bnf-tool", "firsts", "-n", "grammar.bnf"]).unwrap();
+        match cli.command {
+            Subcommands::Firsts { no_check, .. } => assert!(no_check),
             _ => panic!("expected Firsts"),
         }
     }
