@@ -45,6 +45,9 @@ enum Subcommands {
         /// Skip static checks; suppress all warnings and convert unconditionally
         #[arg(long, short = 'n')]
         no_check: bool,
+        /// Suppress the generated-file header comment at the top of the output
+        #[arg(long)]
+        no_header: bool,
     },
     /// Print FIRST sets for each rule in the grammar
     Firsts {
@@ -94,6 +97,11 @@ fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(),
         return Err(CommandError("tree-sitter generate failed".into()).into());
     }
     Ok(())
+}
+
+/// Returns the source label for the generated-file header: `<stdin>` for `-`, otherwise the filename.
+fn source_label(filename: &str) -> &str {
+    if filename == "-" { "<stdin>" } else { filename }
 }
 
 /// Returns the grammar name: the explicit override if provided, or the filename stem.
@@ -169,6 +177,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             name,
             output_dir,
             no_check,
+            no_header,
         } => {
             let (grammar, diagnostics) = parse_file(&filename, !no_check)?;
             for d in &diagnostics {
@@ -181,6 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
             let name = grammar_name(&filename, name.as_deref());
+            let source = source_label(&filename);
 
             if rules_only {
                 println!("{}", grammar);
@@ -188,6 +198,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let scaffold = Scaffold {
                     grammar: &grammar,
                     name: &name,
+                    source,
+                    no_header,
                 };
                 run_generate(&scaffold, output_dir.as_deref())?;
             } else {
@@ -195,7 +207,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "{}",
                     Scaffold {
                         grammar: &grammar,
-                        name: &name
+                        name: &name,
+                        source,
+                        no_header,
                     }
                 );
             }
@@ -250,7 +264,9 @@ mod tests {
         Cli::try_parse_from(full)
     }
 
-    fn convert_fields(cli: Cli) -> (String, bool, bool, Option<String>, Option<String>, bool) {
+    fn convert_fields(
+        cli: Cli,
+    ) -> (String, bool, bool, Option<String>, Option<String>, bool, bool) {
         match cli.command {
             Subcommands::Convert {
                 filename,
@@ -259,7 +275,8 @@ mod tests {
                 name,
                 output_dir,
                 no_check,
-            } => (filename, rules_only, generate, name, output_dir, no_check),
+                no_header,
+            } => (filename, rules_only, generate, name, output_dir, no_check, no_header),
             _ => panic!("expected Convert"),
         }
     }
@@ -276,7 +293,7 @@ mod tests {
 
     #[test]
     fn generate_alone_is_valid() {
-        let (_, rules_only, generate, _, output_dir, _) =
+        let (_, rules_only, generate, _, output_dir, ..) =
             convert_fields(parse_convert(&["--generate", "f.bnf"]).unwrap());
         assert!(generate);
         assert!(!rules_only);
@@ -285,7 +302,7 @@ mod tests {
 
     #[test]
     fn generate_with_output_dir_is_valid() {
-        let (_, _, generate, _, output_dir, _) = convert_fields(
+        let (_, _, generate, _, output_dir, ..) = convert_fields(
             parse_convert(&["--generate", "--output-dir", "/tmp", "f.bnf"]).unwrap(),
         );
         assert!(generate);
@@ -294,7 +311,7 @@ mod tests {
 
     #[test]
     fn rules_only_alone_is_valid() {
-        let (_, rules_only, generate, _, _, _) =
+        let (_, rules_only, generate, ..) =
             convert_fields(parse_convert(&["--rules-only", "f.bnf"]).unwrap());
         assert!(rules_only);
         assert!(!generate);
@@ -302,20 +319,44 @@ mod tests {
 
     #[test]
     fn no_check_flag_is_false_by_default() {
-        let (.., no_check) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
+        let (.., no_check, _no_header) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
         assert!(!no_check);
     }
 
     #[test]
     fn no_check_long_flag_sets_true() {
-        let (.., no_check) = convert_fields(parse_convert(&["--no-check", "f.bnf"]).unwrap());
+        let (.., no_check, _no_header) =
+            convert_fields(parse_convert(&["--no-check", "f.bnf"]).unwrap());
         assert!(no_check);
     }
 
     #[test]
     fn no_check_short_flag_sets_true() {
-        let (.., no_check) = convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
+        let (.., no_check, _no_header) =
+            convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
         assert!(no_check);
+    }
+
+    #[test]
+    fn no_header_flag_is_false_by_default() {
+        let (.., no_header) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
+        assert!(!no_header);
+    }
+
+    #[test]
+    fn no_header_flag_sets_true() {
+        let (.., no_header) = convert_fields(parse_convert(&["--no-header", "f.bnf"]).unwrap());
+        assert!(no_header);
+    }
+
+    #[test]
+    fn source_label_dash_is_stdin() {
+        assert_eq!(source_label("-"), "<stdin>");
+    }
+
+    #[test]
+    fn source_label_filename_passthrough() {
+        assert_eq!(source_label("grammar.bnf"), "grammar.bnf");
     }
 
     #[test]
