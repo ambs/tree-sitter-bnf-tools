@@ -7,6 +7,7 @@ pub fn p(name: &str, body: GrammarNode) -> Production {
         name: name.into(),
         body,
         line: 0,
+        filename: String::new(),
     }
 }
 

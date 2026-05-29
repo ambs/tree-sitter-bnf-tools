@@ -83,7 +83,7 @@ impl Display for Scaffold<'_> {
         }
         writeln!(f, "  rules: {{")?;
         for production in self.grammar.productions.values() {
-            writeln!(f, "    // {}:{}", self.source, production.line)?;
+            writeln!(f, "    // {}:{}", production.filename, production.line)?;
             writeln!(f, "    {}: $ => {},", production.name, production.body)?;
         }
         writeln!(f, "  }}")?;
@@ -96,7 +96,7 @@ mod tests {
     use super::*;
     use crate::dom::test_utils::{cg, di, p};
     use crate::dom::GrammarNode::TerminalLiteral;
-    use crate::dom::{Grammar, GrammarNode};
+    use crate::dom::{Grammar, GrammarNode, Production};
 
     fn s<'a>(grammar: &'a Grammar, name: &'a str) -> Scaffold<'a> {
         Scaffold {
@@ -107,18 +107,31 @@ mod tests {
         }
     }
 
+    fn prod_with_file(name: &str, body: GrammarNode, filename: &str) -> Production {
+        Production {
+            name: name.into(),
+            body,
+            line: 0,
+            filename: filename.into(),
+        }
+    }
+
     #[test]
     fn scaffold_single_rule() {
         let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
         assert_eq!(
             s(&g, "expr").to_string(),
-            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    // test.bnf:0\n    expr: $ => 'x',\n  }\n});"
+            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    // :0\n    expr: $ => 'x',\n  }\n});"
         );
     }
 
     #[test]
-    fn scaffold_source_comment_uses_source_and_line() {
-        let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+    fn scaffold_source_comment_uses_production_filename() {
+        let g = Grammar::from_rules([prod_with_file(
+            "expr",
+            TerminalLiteral("'x'".into()),
+            "grammar.bnf",
+        )]);
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -131,7 +144,11 @@ mod tests {
 
     #[test]
     fn scaffold_source_comment_uses_stdin_placeholder() {
-        let g = Grammar::from_rules([p("r", TerminalLiteral("'y'".into()))]);
+        let g = Grammar::from_rules([prod_with_file(
+            "r",
+            TerminalLiteral("'y'".into()),
+            "<stdin>",
+        )]);
         let out = Scaffold {
             grammar: &g,
             name: "g",
