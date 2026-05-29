@@ -48,6 +48,9 @@ enum Subcommands {
         /// Suppress the generated-file header comment at the top of the output
         #[arg(long)]
         no_header: bool,
+        /// Treat any warning as a fatal error and exit non-zero (conflicts with --no-check)
+        #[arg(long, conflicts_with = "no_check")]
+        strict: bool,
     },
     /// Print FIRST sets for each rule in the grammar
     Firsts {
@@ -182,6 +185,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             output_dir,
             no_check,
             no_header,
+            strict,
         } => {
             let (grammar, diagnostics) = parse_file(&filename, !no_check)?;
             for d in &diagnostics {
@@ -193,6 +197,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .into(),
                 );
             }
+            let had_warnings = diagnostics.iter().any(|d| d.severity == Severity::Warning);
             let name = grammar_name(&filename, name.as_deref());
             let source = source_label(&filename);
 
@@ -216,6 +221,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                         no_header,
                     }
                 );
+            }
+
+            if strict && had_warnings {
+                std::process::exit(1);
             }
         }
 
@@ -278,6 +287,7 @@ mod tests {
         Option<String>,
         bool,
         bool,
+        bool,
     ) {
         match cli.command {
             Subcommands::Convert {
@@ -288,8 +298,9 @@ mod tests {
                 output_dir,
                 no_check,
                 no_header,
+                strict,
             } => (
-                filename, rules_only, generate, name, output_dir, no_check, no_header,
+                filename, rules_only, generate, name, output_dir, no_check, no_header, strict,
             ),
             _ => panic!("expected Convert"),
         }
@@ -333,33 +344,53 @@ mod tests {
 
     #[test]
     fn no_check_flag_is_false_by_default() {
-        let (.., no_check, _no_header) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
+        let (.., no_check, _no_header, _strict) =
+            convert_fields(parse_convert(&["f.bnf"]).unwrap());
         assert!(!no_check);
     }
 
     #[test]
     fn no_check_long_flag_sets_true() {
-        let (.., no_check, _no_header) =
+        let (.., no_check, _no_header, _strict) =
             convert_fields(parse_convert(&["--no-check", "f.bnf"]).unwrap());
         assert!(no_check);
     }
 
     #[test]
     fn no_check_short_flag_sets_true() {
-        let (.., no_check, _no_header) = convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
+        let (.., no_check, _no_header, _strict) =
+            convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
         assert!(no_check);
     }
 
     #[test]
     fn no_header_flag_is_false_by_default() {
-        let (.., no_header) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
+        let (.., no_header, _strict) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
         assert!(!no_header);
     }
 
     #[test]
     fn no_header_flag_sets_true() {
-        let (.., no_header) = convert_fields(parse_convert(&["--no-header", "f.bnf"]).unwrap());
+        let (.., no_header, _strict) =
+            convert_fields(parse_convert(&["--no-header", "f.bnf"]).unwrap());
         assert!(no_header);
+    }
+
+    #[test]
+    fn strict_flag_is_false_by_default() {
+        let (.., strict) = convert_fields(parse_convert(&["f.bnf"]).unwrap());
+        assert!(!strict);
+    }
+
+    #[test]
+    fn strict_flag_sets_true() {
+        let (.., strict) = convert_fields(parse_convert(&["--strict", "f.bnf"]).unwrap());
+        assert!(strict);
+    }
+
+    #[test]
+    fn strict_and_no_check_conflict() {
+        assert!(parse_convert(&["--strict", "--no-check", "f.bnf"]).is_err());
     }
 
     #[test]
