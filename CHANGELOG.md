@@ -15,6 +15,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Helix, covering parser installation, query file placement, and filetype registration
 
 #### `ts-bnf-tool`
+- `convert` now emits a `// <file>:<line>` comment above each rule in the `rules: { … }` block,
+  mapping generated JavaScript back to the originating BNF source line; omitted by `--rules-only`
 - `convert` and `check` now warn when the same rule name is defined more than once;
   the second definition wins
 - `convert --strict`: exits non-zero when warnings are present; output is still written before

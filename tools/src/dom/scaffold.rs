@@ -83,6 +83,7 @@ impl Display for Scaffold<'_> {
         }
         writeln!(f, "  rules: {{")?;
         for production in self.grammar.productions.values() {
+            writeln!(f, "    // {}:{}", self.source, production.line)?;
             writeln!(f, "    {}: $ => {},", production.name, production.body)?;
         }
         writeln!(f, "  }}")?;
@@ -111,8 +112,34 @@ mod tests {
         let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
         assert_eq!(
             s(&g, "expr").to_string(),
-            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    expr: $ => 'x',\n  }\n});"
+            "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    // test.bnf:0\n    expr: $ => 'x',\n  }\n});"
         );
+    }
+
+    #[test]
+    fn scaffold_source_comment_uses_source_and_line() {
+        let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+            source: "grammar.bnf",
+            no_header: true,
+        }
+        .to_string();
+        assert!(out.contains("    // grammar.bnf:0\n    expr: $ => 'x',"));
+    }
+
+    #[test]
+    fn scaffold_source_comment_uses_stdin_placeholder() {
+        let g = Grammar::from_rules([p("r", TerminalLiteral("'y'".into()))]);
+        let out = Scaffold {
+            grammar: &g,
+            name: "g",
+            source: "<stdin>",
+            no_header: true,
+        }
+        .to_string();
+        assert!(out.contains("    // <stdin>:0"));
     }
 
     #[test]
