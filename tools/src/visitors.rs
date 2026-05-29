@@ -39,7 +39,7 @@ pub fn visit_grammar(
         match child.kind() {
             "rule" => {
                 let prod = visit_rule(&mut grammar, &child, source_code)?;
-                grammar.productions.push(prod);
+                grammar.productions.insert(prod.name.clone(), prod);
             }
             "conflictsDirective" => {
                 grammar

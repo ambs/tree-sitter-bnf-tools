@@ -91,7 +91,14 @@ impl Grammar {
 mod tests {
     use super::*;
     use crate::dom::GrammarNode::TerminalLiteral;
-    use crate::dom::{Production, Severity};
+    use crate::dom::{GrammarNode, Production, Severity};
+
+    fn p(name: &str, body: GrammarNode) -> Production {
+        Production {
+            name: name.into(),
+            body,
+        }
+    }
 
     /// Renders each diagnostic to its full display string for easy comparison.
     fn strs(diagnostics: &[Diagnostic]) -> Vec<String> {
@@ -100,32 +107,17 @@ mod tests {
 
     #[test]
     fn grammar_display() {
-        let g = Grammar {
-            productions: vec![
-                Production {
-                    name: "a".into(),
-                    body: TerminalLiteral("'x'".into()),
-                },
-                Production {
-                    name: "b".into(),
-                    body: crate::dom::GrammarNode::NonTerminal("a".into()),
-                },
-            ],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([
+            p("a", TerminalLiteral("'x'".into())),
+            p("b", GrammarNode::NonTerminal("a".into())),
+        ]);
         assert_eq!(g.to_string(), "\na -> 'x'\nb -> $.a");
     }
 
     #[test]
     fn conflicts_check_warns_on_undefined_rule() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            conflicts: vec![vec!["a".into(), "ghost".into()]],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.conflicts = vec![vec!["a".into(), "ghost".into()]];
         assert_eq!(
             strs(&g.conflicts_check(&g.known_rules())),
             vec!["warning: %conflicts references undefined rule 'ghost'"]
@@ -134,33 +126,18 @@ mod tests {
 
     #[test]
     fn conflicts_check_no_warnings_when_all_rules_defined() {
-        let g = Grammar {
-            productions: vec![
-                Production {
-                    name: "a".into(),
-                    body: TerminalLiteral("'x'".into()),
-                },
-                Production {
-                    name: "b".into(),
-                    body: TerminalLiteral("'y'".into()),
-                },
-            ],
-            conflicts: vec![vec!["a".into(), "b".into()]],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([
+            p("a", TerminalLiteral("'x'".into())),
+            p("b", TerminalLiteral("'y'".into())),
+        ]);
+        g.conflicts = vec![vec!["a".into(), "b".into()]];
         assert!(g.conflicts_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn supertypes_check_warns_on_undefined_rule() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            supertypes: vec!["ghost".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.supertypes = vec!["ghost".into()];
         assert_eq!(
             strs(&g.supertypes_check(&g.known_rules())),
             vec!["warning: %supertypes references undefined rule 'ghost'"]
@@ -169,27 +146,15 @@ mod tests {
 
     #[test]
     fn supertypes_check_no_warnings_when_all_rules_defined() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "expression".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            supertypes: vec!["expression".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
+        g.supertypes = vec!["expression".into()];
         assert!(g.supertypes_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn inline_check_warns_on_undefined_rule() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            inline: vec!["ghost".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.inline = vec!["ghost".into()];
         assert_eq!(
             strs(&g.inline_check(&g.known_rules())),
             vec!["warning: %inline references undefined rule 'ghost'"]
@@ -198,27 +163,15 @@ mod tests {
 
     #[test]
     fn inline_check_no_warnings_when_all_rules_defined() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            inline: vec!["a".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.inline = vec!["a".into()];
         assert!(g.inline_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn extras_check_warns_on_undefined_rule() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            extras: vec!["/\\s/".into(), "ghost".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.extras = vec!["/\\s/".into(), "ghost".into()];
         assert_eq!(
             strs(&g.extras_check(&g.known_rules())),
             vec!["warning: %extras references undefined rule 'ghost'"]
@@ -227,33 +180,18 @@ mod tests {
 
     #[test]
     fn extras_check_no_warning_for_pattern() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            extras: vec!["/\\s/".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.extras = vec!["/\\s/".into()];
         assert!(g.extras_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn extras_check_no_warnings_when_rule_defined() {
-        let g = Grammar {
-            productions: vec![
-                Production {
-                    name: "a".into(),
-                    body: TerminalLiteral("'x'".into()),
-                },
-                Production {
-                    name: "comment".into(),
-                    body: TerminalLiteral("'#'".into()),
-                },
-            ],
-            extras: vec!["/\\s/".into(), "comment".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([
+            p("a", TerminalLiteral("'x'".into())),
+            p("comment", TerminalLiteral("'#'".into())),
+        ]);
+        g.extras = vec!["/\\s/".into(), "comment".into()];
         assert!(g.extras_check(&g.known_rules()).is_empty());
     }
 
@@ -269,13 +207,7 @@ mod tests {
 
     #[test]
     fn undefined_refs_check_no_warning_when_defined() {
-        let mut g = Grammar {
-            productions: vec![Production {
-                name: "term".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("term", TerminalLiteral("'x'".into()))]);
         g.rhs_nonterminals.insert("term".into());
         assert!(g.undefined_refs_check(&g.known_rules()).is_empty());
     }
@@ -302,20 +234,17 @@ mod tests {
     #[test]
     fn check_detects_direct_left_recursion() {
         use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
-        let g = Grammar {
-            productions: vec![Production {
-                name: "expr".into(),
-                body: Choice(vec![
-                    Sequence(vec![
-                        NonTerminal("expr".into()),
-                        TerminalLiteral("'+'".into()),
-                        TerminalLiteral("'n'".into()),
-                    ]),
+        let g = Grammar::from_rules([p(
+            "expr",
+            Choice(vec![
+                Sequence(vec![
+                    NonTerminal("expr".into()),
+                    TerminalLiteral("'+'".into()),
                     TerminalLiteral("'n'".into()),
                 ]),
-            }],
-            ..Grammar::new()
-        };
+                TerminalLiteral("'n'".into()),
+            ]),
+        )]);
         let diagnostics = g.check();
         assert!(diagnostics.iter().any(|d| {
             d.severity == Severity::Error
@@ -327,25 +256,22 @@ mod tests {
     #[test]
     fn check_detects_mutual_left_recursion() {
         use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
-        let g = Grammar {
-            productions: vec![
-                Production {
-                    name: "a".into(),
-                    body: Choice(vec![
-                        Sequence(vec![NonTerminal("b".into()), TerminalLiteral("'x'".into())]),
-                        TerminalLiteral("'a'".into()),
-                    ]),
-                },
-                Production {
-                    name: "b".into(),
-                    body: Choice(vec![
-                        Sequence(vec![NonTerminal("a".into()), TerminalLiteral("'y'".into())]),
-                        TerminalLiteral("'b'".into()),
-                    ]),
-                },
-            ],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([
+            p(
+                "a",
+                Choice(vec![
+                    Sequence(vec![NonTerminal("b".into()), TerminalLiteral("'x'".into())]),
+                    TerminalLiteral("'a'".into()),
+                ]),
+            ),
+            p(
+                "b",
+                Choice(vec![
+                    Sequence(vec![NonTerminal("a".into()), TerminalLiteral("'y'".into())]),
+                    TerminalLiteral("'b'".into()),
+                ]),
+            ),
+        ]);
         let diagnostics = g.check();
         assert!(diagnostics.iter().any(|d| {
             d.severity == Severity::Error
@@ -362,19 +288,16 @@ mod tests {
     #[test]
     fn check_no_warning_for_right_recursive_rule() {
         use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
-        let g = Grammar {
-            productions: vec![Production {
-                name: "list".into(),
-                body: Choice(vec![
-                    Sequence(vec![
-                        TerminalLiteral("'x'".into()),
-                        NonTerminal("list".into()),
-                    ]),
+        let g = Grammar::from_rules([p(
+            "list",
+            Choice(vec![
+                Sequence(vec![
                     TerminalLiteral("'x'".into()),
+                    NonTerminal("list".into()),
                 ]),
-            }],
-            ..Grammar::new()
-        };
+                TerminalLiteral("'x'".into()),
+            ]),
+        )]);
         let diagnostics = g.check();
         assert!(!diagnostics
             .iter()
