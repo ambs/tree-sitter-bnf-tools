@@ -95,6 +95,7 @@ impl Grammar {
     pub fn check(&self) -> Vec<Diagnostic> {
         let known = self.known_rules();
         let mut diagnostics = Vec::new();
+        diagnostics.extend(self.parse_diagnostics.iter().cloned());
         diagnostics.extend(self.conflicts_check(&known));
         diagnostics.extend(self.inline_check(&known));
         diagnostics.extend(self.supertypes_check(&known));

@@ -1,7 +1,7 @@
 //! Integration tests for the BNF → grammar.js visitor pipeline.
 
 use ts_bnf_tool::dom::test_utils::{cg, di};
-use ts_bnf_tool::dom::Grammar;
+use ts_bnf_tool::dom::{Grammar, Severity};
 use ts_bnf_tool::visitors::parse_source;
 
 fn parse(src: &str) -> String {
@@ -425,4 +425,18 @@ fn prec_nested_groups() {
         parse("rule -> (a | (b %prec 1)) ;"),
         "rule -> choice($.a, prec(1, $.b))"
     );
+}
+
+#[test]
+fn duplicate_rule_emits_warning() {
+    let (_, diagnostics) = parse_source("a -> 'x'; a -> 'y';").unwrap();
+    assert!(diagnostics.iter().any(|d| d.severity == Severity::Warning
+        && d.message.contains("'a'")
+        && d.message.contains("more than once")));
+}
+
+#[test]
+fn duplicate_rule_second_definition_wins() {
+    let (grammar, _) = parse_source("a -> 'x'; a -> 'y';").unwrap();
+    assert_eq!(grammar.to_string().trim(), "a -> 'y'");
 }

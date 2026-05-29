@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter};
 
 use indexmap::IndexMap;
 
+use super::diagnostic::Diagnostic;
 use super::directive::{ConflictGroup, DirectiveItem};
 use super::production::Production;
 
@@ -21,6 +22,8 @@ pub struct Grammar {
     pub extras: Vec<DirectiveItem>,
     /// All non-terminal names that appear on right-hand sides of rules, accumulated by the visitor.
     pub rhs_nonterminals: HashSet<String>,
+    /// Diagnostics accumulated during parsing (before cross-reference checks).
+    pub parse_diagnostics: Vec<Diagnostic>,
 }
 
 impl Default for Grammar {
@@ -39,6 +42,7 @@ impl Grammar {
             supertypes: Vec::new(),
             extras: Vec::new(),
             rhs_nonterminals: HashSet::new(),
+            parse_diagnostics: Vec::new(),
         }
     }
 
