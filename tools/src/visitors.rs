@@ -40,6 +40,12 @@ pub fn visit_grammar(
         match child.kind() {
             "rule" => {
                 let prod = visit_rule(&mut grammar, &child, source_code)?;
+                if grammar.productions.contains_key(&prod.name) {
+                    grammar.parse_diagnostics.push(Diagnostic::warning(format!(
+                        "rule '{}' is defined more than once (line {})",
+                        prod.name, prod.line
+                    )));
+                }
                 grammar.productions.insert(prod.name.clone(), prod);
             }
             "conflictsDirective" => {
