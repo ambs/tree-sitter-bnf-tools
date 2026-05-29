@@ -69,7 +69,7 @@ impl Display for Scaffold<'_> {
             writeln!(f)?;
         }
         writeln!(f, "  rules: {{")?;
-        for production in &self.grammar.productions {
+        for production in self.grammar.productions.values() {
             writeln!(f, "    {}: $ => {},", production.name, production.body)?;
         }
         writeln!(f, "  }}")?;
@@ -83,15 +83,16 @@ mod tests {
     use crate::dom::GrammarNode::TerminalLiteral;
     use crate::dom::{Grammar, GrammarNode, Production};
 
+    fn p(name: &str, body: GrammarNode) -> Production {
+        Production {
+            name: name.into(),
+            body,
+        }
+    }
+
     #[test]
     fn scaffold_single_rule() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "expr".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
         assert_eq!(
             Scaffold { grammar: &g, name: "expr" }.to_string(),
             "module.exports = grammar({\n  name: \"expr\",\n\n  rules: {\n    expr: $ => 'x',\n  }\n});"
@@ -100,19 +101,10 @@ mod tests {
 
     #[test]
     fn scaffold_multi_rule() {
-        let g = Grammar {
-            productions: vec![
-                Production {
-                    name: "a".into(),
-                    body: TerminalLiteral("'x'".into()),
-                },
-                Production {
-                    name: "b".into(),
-                    body: GrammarNode::NonTerminal("a".into()),
-                },
-            ],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([
+            p("a", TerminalLiteral("'x'".into())),
+            p("b", GrammarNode::NonTerminal("a".into())),
+        ]);
         let out = Scaffold {
             grammar: &g,
             name: "test",
@@ -126,13 +118,7 @@ mod tests {
 
     #[test]
     fn scaffold_name_appears_in_output() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "r".into(),
-                body: TerminalLiteral("'y'".into()),
-            }],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([p("r", TerminalLiteral("'y'".into()))]);
         let out = Scaffold {
             grammar: &g,
             name: "mygrammar",
@@ -143,13 +129,7 @@ mod tests {
 
     #[test]
     fn scaffold_no_conflicts_omits_key() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -160,14 +140,8 @@ mod tests {
 
     #[test]
     fn scaffold_with_single_conflict_group() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "expr".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            conflicts: vec![vec!["expr".into(), "term".into()]],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+        g.conflicts = vec![vec!["expr".into(), "term".into()]];
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -176,23 +150,16 @@ mod tests {
         assert!(out.contains("  conflicts: $ => ["));
         assert!(out.contains("    [$.expr, $.term],"));
         assert!(out.contains("  ],"));
-        // conflicts block appears before rules block
         assert!(out.find("conflicts").unwrap() < out.find("rules").unwrap());
     }
 
     #[test]
     fn scaffold_with_multiple_conflict_groups() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            conflicts: vec![
-                vec!["a".into(), "b".into()],
-                vec!["c".into(), "d".into(), "e".into()],
-            ],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.conflicts = vec![
+            vec!["a".into(), "b".into()],
+            vec!["c".into(), "d".into(), "e".into()],
+        ];
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -204,14 +171,8 @@ mod tests {
 
     #[test]
     fn scaffold_with_supertypes() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "expression".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            supertypes: vec!["expression".into(), "statement".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
+        g.supertypes = vec!["expression".into(), "statement".into()];
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -223,13 +184,7 @@ mod tests {
 
     #[test]
     fn scaffold_no_supertypes_omits_key() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -240,14 +195,8 @@ mod tests {
 
     #[test]
     fn scaffold_with_extras_pattern_and_rule() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            extras: vec!["/\\s/".into(), "comment".into()],
-            ..Grammar::new()
-        };
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.extras = vec!["/\\s/".into(), "comment".into()];
         let out = Scaffold {
             grammar: &g,
             name: "g",
@@ -259,13 +208,7 @@ mod tests {
 
     #[test]
     fn scaffold_no_extras_omits_key() {
-        let g = Grammar {
-            productions: vec![Production {
-                name: "a".into(),
-                body: TerminalLiteral("'x'".into()),
-            }],
-            ..Grammar::new()
-        };
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = Scaffold {
             grammar: &g,
             name: "g",

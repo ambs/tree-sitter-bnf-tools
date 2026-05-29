@@ -21,15 +21,12 @@
 //! use ts_bnf_tool::dom::{Grammar, GrammarNode, Production};
 //! use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 //!
-//! let g = Grammar {
-//!     productions: vec![
-//!         Production { name: "sign".into(), body: GrammarNode::Choice(vec![
-//!             GrammarNode::TerminalLiteral("'+'".into()),
-//!             GrammarNode::TerminalLiteral("'-'".into()),
-//!         ])},
-//!     ],
-//!     ..Grammar::new()
-//! };
+//! let g = Grammar::from_rules([
+//!     Production { name: "sign".into(), body: GrammarNode::Choice(vec![
+//!         GrammarNode::TerminalLiteral("'+'".into()),
+//!         GrammarNode::TerminalLiteral("'-'".into()),
+//!     ])},
+//! ]);
 //! let f = first_sets(&g);
 //! assert!(f["sign"].contains(&FirstTerminal::Literal("'+'")));
 //! assert!(f["sign"].contains(&FirstTerminal::Literal("'-'")));
@@ -238,19 +235,16 @@ fn collect_leading_nts<'g>(
 /// use ts_bnf_tool::dom::analysis::left_recursive_rules;
 ///
 /// // expr ::= expr '+' 'n' | 'n'
-/// let g = Grammar {
-///     productions: vec![
-///         Production { name: "expr".into(), body: GrammarNode::Choice(vec![
-///             GrammarNode::Sequence(vec![
-///                 GrammarNode::NonTerminal("expr".into()),
-///                 GrammarNode::TerminalLiteral("'+'".into()),
-///                 GrammarNode::TerminalLiteral("'n'".into()),
-///             ]),
+/// let g = Grammar::from_rules([
+///     Production { name: "expr".into(), body: GrammarNode::Choice(vec![
+///         GrammarNode::Sequence(vec![
+///             GrammarNode::NonTerminal("expr".into()),
+///             GrammarNode::TerminalLiteral("'+'".into()),
 ///             GrammarNode::TerminalLiteral("'n'".into()),
-///         ])},
-///     ],
-///     ..Grammar::new()
-/// };
+///         ]),
+///         GrammarNode::TerminalLiteral("'n'".into()),
+///     ])},
+/// ]);
 /// let lr = left_recursive_rules(&g);
 /// assert_eq!(lr, vec![("expr", true)]);
 /// ```
@@ -262,25 +256,22 @@ fn collect_leading_nts<'g>(
 /// use ts_bnf_tool::dom::analysis::left_recursive_rules;
 ///
 /// // a ::= b 'x' | 'a'   b ::= a 'y' | 'b'
-/// let g = Grammar {
-///     productions: vec![
-///         Production { name: "a".into(), body: GrammarNode::Choice(vec![
-///             GrammarNode::Sequence(vec![
-///                 GrammarNode::NonTerminal("b".into()),
-///                 GrammarNode::TerminalLiteral("'x'".into()),
-///             ]),
-///             GrammarNode::TerminalLiteral("'a'".into()),
-///         ])},
-///         Production { name: "b".into(), body: GrammarNode::Choice(vec![
-///             GrammarNode::Sequence(vec![
-///                 GrammarNode::NonTerminal("a".into()),
-///                 GrammarNode::TerminalLiteral("'y'".into()),
-///             ]),
-///             GrammarNode::TerminalLiteral("'b'".into()),
-///         ])},
-///     ],
-///     ..Grammar::new()
-/// };
+/// let g = Grammar::from_rules([
+///     Production { name: "a".into(), body: GrammarNode::Choice(vec![
+///         GrammarNode::Sequence(vec![
+///             GrammarNode::NonTerminal("b".into()),
+///             GrammarNode::TerminalLiteral("'x'".into()),
+///         ]),
+///         GrammarNode::TerminalLiteral("'a'".into()),
+///     ])},
+///     Production { name: "b".into(), body: GrammarNode::Choice(vec![
+///         GrammarNode::Sequence(vec![
+///             GrammarNode::NonTerminal("a".into()),
+///             GrammarNode::TerminalLiteral("'y'".into()),
+///         ]),
+///         GrammarNode::TerminalLiteral("'b'".into()),
+///     ])},
+/// ]);
 /// let lr = left_recursive_rules(&g);
 /// assert_eq!(lr, vec![("a", false), ("b", false)]);
 /// ```
@@ -290,7 +281,7 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
     // One-step: direct leading non-terminals of each rule's body.
     let one_step: HashMap<&str, HashSet<&str>> = grammar
         .productions
-        .iter()
+        .values()
         .map(|p| {
             let mut result = HashSet::new();
             collect_leading_nts(&p.body, &nullable, &mut result);
@@ -303,7 +294,7 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
     loop {
         let snapshot = transitive.clone();
         let mut changed = false;
-        for prod in &grammar.productions {
+        for prod in grammar.productions.values() {
             let rule = prod.name.as_str();
             let extra: HashSet<&str> = snapshot[rule]
                 .iter()
@@ -357,13 +348,10 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
 /// use ts_bnf_tool::dom::{Grammar, GrammarNode, Production};
 /// use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 ///
-/// let g = Grammar {
-///     productions: vec![
-///         Production { name: "word".into(), body: GrammarNode::TerminalPattern("/[a-z]+/".into()) },
-///         Production { name: "kw".into(),   body: GrammarNode::TerminalLiteral("'if'".into()) },
-///     ],
-///     ..Grammar::new()
-/// };
+/// let g = Grammar::from_rules([
+///     Production { name: "word".into(), body: GrammarNode::TerminalPattern("/[a-z]+/".into()) },
+///     Production { name: "kw".into(),   body: GrammarNode::TerminalLiteral("'if'".into()) },
+/// ]);
 /// let f = first_sets(&g);
 /// assert!(f["word"].contains(&FirstTerminal::Pattern("/[a-z]+/")));
 /// assert!(f["kw"].contains(&FirstTerminal::Literal("'if'")));
@@ -376,13 +364,10 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
 /// use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 ///
 /// // digit -> /[0-9]/ ;  num -> digit ;
-/// let g = Grammar {
-///     productions: vec![
-///         Production { name: "digit".into(), body: GrammarNode::TerminalPattern("/[0-9]/".into()) },
-///         Production { name: "num".into(),   body: GrammarNode::NonTerminal("digit".into()) },
-///     ],
-///     ..Grammar::new()
-/// };
+/// let g = Grammar::from_rules([
+///     Production { name: "digit".into(), body: GrammarNode::TerminalPattern("/[0-9]/".into()) },
+///     Production { name: "num".into(),   body: GrammarNode::NonTerminal("digit".into()) },
+/// ]);
 /// let f = first_sets(&g);
 /// assert_eq!(f["num"], f["digit"]);
 /// ```
@@ -392,7 +377,7 @@ pub fn first_sets(grammar: &Grammar) -> HashMap<&str, HashSet<FirstTerminal<'_>>
     // Seed every rule with an empty set.
     let mut first: HashMap<&str, HashSet<FirstTerminal<'_>>> = grammar
         .productions
-        .iter()
+        .values()
         .map(|p| (p.name.as_str(), HashSet::new()))
         .collect();
 
@@ -403,7 +388,7 @@ pub fn first_sets(grammar: &Grammar) -> HashMap<&str, HashSet<FirstTerminal<'_>>
     loop {
         let snapshot = first.clone();
         let mut changed = false;
-        for prod in &grammar.productions {
+        for prod in grammar.productions.values() {
             let mut new_first = HashSet::new();
             collect_first(&prod.body, &snapshot, &nullable, &mut new_first);
             let entry = first.get_mut(prod.name.as_str()).unwrap();
@@ -435,10 +420,7 @@ mod tests {
     }
 
     fn grammar(prods: Vec<Production>) -> Grammar {
-        Grammar {
-            productions: prods,
-            ..Grammar::new()
-        }
+        Grammar::from_rules(prods)
     }
 
     fn lit(s: &str) -> GrammarNode {
