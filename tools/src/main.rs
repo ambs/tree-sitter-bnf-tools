@@ -101,7 +101,11 @@ fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(),
 
 /// Returns the source label for the generated-file header: `<stdin>` for `-`, otherwise the filename.
 fn source_label(filename: &str) -> &str {
-    if filename == "-" { "<stdin>" } else { filename }
+    if filename == "-" {
+        "<stdin>"
+    } else {
+        filename
+    }
 }
 
 /// Returns the grammar name: the explicit override if provided, or the filename stem.
@@ -266,7 +270,15 @@ mod tests {
 
     fn convert_fields(
         cli: Cli,
-    ) -> (String, bool, bool, Option<String>, Option<String>, bool, bool) {
+    ) -> (
+        String,
+        bool,
+        bool,
+        Option<String>,
+        Option<String>,
+        bool,
+        bool,
+    ) {
         match cli.command {
             Subcommands::Convert {
                 filename,
@@ -276,7 +288,9 @@ mod tests {
                 output_dir,
                 no_check,
                 no_header,
-            } => (filename, rules_only, generate, name, output_dir, no_check, no_header),
+            } => (
+                filename, rules_only, generate, name, output_dir, no_check, no_header,
+            ),
             _ => panic!("expected Convert"),
         }
     }
@@ -332,8 +346,7 @@ mod tests {
 
     #[test]
     fn no_check_short_flag_sets_true() {
-        let (.., no_check, _no_header) =
-            convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
+        let (.., no_check, _no_header) = convert_fields(parse_convert(&["-n", "f.bnf"]).unwrap());
         assert!(no_check);
     }
 
