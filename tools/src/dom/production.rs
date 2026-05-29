@@ -11,6 +11,8 @@ pub struct Production {
     pub body: GrammarNode,
     /// 1-based source line number of this rule's definition.
     pub line: usize,
+    /// Source filename where this rule was defined (empty string if unknown).
+    pub filename: String,
 }
 
 impl Display for Production {
@@ -33,6 +35,7 @@ mod tests {
             name: "expr".into(),
             body: NonTerminal("a".into()),
             line: 0,
+            filename: String::new(),
         };
         assert_eq!(p.to_string(), "expr -> $.a");
     }
