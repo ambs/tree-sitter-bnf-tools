@@ -31,8 +31,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 #### `ts-bnf-tool`
-- Left-recursion errors now include the source line number of the offending rule,
-  e.g. `rule 'expr' is directly left-recursive (line 3)`
+- All diagnostic messages now include a source line number, e.g.:
+  - `rule 'expr' is directly left-recursive (line 3)`
+  - `%inline references undefined rule '_helper' (line 1)`
+  - `%conflicts references undefined rule 'ghost' (line 2)`
+  - `%supertypes references undefined rule 'expr' (line 4)`
+  - `%extras references undefined rule 'ws' (line 1)`
 
 #### `ts-bnf-tool`
 - `check` subcommand: diagnostic output is now sorted alphabetically by message,
