@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use super::analysis::left_recursive_rules;
 use super::diagnostic::Diagnostic;
+use super::directive::{ConflictGroup, DirectiveItem};
 use super::types::Grammar;
 
 impl Grammar {
@@ -9,10 +10,15 @@ impl Grammar {
     fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.conflicts
             .iter()
-            .flatten()
-            .filter(|name| !known.contains(name.as_str()))
-            .map(|name| {
-                Diagnostic::warning(format!("%conflicts references undefined rule '{name}'"))
+            .flat_map(|ConflictGroup { rules, line }| {
+                rules.iter().filter_map(move |name| {
+                    if known.contains(name.as_str()) {
+                        return None;
+                    }
+                    Some(Diagnostic::warning(format!(
+                        "%conflicts references undefined rule '{name}' (line {line})"
+                    )))
+                })
             })
             .collect()
     }
@@ -21,8 +27,12 @@ impl Grammar {
     fn inline_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.inline
             .iter()
-            .filter(|name| !known.contains(name.as_str()))
-            .map(|name| Diagnostic::warning(format!("%inline references undefined rule '{name}'")))
+            .filter(|item| !known.contains(item.name.as_str()))
+            .map(|DirectiveItem { name, line }| {
+                Diagnostic::warning(format!(
+                    "%inline references undefined rule '{name}' (line {line})"
+                ))
+            })
             .collect()
     }
 
@@ -30,9 +40,11 @@ impl Grammar {
     fn supertypes_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.supertypes
             .iter()
-            .filter(|name| !known.contains(name.as_str()))
-            .map(|name| {
-                Diagnostic::warning(format!("%supertypes references undefined rule '{name}'"))
+            .filter(|item| !known.contains(item.name.as_str()))
+            .map(|DirectiveItem { name, line }| {
+                Diagnostic::warning(format!(
+                    "%supertypes references undefined rule '{name}' (line {line})"
+                ))
             })
             .collect()
     }
@@ -41,8 +53,12 @@ impl Grammar {
     fn extras_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.extras
             .iter()
-            .filter(|item| !item.starts_with('/') && !known.contains(item.as_str()))
-            .map(|name| Diagnostic::warning(format!("%extras references undefined rule '{name}'")))
+            .filter(|item| !item.name.starts_with('/') && !known.contains(item.name.as_str()))
+            .map(|DirectiveItem { name, line }| {
+                Diagnostic::warning(format!(
+                    "%extras references undefined rule '{name}' (line {line})"
+                ))
+            })
             .collect()
     }
 
@@ -64,7 +80,10 @@ impl Grammar {
             .into_iter()
             .map(|(rule, is_direct)| {
                 let kind = if is_direct { "directly" } else { "mutually" };
-                Diagnostic::error(format!("rule '{rule}' is {kind} left-recursive"))
+                let line = self.productions.get(rule).map(|p| p.line).unwrap_or(0);
+                Diagnostic::error(format!(
+                    "rule '{rule}' is {kind} left-recursive (line {line})"
+                ))
             })
             .collect()
     }
@@ -90,15 +109,9 @@ impl Grammar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dom::test_utils::{cg, di, p};
     use crate::dom::GrammarNode::TerminalLiteral;
-    use crate::dom::{GrammarNode, Production, Severity};
-
-    fn p(name: &str, body: GrammarNode) -> Production {
-        Production {
-            name: name.into(),
-            body,
-        }
-    }
+    use crate::dom::{GrammarNode, Severity};
 
     /// Renders each diagnostic to its full display string for easy comparison.
     fn strs(diagnostics: &[Diagnostic]) -> Vec<String> {
@@ -117,10 +130,10 @@ mod tests {
     #[test]
     fn conflicts_check_warns_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.conflicts = vec![vec!["a".into(), "ghost".into()]];
+        g.conflicts = vec![cg(&["a", "ghost"], 0)];
         assert_eq!(
             strs(&g.conflicts_check(&g.known_rules())),
-            vec!["warning: %conflicts references undefined rule 'ghost'"]
+            vec!["warning: %conflicts references undefined rule 'ghost' (line 0)"]
         );
     }
 
@@ -130,58 +143,58 @@ mod tests {
             p("a", TerminalLiteral("'x'".into())),
             p("b", TerminalLiteral("'y'".into())),
         ]);
-        g.conflicts = vec![vec!["a".into(), "b".into()]];
+        g.conflicts = vec![cg(&["a", "b"], 0)];
         assert!(g.conflicts_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn supertypes_check_warns_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.supertypes = vec!["ghost".into()];
+        g.supertypes = vec![di("ghost", 0)];
         assert_eq!(
             strs(&g.supertypes_check(&g.known_rules())),
-            vec!["warning: %supertypes references undefined rule 'ghost'"]
+            vec!["warning: %supertypes references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
     fn supertypes_check_no_warnings_when_all_rules_defined() {
         let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
-        g.supertypes = vec!["expression".into()];
+        g.supertypes = vec![di("expression", 0)];
         assert!(g.supertypes_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn inline_check_warns_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.inline = vec!["ghost".into()];
+        g.inline = vec![di("ghost", 0)];
         assert_eq!(
             strs(&g.inline_check(&g.known_rules())),
-            vec!["warning: %inline references undefined rule 'ghost'"]
+            vec!["warning: %inline references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
     fn inline_check_no_warnings_when_all_rules_defined() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.inline = vec!["a".into()];
+        g.inline = vec![di("a", 0)];
         assert!(g.inline_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn extras_check_warns_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.extras = vec!["/\\s/".into(), "ghost".into()];
+        g.extras = vec![di("/\\s/", 0), di("ghost", 0)];
         assert_eq!(
             strs(&g.extras_check(&g.known_rules())),
-            vec!["warning: %extras references undefined rule 'ghost'"]
+            vec!["warning: %extras references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
     fn extras_check_no_warning_for_pattern() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.extras = vec!["/\\s/".into()];
+        g.extras = vec![di("/\\s/", 0)];
         assert!(g.extras_check(&g.known_rules()).is_empty());
     }
 
@@ -191,7 +204,7 @@ mod tests {
             p("a", TerminalLiteral("'x'".into())),
             p("comment", TerminalLiteral("'#'".into())),
         ]);
-        g.extras = vec!["/\\s/".into(), "comment".into()];
+        g.extras = vec![di("/\\s/", 0), di("comment", 0)];
         assert!(g.extras_check(&g.known_rules()).is_empty());
     }
 

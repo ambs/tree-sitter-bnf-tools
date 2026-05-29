@@ -328,6 +328,7 @@ name = "ts-bnf-tool"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "indexmap",
  "tree-sitter",
  "tree-sitter-bnf",
 ]

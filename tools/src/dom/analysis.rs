@@ -25,7 +25,7 @@
 //!     Production { name: "sign".into(), body: GrammarNode::Choice(vec![
 //!         GrammarNode::TerminalLiteral("'+'".into()),
 //!         GrammarNode::TerminalLiteral("'-'".into()),
-//!     ])},
+//!     ]), line: 0 },
 //! ]);
 //! let f = first_sets(&g);
 //! assert!(f["sign"].contains(&FirstTerminal::Literal("'+'")));
@@ -243,7 +243,7 @@ fn collect_leading_nts<'g>(
 ///             GrammarNode::TerminalLiteral("'n'".into()),
 ///         ]),
 ///         GrammarNode::TerminalLiteral("'n'".into()),
-///     ])},
+///     ]), line: 0 },
 /// ]);
 /// let lr = left_recursive_rules(&g);
 /// assert_eq!(lr, vec![("expr", true)]);
@@ -263,14 +263,14 @@ fn collect_leading_nts<'g>(
 ///             GrammarNode::TerminalLiteral("'x'".into()),
 ///         ]),
 ///         GrammarNode::TerminalLiteral("'a'".into()),
-///     ])},
+///     ]), line: 0 },
 ///     Production { name: "b".into(), body: GrammarNode::Choice(vec![
 ///         GrammarNode::Sequence(vec![
 ///             GrammarNode::NonTerminal("a".into()),
 ///             GrammarNode::TerminalLiteral("'y'".into()),
 ///         ]),
 ///         GrammarNode::TerminalLiteral("'b'".into()),
-///     ])},
+///     ]), line: 0 },
 /// ]);
 /// let lr = left_recursive_rules(&g);
 /// assert_eq!(lr, vec![("a", false), ("b", false)]);
@@ -349,8 +349,8 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
 /// use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 ///
 /// let g = Grammar::from_rules([
-///     Production { name: "word".into(), body: GrammarNode::TerminalPattern("/[a-z]+/".into()) },
-///     Production { name: "kw".into(),   body: GrammarNode::TerminalLiteral("'if'".into()) },
+///     Production { name: "word".into(), body: GrammarNode::TerminalPattern("/[a-z]+/".into()), line: 0 },
+///     Production { name: "kw".into(),   body: GrammarNode::TerminalLiteral("'if'".into()), line: 0 },
 /// ]);
 /// let f = first_sets(&g);
 /// assert!(f["word"].contains(&FirstTerminal::Pattern("/[a-z]+/")));
@@ -365,8 +365,8 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
 ///
 /// // digit -> /[0-9]/ ;  num -> digit ;
 /// let g = Grammar::from_rules([
-///     Production { name: "digit".into(), body: GrammarNode::TerminalPattern("/[0-9]/".into()) },
-///     Production { name: "num".into(),   body: GrammarNode::NonTerminal("digit".into()) },
+///     Production { name: "digit".into(), body: GrammarNode::TerminalPattern("/[0-9]/".into()), line: 0 },
+///     Production { name: "num".into(),   body: GrammarNode::NonTerminal("digit".into()), line: 0 },
 /// ]);
 /// let f = first_sets(&g);
 /// assert_eq!(f["num"], f["digit"]);
@@ -416,6 +416,7 @@ mod tests {
         Production {
             name: name.into(),
             body,
+            line: 0,
         }
     }
 

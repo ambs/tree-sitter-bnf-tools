@@ -2,6 +2,8 @@
 pub mod analysis;
 /// Structured diagnostic messages with severity levels.
 pub mod diagnostic;
+/// Types for grammar directive entries with source location.
+pub mod directive;
 /// Parse and conversion error types.
 mod error;
 /// Cross-reference and structural validation checks on a [`Grammar`].
@@ -12,10 +14,14 @@ mod nodes;
 mod production;
 /// Renders a [`Grammar`] as a complete `grammar.js` file.
 mod scaffold;
+/// Shared helpers for constructing test fixtures.
+#[doc(hidden)]
+pub mod test_utils;
 /// The [`Grammar`] struct and its basic impls.
 mod types;
 
 pub use diagnostic::{Diagnostic, Severity};
+pub use directive::{ConflictGroup, DirectiveItem};
 pub use error::ParseError;
 pub use nodes::{GrammarNode, PrecKind};
 pub use production::Production;

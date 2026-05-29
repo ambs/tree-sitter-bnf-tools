@@ -9,6 +9,8 @@ pub struct Production {
     pub name: String,
     /// The rule body (right-hand side of `->`).
     pub body: GrammarNode,
+    /// 1-based source line number of this rule's definition.
+    pub line: usize,
 }
 
 impl Display for Production {
@@ -30,6 +32,7 @@ mod tests {
         let p = Production {
             name: "expr".into(),
             body: NonTerminal("a".into()),
+            line: 0,
         };
         assert_eq!(p.to_string(), "expr -> $.a");
     }

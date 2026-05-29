@@ -1,5 +1,6 @@
 //! Integration tests for the BNF → grammar.js visitor pipeline.
 
+use ts_bnf_tool::dom::test_utils::{cg, di};
 use ts_bnf_tool::dom::Grammar;
 use ts_bnf_tool::visitors::parse_source;
 
@@ -283,131 +284,131 @@ fn prec_group_with_kleene() {
 #[test]
 fn conflicts_single_group() {
     let g = parse_grammar("%conflicts [a, b]\na -> 'x' ;");
-    assert_eq!(g.conflicts, vec![vec!["a", "b"]]);
+    assert_eq!(g.conflicts, vec![cg(&["a", "b"], 1)]);
 }
 
 #[test]
 fn conflicts_three_rules_in_group() {
     let g = parse_grammar("%conflicts [a, b, c]\na -> 'x' ;");
-    assert_eq!(g.conflicts, vec![vec!["a", "b", "c"]]);
+    assert_eq!(g.conflicts, vec![cg(&["a", "b", "c"], 1)]);
 }
 
 #[test]
 fn conflicts_multiple_groups_one_line() {
     let g = parse_grammar("%conflicts [a, b], [c, d]\na -> 'x' ;");
-    assert_eq!(g.conflicts, vec![vec!["a", "b"], vec!["c", "d"]]);
+    assert_eq!(g.conflicts, vec![cg(&["a", "b"], 1), cg(&["c", "d"], 1)]);
 }
 
 #[test]
 fn conflicts_multiple_directives_are_additive() {
     let g = parse_grammar("%conflicts [a, b]\n%conflicts [c, d]\na -> 'x' ;");
-    assert_eq!(g.conflicts, vec![vec!["a", "b"], vec!["c", "d"]]);
+    assert_eq!(g.conflicts, vec![cg(&["a", "b"], 1), cg(&["c", "d"], 2)]);
 }
 
 #[test]
 fn conflicts_interleaved_with_rules() {
     let g = parse_grammar("a -> 'x' ;\n%conflicts [a, b]\nb -> 'y' ;");
-    assert_eq!(g.conflicts, vec![vec!["a", "b"]]);
+    assert_eq!(g.conflicts, vec![cg(&["a", "b"], 2)]);
     assert_eq!(g.productions.len(), 2);
 }
 
 #[test]
 fn conflicts_undefined_rule_still_parses() {
     let g = parse_grammar("%conflicts [a, ghost]\na -> 'x' ;");
-    assert_eq!(g.conflicts, vec![vec!["a", "ghost"]]);
+    assert_eq!(g.conflicts, vec![cg(&["a", "ghost"], 1)]);
 }
 
 #[test]
 fn inline_single_rule() {
     let g = parse_grammar("%inline _helper\na -> _helper ;");
-    assert_eq!(g.inline, vec!["_helper"]);
+    assert_eq!(g.inline, vec![di("_helper", 1)]);
 }
 
 #[test]
 fn inline_multiple_rules_one_directive() {
     let g = parse_grammar("%inline _a, _b\na -> _a ;");
-    assert_eq!(g.inline, vec!["_a", "_b"]);
+    assert_eq!(g.inline, vec![di("_a", 1), di("_b", 1)]);
 }
 
 #[test]
 fn inline_multiple_directives_are_additive() {
     let g = parse_grammar("%inline _a\n%inline _b\na -> _a ;");
-    assert_eq!(g.inline, vec!["_a", "_b"]);
+    assert_eq!(g.inline, vec![di("_a", 1), di("_b", 2)]);
 }
 
 #[test]
 fn inline_interleaved_with_rules() {
     let g = parse_grammar("a -> _h ;\n%inline _h\n_h -> 'x' ;");
-    assert_eq!(g.inline, vec!["_h"]);
+    assert_eq!(g.inline, vec![di("_h", 2)]);
     assert_eq!(g.productions.len(), 2);
 }
 
 #[test]
 fn inline_undefined_rule_still_parses() {
     let g = parse_grammar("%inline ghost\na -> 'x' ;");
-    assert_eq!(g.inline, vec!["ghost"]);
+    assert_eq!(g.inline, vec![di("ghost", 1)]);
 }
 
 #[test]
 fn supertypes_single_rule() {
     let g = parse_grammar("%supertypes expression\nexpression -> 'x' ;");
-    assert_eq!(g.supertypes, vec!["expression"]);
+    assert_eq!(g.supertypes, vec![di("expression", 1)]);
 }
 
 #[test]
 fn supertypes_multiple_rules_one_directive() {
     let g = parse_grammar("%supertypes expression, statement\nexpression -> 'x' ;");
-    assert_eq!(g.supertypes, vec!["expression", "statement"]);
+    assert_eq!(g.supertypes, vec![di("expression", 1), di("statement", 1)]);
 }
 
 #[test]
 fn supertypes_multiple_directives_are_additive() {
     let g = parse_grammar("%supertypes expression\n%supertypes statement\nexpression -> 'x' ;");
-    assert_eq!(g.supertypes, vec!["expression", "statement"]);
+    assert_eq!(g.supertypes, vec![di("expression", 1), di("statement", 2)]);
 }
 
 #[test]
 fn supertypes_interleaved_with_rules() {
     let g = parse_grammar("expression -> 'x' ;\n%supertypes expression\nstatement -> 'y' ;");
-    assert_eq!(g.supertypes, vec!["expression"]);
+    assert_eq!(g.supertypes, vec![di("expression", 2)]);
     assert_eq!(g.productions.len(), 2);
 }
 
 #[test]
 fn supertypes_undefined_rule_still_parses() {
     let g = parse_grammar("%supertypes ghost\na -> 'x' ;");
-    assert_eq!(g.supertypes, vec!["ghost"]);
+    assert_eq!(g.supertypes, vec![di("ghost", 1)]);
 }
 
 #[test]
 fn extras_single_pattern() {
     let g = parse_grammar("%extras /\\s/\na -> 'x' ;");
-    assert_eq!(g.extras, vec!["/\\s/"]);
+    assert_eq!(g.extras, vec![di("/\\s/", 1)]);
 }
 
 #[test]
 fn extras_pattern_and_rule() {
     let g = parse_grammar("%extras /\\s/, comment\na -> 'x' ;\ncomment -> '#' ;");
-    assert_eq!(g.extras, vec!["/\\s/", "comment"]);
+    assert_eq!(g.extras, vec![di("/\\s/", 1), di("comment", 1)]);
 }
 
 #[test]
 fn extras_multiple_directives_are_additive() {
     let g = parse_grammar("%extras /\\s/\n%extras comment\na -> 'x' ;\ncomment -> '#' ;");
-    assert_eq!(g.extras, vec!["/\\s/", "comment"]);
+    assert_eq!(g.extras, vec![di("/\\s/", 1), di("comment", 2)]);
 }
 
 #[test]
 fn extras_interleaved_with_rules() {
     let g = parse_grammar("a -> 'x' ;\n%extras /\\s/\nb -> 'y' ;");
-    assert_eq!(g.extras, vec!["/\\s/"]);
+    assert_eq!(g.extras, vec![di("/\\s/", 2)]);
     assert_eq!(g.productions.len(), 2);
 }
 
 #[test]
 fn extras_undefined_rule_still_parses() {
     let g = parse_grammar("%extras ghost\na -> 'x' ;");
-    assert_eq!(g.extras, vec!["ghost"]);
+    assert_eq!(g.extras, vec![di("ghost", 1)]);
 }
 
 #[test]
