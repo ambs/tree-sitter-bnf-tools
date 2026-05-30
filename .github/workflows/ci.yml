@@ -115,8 +115,7 @@ jobs:
           header: coverage
           message: "{{{content}}}"
           path: coverage-table.md
-      # Uncomment to upload coverage to Codecov (add CODECOV_TOKEN to repo secrets first):
-      # - uses: codecov/codecov-action@v5
-      #   with:
-      #     files: lcov.info
-      #     fail_ci_if_error: true
+      - uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5.5.4
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
