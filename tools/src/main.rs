@@ -65,7 +65,7 @@ enum Subcommands {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
     },
-    /// Pretty-print a BNF file in canonical style (note: strips comments — see issue #148)
+    /// Pretty-print a BNF file in canonical style.
     Format {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
@@ -73,10 +73,17 @@ enum Subcommands {
         #[arg(long, short = 'i', conflicts_with = "check")]
         in_place: bool,
         /// Exit 1 if the file is not already formatted (for CI); do not write output.
-        /// Note: files with comments will always fail until comment preservation is
-        /// implemented (see issue #148).
+        /// When `--strip-comments` is active (the default), comments are excluded from
+        /// the comparison so a correctly-formatted file with comments still passes.
         #[arg(long)]
         check: bool,
+        /// Strip comments from the output (default behaviour; see issue #148).
+        #[arg(long, overrides_with = "no_strip_comments")]
+        strip_comments: bool,
+        /// Preserve comments; overrides `--strip-comments`.
+        /// Reserved for use once issue #148 (comment round-tripping) is implemented.
+        #[arg(long, overrides_with = "strip_comments")]
+        no_strip_comments: bool,
     },
 }
 
@@ -262,16 +269,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             filename,
             in_place,
             check,
+            strip_comments,
+            no_strip_comments,
         } => {
             if in_place && filename == "-" {
                 return Err("--in-place cannot be used with stdin".into());
             }
+            let do_strip = strip_comments || !no_strip_comments;
             let (grammar, _) = parse_file(&filename, false)?;
             let formatted = ts_bnf_tool::dom::format_grammar(&grammar);
 
             if check {
                 let original = load_grammar_source(&filename)?;
-                if original != formatted {
+                let cmp = if do_strip {
+                    ts_bnf_tool::util::strip_comments_from_source(&original)
+                } else {
+                    original
+                };
+                if cmp != formatted {
                     std::process::exit(1);
                 }
             } else if in_place {
@@ -313,6 +328,60 @@ mod tests {
             .chain(args.iter().copied())
             .collect();
         Cli::try_parse_from(full)
+    }
+
+    fn parse_format(args: &[&str]) -> Result<Cli, clap::Error> {
+        let full: Vec<&str> = std::iter::once("ts-bnf-tool")
+            .chain(std::iter::once("format"))
+            .chain(args.iter().copied())
+            .collect();
+        Cli::try_parse_from(full)
+    }
+
+    #[test]
+    fn format_strip_comments_default_is_true() {
+        let cli = parse_format(&["f.bnf"]).unwrap();
+        let Subcommands::Format {
+            strip_comments,
+            no_strip_comments,
+            ..
+        } = cli.command
+        else {
+            panic!("wrong subcommand");
+        };
+        assert!(strip_comments || !no_strip_comments);
+    }
+
+    #[test]
+    fn format_no_strip_comments_overrides_default() {
+        let cli = parse_format(&["--no-strip-comments", "f.bnf"]).unwrap();
+        let Subcommands::Format {
+            no_strip_comments, ..
+        } = cli.command
+        else {
+            panic!("wrong subcommand");
+        };
+        assert!(no_strip_comments);
+    }
+
+    #[test]
+    fn format_strip_comments_and_no_strip_comments_last_wins() {
+        let cli = parse_format(&["--strip-comments", "--no-strip-comments", "f.bnf"]).unwrap();
+        let Subcommands::Format {
+            strip_comments,
+            no_strip_comments,
+            ..
+        } = cli.command
+        else {
+            panic!("wrong subcommand");
+        };
+        // --no-strip-comments is last, so strip_comments is cleared by overrides_with
+        assert!(!strip_comments && no_strip_comments);
+    }
+
+    #[test]
+    fn format_in_place_and_check_conflict() {
+        assert!(parse_format(&["--in-place", "--check", "f.bnf"]).is_err());
     }
 
     #[test]
