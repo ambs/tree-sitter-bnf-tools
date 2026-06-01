@@ -1,5 +1,7 @@
 /// Semantic analyses over a parsed grammar (FIRST sets, left-recursion, …).
 pub mod analysis;
+/// BNF pretty-printer that re-emits a [`Grammar`] in canonical style.
+pub mod format;
 /// Structured diagnostic messages with severity levels.
 pub mod diagnostic;
 /// Types for grammar directive entries with source location.
@@ -21,6 +23,7 @@ pub mod test_utils;
 mod types;
 
 pub use diagnostic::{Diagnostic, Severity};
+pub use format::format_grammar;
 pub use directive::{ConflictGroup, DirectiveItem};
 pub use error::ParseError;
 pub use nodes::{GrammarNode, PrecKind};

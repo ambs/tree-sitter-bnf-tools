@@ -15,6 +15,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Helix, covering parser installation, query file placement, and filetype registration
 
 #### `ts-bnf-tool`
+- `format` subcommand: pretty-prints a `.bnf` file in canonical style (consistent
+  spacing around `->`, `|`, and `;`; one alternative per line when a rule exceeds
+  80 characters; directives emitted first in canonical order). Supports `--in-place`
+  (`-i`) for atomic in-place rewriting and `--check` for CI use. Note: comments are
+  stripped from the output until issue #148 is resolved; files with comments will
+  always fail `--check` in the interim (see issue #149 for a discussion of
+  `--strip-comments`).
 - `convert` and `check` now warn when the same rule name is defined more than once;
   the second definition wins
 - `convert --strict`: exits non-zero when warnings are present; output is still written before
