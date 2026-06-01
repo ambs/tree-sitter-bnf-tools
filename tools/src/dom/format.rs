@@ -7,6 +7,7 @@ use super::nodes::{GrammarNode, PrecKind};
 use super::production::Production;
 use super::types::Grammar;
 
+/// Maximum line length before a multi-alternative rule is split across lines.
 const LINE_WIDTH: usize = 80;
 
 /// Formats `grammar` as canonical BNF and returns the result as a `String`.
@@ -26,9 +27,7 @@ pub fn format_grammar(grammar: &Grammar) -> String {
     let mut first_rule = true;
 
     for production in grammar.productions.values() {
-        if first_rule && has_directives {
-            out.push('\n');
-        } else if !first_rule {
+        if !first_rule || has_directives {
             out.push('\n');
         }
         first_rule = false;
@@ -111,7 +110,7 @@ fn format_node_nested(node: &GrammarNode) -> String {
         GrammarNode::Choice(alts) => {
             let inner = alts
                 .iter()
-                .map(|a| format_node_top(a))
+                .map(format_node_top)
                 .collect::<Vec<_>>()
                 .join(" | ");
             format!("({})", inner)
@@ -154,7 +153,7 @@ fn quantifier_inner(node: &GrammarNode) -> String {
         GrammarNode::Choice(alts) => {
             let inner = alts
                 .iter()
-                .map(|a| format_node_top(a))
+                .map(format_node_top)
                 .collect::<Vec<_>>()
                 .join(" | ");
             format!("({})", inner)
