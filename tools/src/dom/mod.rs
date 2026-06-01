@@ -6,6 +6,8 @@ pub mod diagnostic;
 pub mod directive;
 /// Parse and conversion error types.
 mod error;
+/// BNF pretty-printer that re-emits a [`Grammar`] in canonical style.
+pub mod format;
 /// Cross-reference and structural validation checks on a [`Grammar`].
 mod grammar;
 /// Core grammar node types and their Display representations.
@@ -23,6 +25,7 @@ mod types;
 pub use diagnostic::{Diagnostic, Severity};
 pub use directive::{ConflictGroup, DirectiveItem};
 pub use error::ParseError;
+pub use format::format_grammar;
 pub use nodes::{GrammarNode, PrecKind};
 pub use production::Production;
 pub use scaffold::Scaffold;

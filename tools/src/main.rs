@@ -65,6 +65,19 @@ enum Subcommands {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
     },
+    /// Pretty-print a BNF file in canonical style (note: strips comments — see issue #148)
+    Format {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+        /// Overwrite the file in place (atomic write; cannot be used with `-`)
+        #[arg(long, short = 'i', conflicts_with = "check")]
+        in_place: bool,
+        /// Exit 1 if the file is not already formatted (for CI); do not write output.
+        /// Note: files with comments will always fail until comment preservation is
+        /// implemented (see issue #148).
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 /// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
@@ -242,6 +255,31 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut terminals: Vec<&str> = sets[rule].iter().map(display_terminal).collect();
                 terminals.sort_unstable();
                 println!("{}: {}", rule, terminals.join(", "));
+            }
+        }
+
+        Subcommands::Format {
+            filename,
+            in_place,
+            check,
+        } => {
+            if in_place && filename == "-" {
+                return Err("--in-place cannot be used with stdin".into());
+            }
+            let (grammar, _) = parse_file(&filename, false)?;
+            let formatted = ts_bnf_tool::dom::format_grammar(&grammar);
+
+            if check {
+                let original = load_grammar_source(&filename)?;
+                if original != formatted {
+                    std::process::exit(1);
+                }
+            } else if in_place {
+                let tmp = format!("{}.tmp", filename);
+                fs::write(&tmp, &formatted)?;
+                fs::rename(&tmp, &filename)?;
+            } else {
+                print!("{}", formatted);
             }
         }
 
