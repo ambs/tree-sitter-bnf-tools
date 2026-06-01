@@ -80,7 +80,11 @@ fn format_conflicts(groups: &[ConflictGroup]) -> String {
 fn format_node_top(node: &GrammarNode) -> String {
     match node {
         GrammarNode::Prec(kind, level, inner) => {
-            format!("{} {}", format_sequence_items(inner), prec_annotation(kind, *level))
+            format!(
+                "{} {}",
+                format_sequence_items(inner),
+                prec_annotation(kind, *level)
+            )
         }
         GrammarNode::Sequence(items) => items
             .iter()
@@ -119,10 +123,18 @@ fn format_node_nested(node: &GrammarNode) -> String {
         GrammarNode::TokenImmediate(inner) => format!("<<! {} >>", format_node_top(inner)),
         GrammarNode::Field(name, inner) => format!("{}: {}", name, format_node_nested(inner)),
         GrammarNode::Alias(body, name) => {
-            format!("({} => {})", format_node_top(body), format_node_nested(name))
+            format!(
+                "({} => {})",
+                format_node_top(body),
+                format_node_nested(name)
+            )
         }
         GrammarNode::Prec(kind, level, inner) => {
-            format!("({} {})", format_sequence_items(inner), prec_annotation(kind, *level))
+            format!(
+                "({} {})",
+                format_sequence_items(inner),
+                prec_annotation(kind, *level)
+            )
         }
     }
 }
@@ -185,8 +197,8 @@ mod tests {
     use super::*;
     use crate::dom::test_utils::{cg, di, p};
     use crate::dom::GrammarNode::{
-        self, Alias, Choice, Field, NonTerminal, OneOrMore, Optional, Prec, Sequence, Token,
-        TokenImmediate, TerminalLiteral, TerminalPattern, ZeroOrMore,
+        self, Alias, Choice, Field, NonTerminal, OneOrMore, Optional, Prec, Sequence,
+        TerminalLiteral, TerminalPattern, Token, TokenImmediate, ZeroOrMore,
     };
     use crate::dom::{Grammar, PrecKind};
 
@@ -204,7 +216,10 @@ mod tests {
 
     #[test]
     fn extras_directive_single_item() {
-        assert_eq!(format_directive("extras", &[di("/\\s/", 1)]), "%extras /\\s/");
+        assert_eq!(
+            format_directive("extras", &[di("/\\s/", 1)]),
+            "%extras /\\s/"
+        );
     }
 
     #[test]
@@ -235,10 +250,7 @@ mod tests {
 
     #[test]
     fn conflicts_single_group() {
-        assert_eq!(
-            format_conflicts(&[cg(&["a", "b"], 1)]),
-            "%conflicts [a, b]"
-        );
+        assert_eq!(format_conflicts(&[cg(&["a", "b"], 1)]), "%conflicts [a, b]");
     }
 
     #[test]
@@ -275,8 +287,14 @@ mod tests {
         );
         let out = format_production(&prod);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines[0], "very_long_rule_name -> alternative_one_which_is_long");
-        assert_eq!(lines[1], "                     | alternative_two_which_is_long");
+        assert_eq!(
+            lines[0],
+            "very_long_rule_name -> alternative_one_which_is_long"
+        );
+        assert_eq!(
+            lines[1],
+            "                     | alternative_two_which_is_long"
+        );
         assert_eq!(lines[2], "                     ;");
     }
 
@@ -346,7 +364,10 @@ mod tests {
 
     #[test]
     fn token_expr() {
-        assert_eq!(format_node_nested(&Token(Box::new(lit("'x'")))), "<< 'x' >>");
+        assert_eq!(
+            format_node_nested(&Token(Box::new(lit("'x'")))),
+            "<< 'x' >>"
+        );
     }
 
     #[test]
