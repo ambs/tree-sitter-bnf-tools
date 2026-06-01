@@ -6,3 +6,4 @@ node_modules/
 *.dll
 tree-sitter-bnf/src/
 tree-sitter-bnf/tree-sitter-bnf.pc
+tree-sitter-bnf/binding.gyp

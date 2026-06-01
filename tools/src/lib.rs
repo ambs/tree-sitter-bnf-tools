@@ -4,5 +4,7 @@
 
 /// DOM types representing the BNF grammar as a Rust value tree.
 pub mod dom;
+/// Source-text utilities (comment stripping, whitespace normalisation).
+pub mod util;
 /// Visitor functions that walk a tree-sitter parse tree and build the DOM.
 pub mod visitors;
