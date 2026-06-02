@@ -59,7 +59,7 @@ term -> /[0-9]+/ | '(' expr ')' ;
 Run the tool:
 
 ```sh
-ts-bnf-tool expr.bnf
+ts-bnf-tool convert expr.bnf
 ```
 
 Output:
@@ -382,7 +382,7 @@ Use `--rules-only` for a quick look at just the rule bodies without the
 boilerplate wrapper — handy when iterating:
 
 ```sh
-ts-bnf-tool --rules-only json.bnf
+ts-bnf-tool convert --rules-only json.bnf
 ```
 
 ```
@@ -396,25 +396,25 @@ number -> /\-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
 
 ### Step 3 — generate a full grammar.js
 
-Without any extra flags, `ts-bnf-tool` prints a complete `grammar.js` to
-stdout. Redirect it to a file:
+Without any extra flags, `ts-bnf-tool convert` prints a complete `grammar.js`
+to stdout. Redirect it to a file:
 
 ```sh
-ts-bnf-tool json.bnf > grammar.js
+ts-bnf-tool convert json.bnf > grammar.js
 ```
 
 You can also read from stdin by passing `-` as the filename, which is useful
 in pipelines:
 
 ```sh
-cat json.bnf | ts-bnf-tool - > grammar.js
+cat json.bnf | ts-bnf-tool convert - > grammar.js
 ```
 
 When reading from stdin the grammar name defaults to `grammar`; use `--name`
 to set a specific name:
 
 ```sh
-cat json.bnf | ts-bnf-tool --name json - > grammar.js
+cat json.bnf | ts-bnf-tool convert --name json - > grammar.js
 ```
 
 ### Step 4 — generate a ready-to-use tree-sitter project
@@ -423,14 +423,14 @@ cat json.bnf | ts-bnf-tool --name json - > grammar.js
 for you, producing the C parser:
 
 ```sh
-ts-bnf-tool --generate json.bnf
+ts-bnf-tool convert --generate json.bnf
 # creates ./json/grammar.js and ./json/src/parser.c
 ```
 
 Override the output directory and grammar name:
 
 ```sh
-ts-bnf-tool --generate --output-dir ~/parsers/json --name json json.bnf
+ts-bnf-tool convert --generate --output-dir ~/parsers/json --name json json.bnf
 ```
 
 The resulting directory is a complete tree-sitter language package, ready for
@@ -450,13 +450,14 @@ pipeline:
 
 ```sh
 ts-bnf-tool check json.bnf
-echo $?   # 0 if clean, 1 if any warnings
+echo $?   # 0 if clean, 1 if warnings only, 2 if any errors
 ```
 
-Detected issues include undefined rule references, directives that name
-non-existent rules, and left-recursive rules. Left-recursion is particularly
-important because tree-sitter cannot generate a parser for left-recursive
-grammars and the resulting error messages are cryptic.
+Detected issues include undefined rule references, unreferenced rules,
+directives that name non-existent rules, and left-recursive rules.
+Left-recursion is reported as an **error** (exit code 2) because tree-sitter
+cannot generate a parser for left-recursive grammars and the resulting
+error messages are cryptic.
 
 A directly left-recursive rule references itself as the first symbol of one of
 its alternatives:
@@ -467,7 +468,7 @@ expr -> expr '+' term | term ;
 ```
 
 ```
-warning: rule 'expr' is directly left-recursive
+error: rule 'expr' is directly left-recursive (line 2)
 ```
 
 Fix it by rewriting the grammar to use right-recursion or a repetition operator:
@@ -486,8 +487,21 @@ b -> a 'y' | 'b' ;
 ```
 
 ```
-warning: rule 'a' is mutually left-recursive
-warning: rule 'b' is mutually left-recursive
+error: rule 'a' is mutually left-recursive (line 1)
+error: rule 'b' is mutually left-recursive (line 2)
+```
+
+A rule that is defined but never referenced by any other rule (and is not the
+root rule) is reported as a warning:
+
+```bnf
+root   -> item+ ;
+item   -> /[a-z]+/ ;
+unused -> 'x' ;   # never referenced
+```
+
+```
+warning: rule 'unused' is never referenced (line 3)
 ```
 
 ### Inspecting FIRST sets
