@@ -131,6 +131,24 @@ fn source_label(filename: &str) -> &str {
     }
 }
 
+/// Returns `true` if `name` is a valid JavaScript identifier (excluding `$`).
+fn is_valid_js_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        && chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Returns a warning diagnostic if `name` is not a valid JavaScript identifier.
+fn check_grammar_name(name: &str) -> Vec<Diagnostic> {
+    if is_valid_js_identifier(name) {
+        Vec::new()
+    } else {
+        vec![Diagnostic::warning(format!(
+            "grammar name '{name}' is not a valid JavaScript identifier; use --name to override"
+        ))]
+    }
+}
+
 /// Returns the grammar name: the explicit override if provided, or the filename stem.
 /// Stdin (`-`) has no stem, so it defaults to `"grammar"`.
 fn grammar_name(filename: &str, override_name: Option<&str>) -> String {
@@ -211,7 +229,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             no_header,
             strict,
         } => {
-            let (grammar, diagnostics) = parse_file(&filename, !no_check)?;
+            let name = grammar_name(&filename, name.as_deref());
+            let (grammar, mut diagnostics) = parse_file(&filename, !no_check)?;
+            if !no_check {
+                diagnostics.extend(check_grammar_name(&name));
+            }
             for d in &diagnostics {
                 eprintln!("{d}");
             }
@@ -222,7 +244,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             }
             let had_warnings = diagnostics.iter().any(|d| d.severity == Severity::Warning);
-            let name = grammar_name(&filename, name.as_deref());
             let source = source_label(&filename);
 
             if rules_only {
@@ -421,6 +442,41 @@ mod tests {
     #[test]
     fn grammar_name_stdin_respects_override() {
         assert_eq!(grammar_name("-", Some("mygrammar")), "mygrammar");
+    }
+
+    #[test]
+    fn valid_js_identifier_plain() {
+        assert!(is_valid_js_identifier("grammar"));
+    }
+
+    #[test]
+    fn valid_js_identifier_underscore_start() {
+        assert!(is_valid_js_identifier("_grammar"));
+    }
+
+    #[test]
+    fn valid_js_identifier_with_digits() {
+        assert!(is_valid_js_identifier("grammar2"));
+    }
+
+    #[test]
+    fn invalid_js_identifier_hyphen() {
+        assert!(!is_valid_js_identifier("my-grammar"));
+    }
+
+    #[test]
+    fn invalid_js_identifier_leading_digit() {
+        assert!(!is_valid_js_identifier("1grammar"));
+    }
+
+    #[test]
+    fn invalid_js_identifier_empty() {
+        assert!(!is_valid_js_identifier(""));
+    }
+
+    #[test]
+    fn invalid_js_identifier_dot() {
+        assert!(!is_valid_js_identifier("my.grammar"));
     }
 
     #[test]
