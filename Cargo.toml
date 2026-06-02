@@ -8,6 +8,11 @@ edition = "2021"
 license = "MIT"
 authors = ["Alberto Simões <ambs@cpan.org>"]
 
+# External tools required for grammar development (not enforced by cargo).
+# Run `make ts-version-check` or install manually: npm install -g tree-sitter-cli
+[workspace.metadata.tools]
+tree-sitter-cli = ">=0.24.4"
+
 [workspace.lints.rust]
 missing_docs = "warn"
 
