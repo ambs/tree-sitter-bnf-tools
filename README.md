@@ -94,6 +94,12 @@ supported equivalents before running `ts-bnf-tool`.
 
 Converts a `.bnf` file to tree-sitter notation.
 
+**Install from crates.io**
+
+```sh
+cargo install ts-bnf-tool
+```
+
 **Build from source**
 
 ```sh
@@ -111,7 +117,8 @@ Pass `-` as the filename to read from stdin.
 
 | Subcommand | Purpose |
 |------------|---------|
-| `convert` | Convert BNF to `grammar.js` (default) |
+| `convert` | Convert BNF to `grammar.js` |
+| `format` | Pretty-print a `.bnf` file in canonical style |
 | `firsts` | Print FIRST sets for each rule |
 | `check` | Run static checks; exit non-zero on any issue |
 
@@ -147,7 +154,9 @@ Options:
   --rules-only           Print rule bodies only, without grammar.js boilerplate
   --generate             Write grammar.js to a directory and run tree-sitter generate
   --output-dir <DIR>     Output directory for --generate (default: ./<name>)
+  --no-header            Suppress the generated-file comment at the top of grammar.js
   -n, --no-check         Skip static checks; suppress all warnings and convert unconditionally
+  --strict               Treat warnings as errors (conflicts with --no-check)
 ```
 
 **Print rule bodies only**
@@ -170,6 +179,26 @@ ts-bnf-tool convert --generate expr.bnf
 
 ts-bnf-tool convert --generate --output-dir ~/parsers/arithmetic --name arithmetic expr.bnf
 # creates the project at the specified path with an explicit grammar name
+```
+
+### format
+
+Pretty-prints a `.bnf` file in canonical style: consistent spacing, one
+alternative per line when a rule exceeds 80 characters, directives first.
+
+```sh
+ts-bnf-tool format grammar.bnf          # print to stdout
+ts-bnf-tool format -i grammar.bnf       # rewrite in place (atomic)
+ts-bnf-tool format --check grammar.bnf  # exit non-zero if not canonical (CI use)
+```
+
+Options:
+
+```
+  -i, --in-place         Rewrite the file in place
+  --check                Exit non-zero if the file is not already formatted
+  --strip-comments       Strip # comments from output (default)
+  --no-strip-comments    Preserve # comments in output
 ```
 
 ### firsts
@@ -199,18 +228,21 @@ ts-bnf-tool check grammar.bnf
 
 Checks performed:
 
-| Check | Example warning |
-|-------|----------------|
-| Undefined rule references | `warning: undefined rule reference 'foo'` |
-| Undefined `%conflicts` rules | `warning: %conflicts references undefined rule 'foo'` |
-| Undefined `%inline` rules | `warning: %inline references undefined rule 'foo'` |
-| Undefined `%supertypes` rules | `warning: %supertypes references undefined rule 'foo'` |
-| Undefined `%extras` rules | `warning: %extras references undefined rule 'foo'` |
-| Direct left-recursion | `warning: rule 'expr' is directly left-recursive` |
-| Mutual left-recursion | `warning: rule 'a' is mutually left-recursive` |
+| Check | Severity | Example diagnostic |
+|-------|----------|--------------------|
+| Undefined rule references | warning | `warning: undefined rule reference 'foo'` |
+| Undefined `%conflicts` rules | warning | `warning: %conflicts references undefined rule 'foo'` |
+| Undefined `%inline` rules | warning | `warning: %inline references undefined rule 'foo'` |
+| Undefined `%supertypes` rules | warning | `warning: %supertypes references undefined rule 'foo'` |
+| Undefined `%extras` rules | warning | `warning: %extras references undefined rule 'foo'` |
+| Unreferenced rule | warning | `warning: rule 'foo' is never referenced (line 4)` |
+| Direct left-recursion | **error** | `error: rule 'expr' is directly left-recursive (line 1)` |
+| Mutual left-recursion | **error** | `error: rule 'a' is mutually left-recursive (line 1)` |
 
-Left-recursive rules are flagged because tree-sitter cannot handle them — they
-cause cryptic failures during parser generation. A rule is *directly*
+Exit codes: `0` clean, `1` warnings only, `2` one or more errors.
+
+Left-recursive rules are flagged as errors because tree-sitter cannot handle
+them — they cause cryptic failures during parser generation. A rule is *directly*
 left-recursive if its own name can appear as the first symbol of one of its
 alternatives (e.g. `expr -> expr '+' term | term`). It is *mutually*
 left-recursive if two or more rules form a cycle where each can start with
