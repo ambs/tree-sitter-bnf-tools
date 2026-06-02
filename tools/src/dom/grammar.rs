@@ -88,6 +88,47 @@ impl Grammar {
             .collect()
     }
 
+    /// Returns a warning for every rule that is never referenced by any other rule or directive.
+    ///
+    /// The first rule (root) is exempt — it is the implicit entry point.
+    /// Rules mentioned in directives (`%extras`, `%inline`, `%supertypes`, `%conflicts`)
+    /// are considered referenced to avoid false positives on intentional utility rules.
+    fn unreachable_rules_check(&self) -> Vec<Diagnostic> {
+        let mut rules = self.productions.keys();
+        let Some(_root) = rules.next() else {
+            return vec![];
+        };
+
+        let mut referenced: std::collections::HashSet<&str> =
+            self.rhs_nonterminals.iter().map(String::as_str).collect();
+        for item in &self.inline {
+            referenced.insert(&item.name);
+        }
+        for item in &self.supertypes {
+            referenced.insert(&item.name);
+        }
+        for item in self.extras.iter().filter(|i| !i.name.starts_with('/')) {
+            referenced.insert(&item.name);
+        }
+        for group in &self.conflicts {
+            for name in &group.rules {
+                referenced.insert(name);
+            }
+        }
+
+        rules
+            .filter(|name| !referenced.contains(name.as_str()))
+            .map(|name| {
+                let line = self
+                    .productions
+                    .get(name.as_str())
+                    .map(|p| p.line)
+                    .unwrap_or(0);
+                Diagnostic::warning(format!("rule '{name}' is never referenced (line {line})"))
+            })
+            .collect()
+    }
+
     /// Runs all cross-reference checks and returns any diagnostics.
     ///
     /// Diagnostics are sorted by message so output is stable across runs regardless
@@ -101,6 +142,7 @@ impl Grammar {
         diagnostics.extend(self.supertypes_check(&known));
         diagnostics.extend(self.extras_check(&known));
         diagnostics.extend(self.undefined_refs_check(&known));
+        diagnostics.extend(self.unreachable_rules_check());
         diagnostics.extend(self.left_recursive_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
@@ -297,6 +339,44 @@ mod tests {
                 && d.message.contains("'b'")
                 && d.message.contains("mutually left-recursive")
         }));
+    }
+
+    #[test]
+    fn unreachable_rules_warns_on_unreferenced_rule() {
+        let g = Grammar::from_rules([
+            p("root", TerminalLiteral("'x'".into())),
+            p("orphan", TerminalLiteral("'y'".into())),
+        ]);
+        assert_eq!(
+            strs(&g.unreachable_rules_check()),
+            vec!["warning: rule 'orphan' is never referenced (line 1)"]
+        );
+    }
+
+    #[test]
+    fn unreachable_rules_no_warning_for_root() {
+        let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
+        assert!(g.unreachable_rules_check().is_empty());
+    }
+
+    #[test]
+    fn unreachable_rules_no_warning_when_referenced_in_body() {
+        let mut g = Grammar::from_rules([
+            p("root", GrammarNode::NonTerminal("helper".into())),
+            p("helper", TerminalLiteral("'x'".into())),
+        ]);
+        g.rhs_nonterminals.insert("helper".into());
+        assert!(g.unreachable_rules_check().is_empty());
+    }
+
+    #[test]
+    fn unreachable_rules_no_warning_for_extras_rule() {
+        let mut g = Grammar::from_rules([
+            p("root", TerminalLiteral("'x'".into())),
+            p("ws", TerminalLiteral("' '".into())),
+        ]);
+        g.extras = vec![di("ws", 1)];
+        assert!(g.unreachable_rules_check().is_empty());
     }
 
     #[test]
