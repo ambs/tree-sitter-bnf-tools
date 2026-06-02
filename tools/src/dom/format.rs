@@ -200,6 +200,7 @@ mod tests {
         TerminalLiteral, TerminalPattern, Token, TokenImmediate, ZeroOrMore,
     };
     use crate::dom::{Grammar, PrecKind};
+    use indoc::indoc;
 
     fn nt(s: &str) -> GrammarNode {
         NonTerminal(s.into())
@@ -285,16 +286,13 @@ mod tests {
             ]),
         );
         let out = format_production(&prod);
-        let lines: Vec<&str> = out.lines().collect();
         assert_eq!(
-            lines[0],
-            "very_long_rule_name -> alternative_one_which_is_long"
+            out,
+            indoc! {"
+                very_long_rule_name -> alternative_one_which_is_long
+                                     | alternative_two_which_is_long
+                                     ;"}
         );
-        assert_eq!(
-            lines[1],
-            "                     | alternative_two_which_is_long"
-        );
-        assert_eq!(lines[2], "                     ;");
     }
 
     #[test]
@@ -445,14 +443,28 @@ mod tests {
         let mut g = Grammar::from_rules([p("rule", nt("a"))]);
         g.extras = vec![di("/\\s/", 1)];
         let out = format_grammar(&g);
-        assert!(out.contains("\n\n"));
+        assert_eq!(
+            out,
+            indoc! {"
+                %extras /\\s/
+
+                rule -> a;
+            "}
+        );
     }
 
     #[test]
     fn grammar_blank_line_between_consecutive_rules() {
         let g = Grammar::from_rules([p("a", nt("x")), p("b", nt("y"))]);
         let out = format_grammar(&g);
-        assert!(out.contains(";\n\nb ->"));
+        assert_eq!(
+            out,
+            indoc! {"
+                a -> x;
+
+                b -> y;
+            "}
+        );
     }
 }
 
