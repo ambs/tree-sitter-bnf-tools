@@ -1,12 +1,23 @@
 use super::directive::{ConflictGroup, DirectiveItem};
 use super::{GrammarNode, Production};
 
-/// Creates a [`Production`] with `line: 0` for use in tests.
+/// Creates a [`Production`] with realistic defaults (`line: 1`, `filename: "test.bnf"`) for use in tests.
 pub fn p(name: &str, body: GrammarNode) -> Production {
     Production {
         name: name.into(),
         body,
-        line: 0,
+        line: 1,
+        filename: "test.bnf".into(),
+    }
+}
+
+/// Creates a [`Production`] with a specific filename, for tests that need to vary the source file.
+pub fn p_named(name: &str, body: GrammarNode, filename: &str) -> Production {
+    Production {
+        name: name.into(),
+        body,
+        line: 1,
+        filename: filename.into(),
     }
 }
 

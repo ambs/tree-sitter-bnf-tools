@@ -25,7 +25,7 @@
 //!     Production { name: "sign".into(), body: GrammarNode::Choice(vec![
 //!         GrammarNode::TerminalLiteral("'+'".into()),
 //!         GrammarNode::TerminalLiteral("'-'".into()),
-//!     ]), line: 0 },
+//!     ]), line: 1, filename: "test.bnf".into() },
 //! ]);
 //! let f = first_sets(&g);
 //! assert!(f["sign"].contains(&FirstTerminal::Literal("'+'")));
@@ -243,7 +243,7 @@ fn collect_leading_nts<'g>(
 ///             GrammarNode::TerminalLiteral("'n'".into()),
 ///         ]),
 ///         GrammarNode::TerminalLiteral("'n'".into()),
-///     ]), line: 0 },
+///     ]), line: 1, filename: "test.bnf".into() },
 /// ]);
 /// let lr = left_recursive_rules(&g);
 /// assert_eq!(lr, vec![("expr", true)]);
@@ -263,14 +263,14 @@ fn collect_leading_nts<'g>(
 ///             GrammarNode::TerminalLiteral("'x'".into()),
 ///         ]),
 ///         GrammarNode::TerminalLiteral("'a'".into()),
-///     ]), line: 0 },
+///     ]), line: 1, filename: "test.bnf".into() },
 ///     Production { name: "b".into(), body: GrammarNode::Choice(vec![
 ///         GrammarNode::Sequence(vec![
 ///             GrammarNode::NonTerminal("a".into()),
 ///             GrammarNode::TerminalLiteral("'y'".into()),
 ///         ]),
 ///         GrammarNode::TerminalLiteral("'b'".into()),
-///     ]), line: 0 },
+///     ]), line: 1, filename: "test.bnf".into() },
 /// ]);
 /// let lr = left_recursive_rules(&g);
 /// assert_eq!(lr, vec![("a", false), ("b", false)]);
@@ -349,8 +349,8 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
 /// use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 ///
 /// let g = Grammar::from_rules([
-///     Production { name: "word".into(), body: GrammarNode::TerminalPattern("/[a-z]+/".into()), line: 0 },
-///     Production { name: "kw".into(),   body: GrammarNode::TerminalLiteral("'if'".into()), line: 0 },
+///     Production { name: "word".into(), body: GrammarNode::TerminalPattern("/[a-z]+/".into()), line: 1, filename: "test.bnf".into() },
+///     Production { name: "kw".into(),   body: GrammarNode::TerminalLiteral("'if'".into()), line: 1, filename: "test.bnf".into() },
 /// ]);
 /// let f = first_sets(&g);
 /// assert!(f["word"].contains(&FirstTerminal::Pattern("/[a-z]+/")));
@@ -365,8 +365,8 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
 ///
 /// // digit -> /[0-9]/ ;  num -> digit ;
 /// let g = Grammar::from_rules([
-///     Production { name: "digit".into(), body: GrammarNode::TerminalPattern("/[0-9]/".into()), line: 0 },
-///     Production { name: "num".into(),   body: GrammarNode::NonTerminal("digit".into()), line: 0 },
+///     Production { name: "digit".into(), body: GrammarNode::TerminalPattern("/[0-9]/".into()), line: 1, filename: "test.bnf".into() },
+///     Production { name: "num".into(),   body: GrammarNode::NonTerminal("digit".into()), line: 1, filename: "test.bnf".into() },
 /// ]);
 /// let f = first_sets(&g);
 /// assert_eq!(f["num"], f["digit"]);
@@ -409,16 +409,9 @@ pub fn first_sets(grammar: &Grammar) -> HashMap<&str, HashSet<FirstTerminal<'_>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dom::test_utils::p;
     use crate::dom::GrammarNode::*;
     use crate::dom::{Grammar, Production};
-
-    fn prod(name: &str, body: GrammarNode) -> Production {
-        Production {
-            name: name.into(),
-            body,
-            line: 0,
-        }
-    }
 
     fn grammar(prods: Vec<Production>) -> Grammar {
         Grammar::from_rules(prods)
@@ -438,7 +431,7 @@ mod tests {
 
     #[test]
     fn first_of_literal() {
-        let g = grammar(vec![prod("a", lit("'x'"))]);
+        let g = grammar(vec![p("a", lit("'x'"))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'")])
@@ -447,7 +440,7 @@ mod tests {
 
     #[test]
     fn first_of_pattern() {
-        let g = grammar(vec![prod("a", pat("/[0-9]+/"))]);
+        let g = grammar(vec![p("a", pat("/[0-9]+/"))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Pattern("/[0-9]+/")])
@@ -459,7 +452,7 @@ mod tests {
     #[test]
     fn first_of_nonterminal_chain() {
         // b -> 'x' ;  a -> b ;  →  FIRST[a] = FIRST[b] = {'x'}
-        let g = grammar(vec![prod("b", lit("'x'")), prod("a", nt("b"))]);
+        let g = grammar(vec![p("b", lit("'x'")), p("a", nt("b"))]);
         let f = first_sets(&g);
         assert_eq!(f["a"], HashSet::from([FirstTerminal::Literal("'x'")]));
     }
@@ -467,11 +460,7 @@ mod tests {
     #[test]
     fn first_propagates_through_indirect_chain() {
         // c -> 'z' ;  b -> c ;  a -> b ;
-        let g = grammar(vec![
-            prod("c", lit("'z'")),
-            prod("b", nt("c")),
-            prod("a", nt("b")),
-        ]);
+        let g = grammar(vec![p("c", lit("'z'")), p("b", nt("c")), p("a", nt("b"))]);
         let f = first_sets(&g);
         assert_eq!(f["b"], HashSet::from([FirstTerminal::Literal("'z'")]));
         assert_eq!(f["a"], HashSet::from([FirstTerminal::Literal("'z'")]));
@@ -481,8 +470,8 @@ mod tests {
     fn first_handles_mutual_recursion() {
         // a -> b | 'x' ;  b -> a | 'y' ;  — fixpoint must terminate
         let g = grammar(vec![
-            prod("a", Choice(vec![nt("b"), lit("'x'")])),
-            prod("b", Choice(vec![nt("a"), lit("'y'")])),
+            p("a", Choice(vec![nt("b"), lit("'x'")])),
+            p("b", Choice(vec![nt("a"), lit("'y'")])),
         ]);
         let f = first_sets(&g);
         let expected =
@@ -495,7 +484,7 @@ mod tests {
 
     #[test]
     fn first_of_choice_is_union() {
-        let g = grammar(vec![prod("a", Choice(vec![lit("'x'"), lit("'y'")]))]);
+        let g = grammar(vec![p("a", Choice(vec![lit("'x'"), lit("'y'")]))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'"), FirstTerminal::Literal("'y'")])
@@ -507,7 +496,7 @@ mod tests {
     #[test]
     fn first_of_sequence_stops_at_non_nullable() {
         // a -> 'x' 'y' ;  →  only 'x' reachable first
-        let g = grammar(vec![prod("a", Sequence(vec![lit("'x'"), lit("'y'")]))]);
+        let g = grammar(vec![p("a", Sequence(vec![lit("'x'"), lit("'y'")]))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'")])
@@ -517,7 +506,7 @@ mod tests {
     #[test]
     fn first_of_sequence_continues_past_optional() {
         // a -> 'x'? 'y' ;  — the optional may be skipped, so 'y' is also reachable first
-        let g = grammar(vec![prod(
+        let g = grammar(vec![p(
             "a",
             Sequence(vec![Optional(Box::new(lit("'x'"))), lit("'y'")]),
         )]);
@@ -530,7 +519,7 @@ mod tests {
     #[test]
     fn first_of_sequence_continues_past_zero_or_more() {
         // a -> 'x'* 'y' ;
-        let g = grammar(vec![prod(
+        let g = grammar(vec![p(
             "a",
             Sequence(vec![ZeroOrMore(Box::new(lit("'x'"))), lit("'y'")]),
         )]);
@@ -544,7 +533,7 @@ mod tests {
 
     #[test]
     fn first_of_optional_includes_inner() {
-        let g = grammar(vec![prod("a", Optional(Box::new(lit("'x'"))))]);
+        let g = grammar(vec![p("a", Optional(Box::new(lit("'x'"))))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'")])
@@ -553,7 +542,7 @@ mod tests {
 
     #[test]
     fn first_of_zero_or_more_includes_inner() {
-        let g = grammar(vec![prod("a", ZeroOrMore(Box::new(lit("'x'"))))]);
+        let g = grammar(vec![p("a", ZeroOrMore(Box::new(lit("'x'"))))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'")])
@@ -562,7 +551,7 @@ mod tests {
 
     #[test]
     fn first_of_one_or_more_includes_inner() {
-        let g = grammar(vec![prod("a", OneOrMore(Box::new(lit("'x'"))))]);
+        let g = grammar(vec![p("a", OneOrMore(Box::new(lit("'x'"))))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'")])
@@ -573,7 +562,7 @@ mod tests {
 
     #[test]
     fn first_transparent_through_field() {
-        let g = grammar(vec![prod("a", Field("f".into(), Box::new(lit("'x'"))))]);
+        let g = grammar(vec![p("a", Field("f".into(), Box::new(lit("'x'"))))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'")])
@@ -582,7 +571,7 @@ mod tests {
 
     #[test]
     fn first_transparent_through_token() {
-        let g = grammar(vec![prod("a", Token(Box::new(pat("/[a-z]/"))))]);
+        let g = grammar(vec![p("a", Token(Box::new(pat("/[a-z]/"))))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Pattern("/[a-z]/")])
@@ -591,7 +580,7 @@ mod tests {
 
     #[test]
     fn first_transparent_through_token_immediate() {
-        let g = grammar(vec![prod("a", TokenImmediate(Box::new(pat("/[a-z]/"))))]);
+        let g = grammar(vec![p("a", TokenImmediate(Box::new(pat("/[a-z]/"))))]);
         assert_eq!(
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Pattern("/[a-z]/")])
@@ -600,7 +589,7 @@ mod tests {
 
     #[test]
     fn first_transparent_through_alias() {
-        let g = grammar(vec![prod(
+        let g = grammar(vec![p(
             "a",
             Alias(Box::new(lit("'x'")), Box::new(lit("'y'"))),
         )]);
@@ -613,7 +602,7 @@ mod tests {
     #[test]
     fn first_transparent_through_prec() {
         use crate::dom::PrecKind;
-        let g = grammar(vec![prod(
+        let g = grammar(vec![p(
             "a",
             Prec(PrecKind::Left, Some(1), Box::new(lit("'x'"))),
         )]);

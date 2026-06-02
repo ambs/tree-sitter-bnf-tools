@@ -24,6 +24,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   spacing around `->`, `|`, and `;`; one alternative per line when a rule exceeds
   80 characters; directives emitted first in canonical order). Supports `--in-place`
   (`-i`) for atomic in-place rewriting and `--check` for CI use.
+- `convert` now emits a `// <file>:<line>` comment above each rule in the `rules: { … }` block,
+  mapping generated JavaScript back to the originating BNF source line; omitted by `--rules-only`
 - `convert` and `check` now warn when the same rule name is defined more than once;
   the second definition wins
 - `convert --strict`: exits non-zero when warnings are present; output is still written before
