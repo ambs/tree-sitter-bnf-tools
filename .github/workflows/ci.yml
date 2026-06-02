@@ -115,6 +115,7 @@ jobs:
           header: coverage
           path: coverage-table.md
       - uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5.5.4
+        if: github.actor != 'dependabot[bot]'
         with:
           files: lcov.info
           disable_search: true
