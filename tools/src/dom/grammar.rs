@@ -91,8 +91,8 @@ impl Grammar {
     /// Returns a warning for every rule that is never referenced by any other rule or directive.
     ///
     /// The first rule (root) is exempt — it is the implicit entry point.
-    /// Rules mentioned in directives (`%extras`, `%inline`, `%supertypes`, `%conflicts`)
-    /// are considered referenced to avoid false positives on intentional utility rules.
+    /// Rules mentioned in `%extras` are also exempt: they are legitimately used
+    /// without appearing in any rule body (e.g. whitespace handlers).
     fn unreachable_rules_check(&self) -> Vec<Diagnostic> {
         let mut rules = self.productions.keys();
         let Some(_root) = rules.next() else {
@@ -101,19 +101,8 @@ impl Grammar {
 
         let mut referenced: std::collections::HashSet<&str> =
             self.rhs_nonterminals.iter().map(String::as_str).collect();
-        for item in &self.inline {
-            referenced.insert(&item.name);
-        }
-        for item in &self.supertypes {
-            referenced.insert(&item.name);
-        }
         for item in self.extras.iter().filter(|i| !i.name.starts_with('/')) {
             referenced.insert(&item.name);
-        }
-        for group in &self.conflicts {
-            for name in &group.rules {
-                referenced.insert(name);
-            }
         }
 
         rules
