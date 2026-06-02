@@ -1,11 +1,12 @@
 CARGO       ?= cargo
 TS          ?= tree-sitter
+TS_MIN      := 0.24.4
 GRAMMAR_DIR := tree-sitter-bnf
 PARSER_C    := $(GRAMMAR_DIR)/src/parser.c
 
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar build release test check typecheck lint fmt fmt-check clean publish
+.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -17,7 +18,18 @@ $(PARSER_C): $(GRAMMAR_DIR)/grammar.js
 
 generate: $(PARSER_C) ## Regenerate parser from grammar.js (runs only if grammar.js changed)
 
-test-grammar: $(PARSER_C) ## Run tree-sitter corpus tests
+ts-version-check: ## Check that tree-sitter-cli >= TS_MIN is installed
+	@TS_VER=$$($(TS) --version 2>/dev/null | sed 's/tree-sitter //'); \
+	if [ -z "$$TS_VER" ]; then \
+		echo "Error: tree-sitter not found. Install with: npm install -g tree-sitter-cli@$(TS_MIN)" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$(printf '%s\n' "$(TS_MIN)" "$$TS_VER" | sort -V | head -1)" != "$(TS_MIN)" ]; then \
+		echo "Error: tree-sitter >= $(TS_MIN) required (found $$TS_VER). Upgrade with: npm install -g tree-sitter-cli" >&2; \
+		exit 1; \
+	fi
+
+test-grammar: ts-version-check $(PARSER_C) ## Run tree-sitter corpus tests
 	cd $(GRAMMAR_DIR) && $(TS) test
 
 build: $(PARSER_C) ## Build both crates (debug)

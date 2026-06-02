@@ -228,7 +228,7 @@ make fmt        # rustfmt
 make clean      # remove build artifacts
 ```
 
-Requires: Rust (stable), `tree-sitter-cli` (`npm install -g tree-sitter-cli`).
+Requires: Rust (stable), `tree-sitter-cli` ≥ 0.24.4 (`npm install -g tree-sitter-cli`).
 
 ## Contributing
 

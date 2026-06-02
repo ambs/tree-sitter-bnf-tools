@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- CI workflows now pin `tree-sitter-cli` to 0.26.9 for reproducible builds
+- `make test-grammar` now requires `tree-sitter-cli` ≥ 0.24.4 and exits with a
+  clear error message if the installed version is older
+
 ### Added
 
 #### `tree-sitter-bnf`
