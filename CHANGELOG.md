@@ -21,6 +21,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Helix, covering parser installation, query file placement, and filetype registration
 
 #### `ts-bnf-tool`
+- `check`: warns about rules that are never referenced by any other rule
+  (unreachable rule detection, issue #40). The root rule (first in the file)
+  is always exempt, as are rules listed in `%extras` (e.g. whitespace handlers
+  that are intentionally absent from rule bodies).
 - `format --strip-comments` / `--no-strip-comments`: `--strip-comments` is the
   default; it strips all `#` comments from the output and, in `--check` mode,
   excludes comments from the comparison so a correctly-formatted file with comments
