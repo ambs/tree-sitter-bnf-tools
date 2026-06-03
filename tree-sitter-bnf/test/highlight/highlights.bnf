@@ -85,3 +85,7 @@ rule -> (a | b %prec 2) ;
 # <- @keyword
 #       ^^^^ @string.regexp
 #             ^^^^^^^ @variable
+
+%axiom root
+# <- @keyword
+#      ^^^^ @variable

@@ -76,6 +76,16 @@ pub fn visit_grammar(
             "extrasDirective" => {
                 grammar.extras.extend(visit_extras_directive(&child, ctx));
             }
+            "axiomDirective" => {
+                let item = visit_axiom_directive(&child, ctx);
+                if grammar.axiom.is_some() {
+                    grammar.parse_diagnostics.push(Diagnostic::error(format!(
+                        "%axiom declared more than once (line {})",
+                        item.line
+                    )));
+                }
+                grammar.axiom = Some(item);
+            }
             _ => {}
         }
     }
@@ -113,6 +123,18 @@ fn visit_extras_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<Directiv
 /// Converts a `supertypesDirective` node into a list of [`DirectiveItem`]s.
 fn visit_supertypes_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<DirectiveItem> {
     collect_directive_items(node, ctx)
+}
+
+/// Converts an `axiomDirective` node into a single [`DirectiveItem`] for the named root rule.
+fn visit_axiom_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> DirectiveItem {
+    let line = node.start_position().row + 1;
+    let name = node
+        .named_child(0)
+        .expect("axiomDirective has a nonTerminal child")
+        .utf8_text(ctx.source.as_bytes())
+        .expect("valid UTF-8")
+        .to_string();
+    DirectiveItem { name, line }
 }
 
 /// Converts a `conflictsDirective` node into a list of [`ConflictGroup`]s.

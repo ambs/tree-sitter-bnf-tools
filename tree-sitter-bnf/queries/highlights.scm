@@ -29,6 +29,7 @@
 (integer) @number
 
 ; Directives
+"%axiom" @keyword
 "%conflicts" @keyword
 "%inline" @keyword
 "%supertypes" @keyword

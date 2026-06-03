@@ -327,6 +327,28 @@ enriches the type annotations in language bindings:
 %supertypes expression, statement, declaration
 ```
 
+### `%axiom`
+
+Declares an explicit root (start) rule. Without `%axiom`, tree-sitter treats
+the *first rule declared* as the start symbol. Use `%axiom` when you want to
+debug a sub-rule in isolation — temporarily redirect the entry point without
+rearranging the file:
+
+```bnf
+%axiom expr
+
+top_level -> stmt+ ;
+expr      -> term ('+' term)* ;
+term      -> /[0-9]+/ ;
+```
+
+`convert` silently emits `expr` first in `grammar.js`'s `rules:` block so
+tree-sitter uses it as the start symbol, while the BNF file keeps its original
+declaration order.
+
+Declaring `%axiom` more than once is an **error**, as is naming a rule that is
+not defined anywhere in the file.
+
 ---
 
 ## BNF → tree-sitter cheat sheet
@@ -351,6 +373,7 @@ enriches the type annotations in language bindings:
 | `body %prec.left N` | `prec.left(N, body)` | Left-associative precedence |
 | `body %prec.right N` | `prec.right(N, body)` | Right-associative precedence |
 | `body %prec.dynamic N` | `prec.dynamic(N, body)` | Dynamic precedence |
+| `%axiom r` | *(emits `r` first in `rules:`)* | Explicit start rule |
 | `%conflicts [r1, r2]` | `conflicts: $ => [[$.r1, $.r2]]` | Conflict declaration |
 | `%inline r` | `inline: $ => [$.r]` | Inline rule |
 | `%supertypes r` | `supertypes: $ => [$.r]` | Supertype declaration |
@@ -492,7 +515,8 @@ error: rule 'b' is mutually left-recursive (line 2)
 ```
 
 A rule that is defined but never referenced by any other rule (and is not the
-root rule) is reported as a warning:
+root rule) is reported as a warning. The root is either the rule named by
+`%axiom`, or — when `%axiom` is absent — the first-declared rule:
 
 ```bnf
 root   -> item+ ;

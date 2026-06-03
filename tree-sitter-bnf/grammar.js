@@ -18,7 +18,8 @@ module.exports = grammar({
 
   rules: {
     grammar: $ => repeat1(choice($.rule, $._directive)),
-    _directive: $ => choice($.conflictsDirective, $.inlineDirective, $.supertypesDirective, $.extrasDirective),
+    _directive: $ => choice($.axiomDirective, $.conflictsDirective, $.inlineDirective, $.supertypesDirective, $.extrasDirective),
+    axiomDirective: $ => seq('%axiom', $.nonTerminal),
     inlineDirective: $ => seq('%inline', $.nonTerminal, repeat(seq(',', $.nonTerminal))),
     supertypesDirective: $ => seq('%supertypes', $.nonTerminal, repeat(seq(',', $.nonTerminal))),
     extrasDirective: $ => seq('%extras', $.extrasItem, repeat(seq(',', $.extrasItem))),

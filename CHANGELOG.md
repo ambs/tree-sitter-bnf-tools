@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### `tree-sitter-bnf`
+- `axiomDirective` grammar rule: `%axiom ruleName` is now valid syntax.
+  The `%axiom` keyword is highlighted as `@keyword` in `highlights.scm`.
+
+#### `ts-bnf-tool`
+- `%axiom ruleName` directive: declares an explicit root (start) rule.
+  - `check`: emits an error if the named rule is undefined, and an error if
+    `%axiom` is declared more than once in the same file.
+  - `check`: the unreachable-rule check now exempts the axiom rule instead of
+    the first-declared rule when `%axiom` is present.
+  - `format`: `%axiom` is emitted first among directives (before `%extras`).
+  - `convert`: the axiom rule is emitted first in `grammar.js`'s `rules:`
+    block so tree-sitter treats it as the start symbol.
+
 ## [0.2.0] - 2026-06-02
 
 ### Changed

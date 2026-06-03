@@ -45,6 +45,7 @@ This grammar recognises a BNF variant with tree-sitter extensions:
 | Token expression | `<< >>` |
 | Field label | `name: symbol` |
 | Precedence | `%prec.left N` |
+| Axiom directive | `%axiom ruleName` |
 
 See the [repository README](https://github.com/ambs/tree-sitter-bnf-tools#bnf-dialect)
 for the full syntax reference.
