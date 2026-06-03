@@ -1,0 +1,60 @@
+================================================================================
+Basic axiom directive
+================================================================================
+
+%axiom root
+root -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (axiomDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Axiom directive after rules
+================================================================================
+
+root -> 'x' ;
+%axiom root
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal)))))
+  (axiomDirective
+    (nonTerminal)))
+
+================================================================================
+Axiom directive before other directives
+================================================================================
+
+%axiom expr
+%extras /\s/
+expr -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (axiomDirective
+    (nonTerminal))
+  (extrasDirective
+    (extrasItem
+      (pattern)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))

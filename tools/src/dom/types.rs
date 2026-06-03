@@ -12,6 +12,8 @@ use super::production::Production;
 pub struct Grammar {
     /// Named grammar rules in declaration order, keyed by rule name for O(1) lookup.
     pub productions: IndexMap<String, Production>,
+    /// Explicit root rule declared with `%axiom`, if any.
+    pub axiom: Option<DirectiveItem>,
     /// Conflict groups declared with `%conflicts`.
     pub conflicts: Vec<ConflictGroup>,
     /// Rule names declared with `%inline`.
@@ -37,6 +39,7 @@ impl Grammar {
     pub fn new() -> Self {
         Self {
             productions: IndexMap::new(),
+            axiom: None,
             conflicts: Vec::new(),
             inline: Vec::new(),
             supertypes: Vec::new(),

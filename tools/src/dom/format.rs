@@ -12,7 +12,7 @@ const LINE_WIDTH: usize = 80;
 
 /// Formats `grammar` as canonical BNF and returns the result as a `String`.
 ///
-/// Directive order: `%extras`, `%conflicts`, `%inline`, `%supertypes` (all before rules).
+/// Directive order: `%axiom`, `%extras`, `%conflicts`, `%inline`, `%supertypes` (all before rules).
 /// Rules follow in their original declaration order, each separated by a blank line.
 pub fn format_grammar(grammar: &Grammar) -> String {
     let mut out = String::new();
@@ -41,6 +41,9 @@ pub fn format_grammar(grammar: &Grammar) -> String {
 /// Collects all directives from `grammar` as formatted strings in canonical order.
 fn collect_directives(grammar: &Grammar) -> Vec<String> {
     let mut out = Vec::new();
+    if let Some(axiom) = &grammar.axiom {
+        out.push(format!("%axiom {}", axiom.name));
+    }
     if !grammar.extras.is_empty() {
         out.push(format_directive("extras", &grammar.extras));
     }
@@ -426,13 +429,31 @@ mod tests {
     }
 
     #[test]
+    fn grammar_axiom_emitted_first() {
+        let mut g = Grammar::from_rules([p("r", nt("a"))]);
+        g.axiom = Some(di("r", 1));
+        g.extras = vec![di("/\\s/", 1)];
+        let out = format_grammar(&g);
+        assert!(out.find("%axiom").unwrap() < out.find("%extras").unwrap());
+        assert!(out.contains("%axiom r\n"));
+    }
+
+    #[test]
+    fn grammar_no_axiom_directive_when_absent() {
+        let g = Grammar::from_rules([p("r", nt("a"))]);
+        assert!(!format_grammar(&g).contains("%axiom"));
+    }
+
+    #[test]
     fn grammar_canonical_directive_order() {
         let mut g = Grammar::from_rules([p("r", nt("a"))]);
+        g.axiom = Some(di("r", 1));
         g.extras = vec![di("/\\s/", 1)];
         g.conflicts = vec![cg(&["a", "b"], 1)];
         g.inline = vec![di("foo", 1)];
         g.supertypes = vec![di("expr", 1)];
         let out = format_grammar(&g);
+        assert!(out.find("%axiom").unwrap() < out.find("%extras").unwrap());
         assert!(out.find("%extras").unwrap() < out.find("%conflicts").unwrap());
         assert!(out.find("%conflicts").unwrap() < out.find("%inline").unwrap());
         assert!(out.find("%inline").unwrap() < out.find("%supertypes").unwrap());

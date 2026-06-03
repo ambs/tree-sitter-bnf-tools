@@ -88,25 +88,44 @@ impl Grammar {
             .collect()
     }
 
+    /// Returns an error if `%axiom` names an undefined rule.
+    fn axiom_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
+        match &self.axiom {
+            Some(DirectiveItem { name, line }) if !known.contains(name.as_str()) => {
+                vec![Diagnostic::error(format!(
+                    "%axiom references undefined rule '{name}' (line {line})"
+                ))]
+            }
+            _ => vec![],
+        }
+    }
+
     /// Returns a warning for every rule that is never referenced by any other rule or directive.
     ///
-    /// The first rule (root) is exempt — it is the implicit entry point.
+    /// When `%axiom` is set, only that rule is exempt as the entry point.
+    /// Otherwise the first-declared rule is exempt as the implicit root.
     /// Rules mentioned in `%extras` are also exempt: they are legitimately used
     /// without appearing in any rule body (e.g. whitespace handlers).
     fn unreachable_rules_check(&self) -> Vec<Diagnostic> {
-        let mut rules = self.productions.keys();
-        let Some(_root) = rules.next() else {
-            return vec![];
-        };
-
         let mut referenced: std::collections::HashSet<&str> =
             self.rhs_nonterminals.iter().map(String::as_str).collect();
         for item in self.extras.iter().filter(|i| !i.name.starts_with('/')) {
             referenced.insert(&item.name);
         }
 
-        rules
-            .filter(|name| !referenced.contains(name.as_str()))
+        let root: Option<&str> = match &self.axiom {
+            Some(item) => Some(item.name.as_str()),
+            None => self.productions.keys().next().map(String::as_str),
+        };
+
+        if root.is_none() {
+            return vec![];
+        }
+        let root = root.unwrap();
+
+        self.productions
+            .keys()
+            .filter(|name| name.as_str() != root && !referenced.contains(name.as_str()))
             .map(|name| {
                 let line = self
                     .productions
@@ -126,6 +145,7 @@ impl Grammar {
         let known = self.known_rules();
         let mut diagnostics = Vec::new();
         diagnostics.extend(self.parse_diagnostics.iter().cloned());
+        diagnostics.extend(self.axiom_check(&known));
         diagnostics.extend(self.conflicts_check(&known));
         diagnostics.extend(self.inline_check(&known));
         diagnostics.extend(self.supertypes_check(&known));
@@ -366,6 +386,58 @@ mod tests {
         ]);
         g.extras = vec![di("ws", 1)];
         assert!(g.unreachable_rules_check().is_empty());
+    }
+
+    #[test]
+    fn axiom_check_errors_on_undefined_rule() {
+        let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
+        g.axiom = Some(di("ghost", 3));
+        assert_eq!(
+            strs(&g.axiom_check(&g.known_rules())),
+            vec!["error: %axiom references undefined rule 'ghost' (line 3)"]
+        );
+    }
+
+    #[test]
+    fn axiom_check_no_error_when_rule_defined() {
+        let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
+        g.axiom = Some(di("root", 1));
+        assert!(g.axiom_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn axiom_check_no_error_when_absent() {
+        let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
+        assert!(g.axiom_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn unreachable_rules_axiom_replaces_implicit_root() {
+        // `first` is the first-declared rule but not the axiom; it should be flagged.
+        let mut g = Grammar::from_rules([
+            p("first", TerminalLiteral("'a'".into())),
+            p("real_root", TerminalLiteral("'b'".into())),
+        ]);
+        g.axiom = Some(di("real_root", 1));
+        let diags = strs(&g.unreachable_rules_check());
+        assert!(diags.iter().any(|s| s.contains("'first'")));
+        assert!(!diags.iter().any(|s| s.contains("'real_root'")));
+    }
+
+    #[test]
+    fn unreachable_rules_no_warning_for_axiom_rule() {
+        let mut g = Grammar::from_rules([p("entry", TerminalLiteral("'x'".into()))]);
+        g.axiom = Some(di("entry", 1));
+        assert!(g.unreachable_rules_check().is_empty());
+    }
+
+    #[test]
+    fn duplicate_axiom_is_an_error() {
+        let src = "%axiom foo\n%axiom bar\nfoo -> 'x' ;\nbar -> 'y' ;\n";
+        let (_, diags) = crate::visitors::parse_source(src).unwrap();
+        assert!(diags.iter().any(|d| {
+            d.severity == Severity::Error && d.message.contains("%axiom declared more than once")
+        }));
     }
 
     #[test]

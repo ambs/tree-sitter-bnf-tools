@@ -440,3 +440,31 @@ fn duplicate_rule_second_definition_wins() {
     let (grammar, _) = parse_source("a -> 'x'; a -> 'y';").unwrap();
     assert_eq!(grammar.to_string().trim(), "a -> 'y'");
 }
+
+#[test]
+fn axiom_directive_sets_axiom_field() {
+    let g = parse_grammar("%axiom root\nroot -> 'x' ;\n");
+    assert_eq!(g.axiom.as_ref().map(|a| a.name.as_str()), Some("root"));
+}
+
+#[test]
+fn axiom_directive_line_is_recorded() {
+    let g = parse_grammar("%axiom root\nroot -> 'x' ;\n");
+    assert_eq!(g.axiom.as_ref().map(|a| a.line), Some(1));
+}
+
+#[test]
+fn duplicate_axiom_emits_error() {
+    let (_, diags) = parse_source("%axiom foo\n%axiom bar\nfoo -> 'x' ;\nbar -> 'y' ;\n").unwrap();
+    assert!(diags.iter().any(|d| {
+        d.severity == Severity::Error && d.message.contains("%axiom declared more than once")
+    }));
+}
+
+#[test]
+fn axiom_undefined_rule_emits_error() {
+    let (_, diags) = parse_source("%axiom ghost\nroot -> 'x' ;\n").unwrap();
+    assert!(diags
+        .iter()
+        .any(|d| { d.severity == Severity::Error && d.message.contains("'ghost'") }));
+}

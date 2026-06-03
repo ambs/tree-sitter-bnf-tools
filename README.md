@@ -45,6 +45,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Alias group | `(body => name)` | `(a b => pair)` |
 | Precedence (alternative) | `body %prec.TYPE [N]` | `expr '+' expr %prec.left 1` |
 | Precedence (sub-expression) | `(body %prec.TYPE [N])` | `(a \| b %prec 1)` |
+| Axiom directive        | `%axiom ruleName`           | `%axiom entry` |
 | Conflicts directive    | `%conflicts [r1, r2, ...]`  | `%conflicts [expr, term]` |
 | Inline directive       | `%inline r1, r2, ...`       | `%inline _helper, _wrapper` |
 | Supertypes directive   | `%supertypes r1, r2, ...`   | `%supertypes expression, statement` |
@@ -68,10 +69,18 @@ Precedence annotations (`%prec`, `%prec.left`, `%prec.right`, `%prec.dynamic`)
 wrap an alternative or sub-expression in the corresponding `prec.*()` call. The
 level is required for `%prec` and `%prec.dynamic`, optional for `.left`/`.right`.
 
-All four directives (`%conflicts`, `%inline`, `%supertypes`, `%extras`) are
-additive across multiple lines and map directly to the same-named fields in the
-generated `grammar.js`. A warning is printed to stderr for any referenced rule
-name that has no definition in the same file.
+`%axiom ruleName` declares an explicit root (start) rule. Without it, the root
+is implicitly the *first rule declared*. Use `%axiom` when you want to debug a
+sub-rule in isolation without rearranging the file. The named rule is emitted
+first in `grammar.js`'s `rules:` block so tree-sitter treats it as the start
+symbol. Declaring `%axiom` more than once, or naming an undefined rule, is an
+error.
+
+All five directives (`%axiom`, `%conflicts`, `%inline`, `%supertypes`, `%extras`)
+map directly to the same-named fields in the generated `grammar.js` (except
+`%axiom`, which controls rule order rather than emitting a field). A warning is
+printed to stderr for any referenced rule name that has no definition in the
+same file.
 
 ### Not supported
 
@@ -231,6 +240,8 @@ Checks performed:
 | Check | Severity | Example diagnostic |
 |-------|----------|--------------------|
 | Undefined rule references | warning | `warning: undefined rule reference 'foo'` |
+| Undefined `%axiom` rule | **error** | `error: %axiom references undefined rule 'foo' (line 1)` |
+| Duplicate `%axiom` | **error** | `error: %axiom declared more than once (line 2)` |
 | Undefined `%conflicts` rules | warning | `warning: %conflicts references undefined rule 'foo'` |
 | Undefined `%inline` rules | warning | `warning: %inline references undefined rule 'foo'` |
 | Undefined `%supertypes` rules | warning | `warning: %supertypes references undefined rule 'foo'` |
