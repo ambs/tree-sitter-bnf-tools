@@ -442,12 +442,12 @@ cat json.bnf | ts-bnf-tool convert --name json - > grammar.js
 
 ### Step 4 — generate a ready-to-use tree-sitter project
 
-`--generate` writes `grammar.js` to a directory and runs `tree-sitter generate`
-for you, producing the C parser:
+`--generate` writes `grammar.js` and a skeleton `queries/highlights.scm` to a
+directory, then runs `tree-sitter generate` to produce the C parser:
 
 ```sh
 ts-bnf-tool convert --generate json.bnf
-# creates ./json/grammar.js and ./json/src/parser.c
+# creates ./json/grammar.js, ./json/queries/highlights.scm, and ./json/src/parser.c
 ```
 
 Override the output directory and grammar name:
@@ -458,6 +458,26 @@ ts-bnf-tool convert --generate --output-dir ~/parsers/json --name json json.bnf
 
 The resulting directory is a complete tree-sitter language package, ready for
 `tree-sitter parse`, editor integration, or publishing as an npm package.
+
+### Step 5 — refine the highlights skeleton
+
+The generated `queries/highlights.scm` is a starting point based on naming
+conventions. Open it and replace every `; TODO: @???` line with the appropriate
+capture name, or delete it if the rule does not need highlighting.
+
+You can also generate or regenerate the skeleton at any time with the
+`highlights` subcommand:
+
+```sh
+ts-bnf-tool highlights json.bnf -o queries/highlights.scm
+```
+
+Use `--no-todos` to emit only the rules that were automatically classified,
+leaving the unknowns out entirely:
+
+```sh
+ts-bnf-tool highlights --no-todos json.bnf
+```
 
 ---
 

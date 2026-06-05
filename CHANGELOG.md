@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The `%axiom` keyword is highlighted as `@keyword` in `highlights.scm`.
 
 #### `ts-bnf-tool`
+- `highlights` subcommand: generates a skeleton `highlights.scm` from a BNF grammar using naming-convention heuristics. Rules whose bodies contain no terminals are omitted; unrecognised rules get a `; TODO: @???` placeholder. Supports `-o <file>` to write directly to a file and `--no-todos` to suppress placeholder entries.
 - `--json` flag on `check`: emits diagnostics as a JSON array to stdout instead of plain text to stderr.
 - `--json` flag on `firsts`: emits FIRST sets as a JSON object `{"rule": ["terminal", ...]}` to stdout instead of plain text.
 - `%axiom ruleName` directive: declares an explicit root (start) rule.

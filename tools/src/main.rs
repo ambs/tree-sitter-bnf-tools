@@ -11,7 +11,7 @@ use std::process::Command;
 use clap::{Parser, Subcommand};
 
 use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
-use ts_bnf_tool::dom::{Diagnostic, Grammar, ParseError, Scaffold, Severity};
+use ts_bnf_tool::dom::{Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity};
 use ts_bnf_tool::visitors::{visit_grammar, SourceFile};
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -71,6 +71,17 @@ enum Subcommands {
         #[arg(long)]
         json: bool,
     },
+    /// Generate a skeleton highlights.scm from a BNF grammar
+    Highlights {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+        /// Write output to this file instead of stdout
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+        /// Suppress `; TODO: @???` placeholder entries for unclassified rules
+        #[arg(long)]
+        no_todos: bool,
+    },
     /// Pretty-print a BNF file in canonical style.
     Format {
         /// Input BNF file, or `-` to read from stdin
@@ -112,11 +123,22 @@ impl fmt::Display for CommandError {
 
 impl Error for CommandError {}
 
-/// Writes `grammar.js` to the output directory and runs `tree-sitter generate` inside it.
+/// Writes `grammar.js` and a skeleton `queries/highlights.scm` to the output directory,
+/// then runs `tree-sitter generate` inside it.
 fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(), Box<dyn Error>> {
     let dir = resolve_output_dir(output_dir, scaffold.name);
     fs::create_dir_all(&dir)?;
     fs::write(dir.join("grammar.js"), scaffold.to_string())?;
+    let queries_dir = dir.join("queries");
+    fs::create_dir_all(&queries_dir)?;
+    fs::write(
+        queries_dir.join("highlights.scm"),
+        Highlights {
+            grammar: scaffold.grammar,
+            no_todos: false,
+        }
+        .to_string(),
+    )?;
     let status = Command::new("tree-sitter")
         .arg("generate")
         .current_dir(&dir)
@@ -309,6 +331,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                 for (rule, terminals) in &sorted {
                     println!("{}: {}", rule, terminals.join(", "));
                 }
+            }
+        }
+
+        Subcommands::Highlights {
+            filename,
+            output,
+            no_todos,
+        } => {
+            let (grammar, _) = parse_file(&filename, false)?;
+            let skeleton = Highlights {
+                grammar: &grammar,
+                no_todos,
+            }
+            .to_string();
+            match output {
+                Some(path) => fs::write(&path, &skeleton)?,
+                None => print!("{}", skeleton),
             }
         }
 
