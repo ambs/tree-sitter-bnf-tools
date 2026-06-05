@@ -1,7 +1,8 @@
 use std::fmt;
 
 /// The severity of a [`Diagnostic`] message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// A hard error: the grammar cannot be used as-is (e.g. left-recursion).
     Error,
@@ -13,7 +14,7 @@ pub enum Severity {
 ///
 /// Diagnostics are emitted by [`Grammar::check`](super::types::Grammar) and carry a
 /// [`Severity`] so callers can distinguish hard errors from advisory warnings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Diagnostic {
     /// Whether this is a hard error or an advisory warning.
     pub severity: Severity,

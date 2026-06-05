@@ -59,11 +59,17 @@ enum Subcommands {
         /// Skip static checks and suppress all warnings
         #[arg(long, short = 'n')]
         no_check: bool,
+        /// Emit output as JSON instead of plain text
+        #[arg(long)]
+        json: bool,
     },
     /// Run all static checks and exit non-zero on any issue (for CI)
     Check {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
+        /// Emit diagnostics as JSON instead of plain text
+        #[arg(long)]
+        json: bool,
     },
     /// Pretty-print a BNF file in canonical style.
     Format {
@@ -273,7 +279,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        Subcommands::Firsts { filename, no_check } => {
+        Subcommands::Firsts {
+            filename,
+            no_check,
+            json,
+        } => {
             let (grammar, diagnostics) = parse_file(&filename, !no_check)?;
             for d in &diagnostics {
                 eprintln!("{d}");
@@ -283,10 +293,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut rules: Vec<&str> = sets.keys().copied().collect();
             rules.sort_unstable();
 
-            for rule in rules {
-                let mut terminals: Vec<&str> = sets[rule].iter().map(display_terminal).collect();
-                terminals.sort_unstable();
-                println!("{}: {}", rule, terminals.join(", "));
+            let sorted: std::collections::BTreeMap<&str, Vec<&str>> = rules
+                .iter()
+                .map(|rule| {
+                    let mut terminals: Vec<&str> =
+                        sets[rule].iter().map(display_terminal).collect();
+                    terminals.sort_unstable();
+                    (*rule, terminals)
+                })
+                .collect();
+
+            if json {
+                println!("{}", serde_json::to_string(&sorted)?);
+            } else {
+                for (rule, terminals) in &sorted {
+                    println!("{}: {}", rule, terminals.join(", "));
+                }
             }
         }
 
@@ -323,10 +345,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        Subcommands::Check { filename } => {
+        Subcommands::Check { filename, json } => {
             let (_, diagnostics) = parse_file(&filename, true)?;
-            for d in &diagnostics {
-                eprintln!("{d}");
+            if json {
+                println!("{}", serde_json::to_string(&diagnostics)?);
+            } else {
+                for d in &diagnostics {
+                    eprintln!("{d}");
+                }
             }
             let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
             let has_warnings = diagnostics.iter().any(|d| d.severity == Severity::Warning);

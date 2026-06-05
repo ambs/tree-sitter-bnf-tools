@@ -13,6 +13,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The `%axiom` keyword is highlighted as `@keyword` in `highlights.scm`.
 
 #### `ts-bnf-tool`
+- `--json` flag on `check`: emits diagnostics as a JSON array to stdout instead of plain text to stderr.
+- `--json` flag on `firsts`: emits FIRST sets as a JSON object `{"rule": ["terminal", ...]}` to stdout instead of plain text.
 - `%axiom ruleName` directive: declares an explicit root (start) rule.
   - `check`: emits an error if the named rule is undefined, and an error if
     `%axiom` is declared more than once in the same file.
