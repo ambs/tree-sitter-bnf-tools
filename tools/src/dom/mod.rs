@@ -10,6 +10,8 @@ mod error;
 pub mod format;
 /// Cross-reference and structural validation checks on a [`Grammar`].
 mod grammar;
+/// Skeleton `highlights.scm` generator with naming-convention heuristics.
+pub mod highlights;
 /// Core grammar node types and their Display representations.
 mod nodes;
 /// A single named grammar rule.
@@ -26,6 +28,7 @@ pub use diagnostic::{Diagnostic, Severity};
 pub use directive::{ConflictGroup, DirectiveItem};
 pub use error::ParseError;
 pub use format::format_grammar;
+pub use highlights::Highlights;
 pub use nodes::{GrammarNode, PrecKind};
 pub use production::Production;
 pub use scaffold::Scaffold;

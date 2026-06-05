@@ -18,6 +18,14 @@ fn parse_format(args: &[&str]) -> Result<Cli, clap::Error> {
     Cli::try_parse_from(full)
 }
 
+fn parse_highlights(args: &[&str]) -> Result<Cli, clap::Error> {
+    let full: Vec<&str> = std::iter::once("ts-bnf-tool")
+        .chain(std::iter::once("highlights"))
+        .chain(args.iter().copied())
+        .collect();
+    Cli::try_parse_from(full)
+}
+
 fn parse_check(args: &[&str]) -> Result<Cli, clap::Error> {
     let full: Vec<&str> = std::iter::once("ts-bnf-tool")
         .chain(std::iter::once("check"))
@@ -200,4 +208,40 @@ fn firsts_json_flag_parses() {
         panic!("wrong subcommand");
     };
     assert!(json);
+}
+
+#[test]
+fn highlights_no_todos_defaults_false() {
+    let cli = parse_highlights(&["f.bnf"]).unwrap();
+    let Subcommands::Highlights { no_todos, .. } = cli.command else {
+        panic!("wrong subcommand");
+    };
+    assert!(!no_todos);
+}
+
+#[test]
+fn highlights_no_todos_flag_parses() {
+    let cli = parse_highlights(&["--no-todos", "f.bnf"]).unwrap();
+    let Subcommands::Highlights { no_todos, .. } = cli.command else {
+        panic!("wrong subcommand");
+    };
+    assert!(no_todos);
+}
+
+#[test]
+fn highlights_output_flag_parses() {
+    let cli = parse_highlights(&["-o", "out.scm", "f.bnf"]).unwrap();
+    let Subcommands::Highlights { output, .. } = cli.command else {
+        panic!("wrong subcommand");
+    };
+    assert_eq!(output.as_deref(), Some("out.scm"));
+}
+
+#[test]
+fn highlights_output_defaults_to_none() {
+    let cli = parse_highlights(&["f.bnf"]).unwrap();
+    let Subcommands::Highlights { output, .. } = cli.command else {
+        panic!("wrong subcommand");
+    };
+    assert!(output.is_none());
 }
