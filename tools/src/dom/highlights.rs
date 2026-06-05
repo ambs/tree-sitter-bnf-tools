@@ -278,4 +278,97 @@ mod tests {
         let node = GrammarNode::Optional(Box::new(GrammarNode::TerminalLiteral("';'".into())));
         assert!(has_terminal(&node));
     }
+
+    #[test]
+    fn has_terminal_zero_or_more() {
+        assert!(has_terminal(&GrammarNode::ZeroOrMore(Box::new(
+            GrammarNode::TerminalLiteral("','".into())
+        ))));
+        assert!(!has_terminal(&GrammarNode::ZeroOrMore(Box::new(
+            GrammarNode::NonTerminal("a".into())
+        ))));
+    }
+
+    #[test]
+    fn has_terminal_one_or_more() {
+        assert!(has_terminal(&GrammarNode::OneOrMore(Box::new(
+            GrammarNode::TerminalPattern("/[0-9]+/".into())
+        ))));
+    }
+
+    #[test]
+    fn has_terminal_token() {
+        assert!(has_terminal(&GrammarNode::Token(Box::new(
+            GrammarNode::TerminalLiteral("'x'".into())
+        ))));
+    }
+
+    #[test]
+    fn has_terminal_token_immediate() {
+        assert!(has_terminal(&GrammarNode::TokenImmediate(Box::new(
+            GrammarNode::TerminalLiteral("'x'".into())
+        ))));
+    }
+
+    #[test]
+    fn has_terminal_field() {
+        let with = GrammarNode::Field(
+            "name".into(),
+            Box::new(GrammarNode::TerminalLiteral("'x'".into())),
+        );
+        assert!(has_terminal(&with));
+        let without = GrammarNode::Field(
+            "name".into(),
+            Box::new(GrammarNode::NonTerminal("a".into())),
+        );
+        assert!(!has_terminal(&without));
+    }
+
+    #[test]
+    fn has_terminal_alias() {
+        let node = GrammarNode::Alias(
+            Box::new(GrammarNode::TerminalLiteral("'x'".into())),
+            Box::new(GrammarNode::NonTerminal("alias_name".into())),
+        );
+        assert!(has_terminal(&node));
+    }
+
+    #[test]
+    fn has_terminal_prec() {
+        let node = GrammarNode::Prec(
+            crate::dom::PrecKind::Plain,
+            Some(1),
+            Box::new(GrammarNode::TerminalLiteral("'+'".into())),
+        );
+        assert!(has_terminal(&node));
+    }
+
+    #[test]
+    fn has_terminal_choice_with_terminal() {
+        let node = GrammarNode::Choice(vec![
+            GrammarNode::NonTerminal("a".into()),
+            GrammarNode::TerminalLiteral("'x'".into()),
+        ]);
+        assert!(has_terminal(&node));
+    }
+
+    #[test]
+    fn highlights_no_todos_skips_unclassified_silently() {
+        use crate::dom::{Grammar, Production};
+        let grammar = Grammar::from_rules([Production {
+            name: "expr".into(),
+            body: GrammarNode::TerminalLiteral("'+'".into()),
+            line: 1,
+            filename: "test.bnf".into(),
+        }]);
+        let out = Highlights {
+            grammar: &grammar,
+            no_todos: true,
+        }
+        .to_string();
+        assert!(
+            !out.contains("expr"),
+            "unclassified rule must be omitted when no_todos = true"
+        );
+    }
 }
