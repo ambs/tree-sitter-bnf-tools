@@ -222,8 +222,26 @@ ts-bnf-tool firsts expr.bnf
 ```
 
 ```
-expr: '+', /[0-9]+/, '('
-term: /[0-9]+/, '('
+expr: '(', /[0-9]+/
+term: '(', /[0-9]+/
+```
+
+Options:
+
+```
+  -n, --no-check   Skip static checks and suppress all warnings
+  --json           Emit output as JSON instead of plain text
+```
+
+With `--json`, output is a JSON object mapping each rule name to a sorted array
+of terminal strings:
+
+```sh
+ts-bnf-tool firsts --json expr.bnf
+```
+
+```json
+{"expr": ["'('", "/[0-9]+/"], "term": ["'('", "/[0-9]+/"]}
 ```
 
 ### check
@@ -249,6 +267,24 @@ Checks performed:
 | Unreferenced rule | warning | `warning: rule 'foo' is never referenced (line 4)` |
 | Direct left-recursion | **error** | `error: rule 'expr' is directly left-recursive (line 1)` |
 | Mutual left-recursion | **error** | `error: rule 'a' is mutually left-recursive (line 1)` |
+
+Options:
+
+```
+  --json   Emit diagnostics as JSON instead of plain text
+```
+
+With `--json`, diagnostics are written to stdout as a JSON array. Each element
+has a `severity` field (`"warning"` or `"error"`) and a `message` field. Exit
+codes are unaffected.
+
+```sh
+ts-bnf-tool check --json grammar.bnf
+```
+
+```json
+[{"severity":"warning","message":"rule 'foo' is never referenced (line 3)"}]
+```
 
 Exit codes: `0` clean, `1` warnings only, `2` one or more errors.
 

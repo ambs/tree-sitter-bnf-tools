@@ -476,6 +476,17 @@ ts-bnf-tool check json.bnf
 echo $?   # 0 if clean, 1 if warnings only, 2 if any errors
 ```
 
+Pass `--json` to get diagnostics as a JSON array on stdout instead of plain
+text on stderr. Exit codes are not affected:
+
+```sh
+ts-bnf-tool check --json json.bnf
+```
+
+```json
+[{"severity":"warning","message":"rule 'unused' is never referenced (line 3)"}]
+```
+
 Detected issues include undefined rule references, unreferenced rules,
 directives that name non-existent rules, and left-recursive rules.
 Left-recursion is reported as an **error** (exit code 2) because tree-sitter
@@ -547,6 +558,24 @@ object: '{'
 pair: '"'
 string: '"'
 value: '"', '[', 'false', 'null', 'true', '{', /\-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+```
+
+Pass `--json` to get a JSON object instead, suitable for editor plugins or
+other tooling that consumes structured output:
+
+```sh
+ts-bnf-tool firsts --json json.bnf
+```
+
+```json
+{
+  "array":  ["'['"],
+  "number": ["/\\-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?/"],
+  "object": ["'{'"],
+  "pair":   ["'\"'"],
+  "string": ["'\"'"],
+  "value":  ["'\"'", "'['", "'false'", "'null'", "'true'", "'{'", "/\\-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?/"]
+}
 ```
 
 ---
