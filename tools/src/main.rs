@@ -11,6 +11,7 @@ use std::process::Command;
 use clap::{Parser, Subcommand};
 
 use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
+use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::{Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity};
 use ts_bnf_tool::visitors::{visit_grammar, SourceFile};
 
@@ -82,6 +83,21 @@ enum Subcommands {
         #[arg(long)]
         no_todos: bool,
     },
+    /// Rename a rule definition and all its references throughout the grammar
+    Rename {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+        /// Current rule name
+        from: String,
+        /// New rule name
+        to: String,
+        /// Overwrite the file in place (atomic write; cannot be used with `-`)
+        #[arg(long, short = 'i', conflicts_with = "output")]
+        in_place: bool,
+        /// Write output to this file instead of stdout (cannot be combined with `--in-place`)
+        #[arg(long, short = 'o', conflicts_with = "in_place")]
+        output: Option<String>,
+    },
     /// Pretty-print a BNF file in canonical style.
     Format {
         /// Input BNF file, or `-` to read from stdin
@@ -146,6 +162,35 @@ fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(),
         .map_err(|e| CommandError(format!("failed to run tree-sitter: {}", e)))?;
     if !status.success() {
         return Err(CommandError("tree-sitter generate failed".into()).into());
+    }
+    Ok(())
+}
+
+/// Renames rule `from` to `to` in the grammar at `filename` and writes the result.
+///
+/// Output destination, in priority order: `--in-place` rewrites `filename` atomically,
+/// `--output <path>` writes to that path, and the default prints to stdout.
+fn run_rename(
+    filename: &str,
+    from: &str,
+    to: &str,
+    in_place: bool,
+    output: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    if in_place && filename == "-" {
+        return Err("--in-place cannot be used with stdin".into());
+    }
+    let (mut grammar, _) = parse_file(filename, false)?;
+    rename_grammar(&mut grammar, from, to)?;
+    let formatted = ts_bnf_tool::dom::format_grammar(&grammar);
+    if in_place {
+        let tmp = format!("{}.tmp", filename);
+        fs::write(&tmp, &formatted)?;
+        fs::rename(&tmp, filename)?;
+    } else if let Some(path) = output {
+        fs::write(path, &formatted)?;
+    } else {
+        print!("{}", formatted);
     }
     Ok(())
 }
@@ -382,6 +427,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 print!("{}", formatted);
             }
+        }
+
+        Subcommands::Rename {
+            filename,
+            from,
+            to,
+            in_place,
+            output,
+        } => {
+            run_rename(&filename, &from, &to, in_place, output.as_deref())?;
         }
 
         Subcommands::Check { filename, json } => {

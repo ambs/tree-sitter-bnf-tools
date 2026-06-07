@@ -211,6 +211,27 @@ Options:
   --no-strip-comments    Preserve # comments in output
 ```
 
+### rename
+
+Renames a rule definition and every reference to it — in rule bodies and in
+`%axiom`, `%inline`, `%supertypes`, `%extras`, and `%conflicts` directives —
+in one safe, mechanical pass. The result is re-emitted in canonical format.
+
+```sh
+ts-bnf-tool rename grammar.bnf expr expression        # print to stdout
+ts-bnf-tool rename -i grammar.bnf expr expression     # rewrite in place (atomic)
+ts-bnf-tool rename grammar.bnf expr expression -o out.bnf  # write to file
+```
+
+Exits non-zero if the source rule is not defined or the target name is already taken.
+
+Options:
+
+```
+  -i, --in-place    Rewrite the file in place (cannot be used with stdin)
+  -o <FILE>         Write output to this file instead of stdout
+```
+
 ### highlights
 
 Generates a best-effort skeleton `highlights.scm` — a Tree-sitter query file

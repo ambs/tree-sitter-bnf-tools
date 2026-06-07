@@ -2,6 +2,7 @@
 //!
 //! These run the compiled binary as a subprocess so that the full `main()`
 //! dispatch — including the `--json` output branches — is exercised.
+use indoc::indoc;
 use std::fs;
 use std::process::Command;
 
@@ -10,13 +11,22 @@ fn tool() -> Command {
 }
 
 /// A small, clean grammar with no diagnostics.
-const CLEAN_BNF: &str = "expr -> term ('+' term)* ;\nterm -> /[0-9]+/ | '(' expr ')' ;\n";
+const CLEAN_BNF: &str = indoc! {"
+    expr -> term ('+' term)* ;
+    term -> /[0-9]+/ | '(' expr ')' ;
+"};
 
 /// A grammar that produces an "unused rule" warning.
-const WARN_BNF: &str = "root -> 'a' ;\nunused -> 'b' ;\n";
+const WARN_BNF: &str = indoc! {"
+    root -> 'a' ;
+    unused -> 'b' ;
+"};
 
 /// A left-recursive grammar that produces an error.
-const ERROR_BNF: &str = "expr -> expr '+' term | term ;\nterm -> /[0-9]+/ ;\n";
+const ERROR_BNF: &str = indoc! {"
+    expr -> expr '+' term | term ;
+    term -> /[0-9]+/ ;
+"};
 
 fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(name);
@@ -168,13 +178,155 @@ fn generate_writes_queries_highlights_scm() {
 // ── highlights ────────────────────────────────────────────────────────────────
 
 /// A grammar with a variety of rule names to exercise the heuristics.
-const HIGHLIGHTS_BNF: &str = "\
-value      -> string | number | expr ;\n\
-string     -> '\"' /[^\"]*/ '\"' ;\n\
-number     -> /[0-9]+/ ;\n\
-line_comment -> '#' /.*/ ;\n\
-expr       -> value '+' value ;\n\
-";
+/// A grammar with an `%inline` directive referencing `expr`, for directive rename tests.
+const RENAME_DIRECTIVE_BNF: &str = indoc! {"
+    %inline expr
+    expr -> term '+' term ;
+    term -> /[0-9]+/ ;
+"};
+
+const HIGHLIGHTS_BNF: &str = indoc! {r#"
+    value      -> string | number | expr ;
+    string     -> '"' /[^"]*/ '"' ;
+    number     -> /[0-9]+/ ;
+    line_comment -> '#' /.*/ ;
+    expr       -> value '+' value ;
+"#};
+
+// ── rename ────────────────────────────────────────────────────────────────────
+
+/// After renaming `term` to `terminal`, the `expression` rule body must reference
+/// the new name and the old name must not appear anywhere in the output.
+#[test]
+fn rename_renames_rhs_references() {
+    let path = write_tmp("ts_bnf_rename_rhs.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["rename"])
+        .arg(&path)
+        .args(["term", "terminal"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("terminal"),
+        "new name must appear in output"
+    );
+    assert!(
+        !stdout.contains("term "),
+        "old name must not appear as a standalone word"
+    );
+}
+
+/// Renaming `expr` to `expression` produces output where `expression ->` is the
+/// definition and `expr ->` no longer appears.
+#[test]
+fn rename_renames_definition() {
+    let path = write_tmp("ts_bnf_rename1.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["rename"])
+        .arg(&path)
+        .args(["expr", "expression"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("expression ->"),
+        "new rule name must appear as a definition"
+    );
+    assert!(
+        !stdout.contains("expr ->"),
+        "old rule name must not appear as a definition"
+    );
+}
+
+/// The `%inline` directive is updated when the referenced rule is renamed.
+#[test]
+fn rename_renames_directive() {
+    let path = write_tmp("ts_bnf_rename_dir.bnf", RENAME_DIRECTIVE_BNF);
+    let out = tool()
+        .args(["rename"])
+        .arg(&path)
+        .args(["expr", "expression"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("%inline expression"),
+        "directive must use the new name"
+    );
+    assert!(
+        !stdout.contains("%inline expr\n"),
+        "directive must not use the old name"
+    );
+}
+
+/// Renaming to an unknown source rule exits non-zero and prints an error to stderr.
+#[test]
+fn rename_unknown_source_exits_nonzero() {
+    let path = write_tmp("ts_bnf_rename_err1.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["rename"])
+        .arg(&path)
+        .args(["nonexistent", "something"])
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "must exit non-zero for unknown source rule"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("nonexistent"),
+        "stderr must name the missing rule"
+    );
+}
+
+/// Renaming to a name that is already defined exits non-zero and prints an error to stderr.
+#[test]
+fn rename_target_already_defined_exits_nonzero() {
+    let path = write_tmp("ts_bnf_rename_err2.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["rename"])
+        .arg(&path)
+        .args(["expr", "term"])
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "must exit non-zero when target name is taken"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("term"),
+        "stderr must name the conflicting rule"
+    );
+}
+
+/// `--in-place` rewrites the file on disk with the renamed rule.
+#[test]
+fn rename_in_place_rewrites_file() {
+    let path = write_tmp("ts_bnf_rename_inplace.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["rename", "--in-place"])
+        .arg(&path)
+        .args(["expr", "expression"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(out.stdout.is_empty(), "--in-place must not write to stdout");
+    let content = fs::read_to_string(&path).unwrap();
+    assert!(
+        content.contains("expression ->"),
+        "file must contain the new rule name"
+    );
+    assert!(
+        !content.contains("expr ->"),
+        "file must not contain the old rule name"
+    );
+}
 
 #[test]
 fn highlights_emits_scheme_header() {
