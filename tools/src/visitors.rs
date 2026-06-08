@@ -721,6 +721,39 @@ mod tests {
         );
     }
 
+    // ── axiom from included file ──────────────────────────────────────────────
+
+    #[test]
+    /// When the parent has no %axiom but the included file does, the included
+    /// axiom is adopted (the else-branch of merge_from's axiom handling).
+    fn include_adopts_axiom_from_included_file() {
+        write_tmp("inc_ax_b.bnf", "%axiom b\nb -> 'y' ;");
+        let a = write_tmp("inc_ax_a.bnf", "%include \"inc_ax_b.bnf\"\na -> b ;");
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert_eq!(
+            grammar.axiom.as_ref().map(|ax| ax.name.as_str()),
+            Some("b"),
+            "axiom from included file must be adopted when parent has none"
+        );
+    }
+
+    // ── syntax error in included file ─────────────────────────────────────────
+
+    #[test]
+    /// An included file with a syntax error returns ParseError::SyntaxError.
+    fn include_syntax_error_in_included_file() {
+        // "-> 'x' ;" has no left-hand side and is not valid BNF syntax.
+        write_tmp("inc_synerr_b.bnf", "-> 'x' ;");
+        let a = write_tmp(
+            "inc_synerr_a.bnf",
+            "%include \"inc_synerr_b.bnf\"\nroot -> 'y' ;",
+        );
+        assert!(
+            matches!(parse_path(&a), Err(ParseError::SyntaxError)),
+            "expected SyntaxError when included file has invalid syntax"
+        );
+    }
+
     // ── merge directives ──────────────────────────────────────────────────────
 
     #[test]

@@ -53,3 +53,32 @@ impl Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn include_from_stdin_display() {
+        assert_eq!(
+            ParseError::IncludeFromStdin.to_string(),
+            "%include cannot be used when reading from stdin"
+        );
+    }
+
+    #[test]
+    fn include_not_found_display() {
+        assert_eq!(
+            ParseError::IncludeNotFound("/tmp/foo.bnf".into()).to_string(),
+            "included file not found: /tmp/foo.bnf"
+        );
+    }
+
+    #[test]
+    fn include_cycle_display() {
+        assert_eq!(
+            ParseError::IncludeCycle("/tmp/foo.bnf".into()).to_string(),
+            "circular %include detected: /tmp/foo.bnf"
+        );
+    }
+}

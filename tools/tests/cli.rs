@@ -4,7 +4,8 @@
 //! dispatch — including the `--json` output branches — is exercised.
 use indoc::indoc;
 use std::fs;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn tool() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
@@ -540,6 +541,31 @@ fn check_json_without_summary_has_no_summary_key() {
     assert!(
         parsed["summary"].is_null(),
         "summary key must be absent without --summary"
+    );
+}
+
+// ── stdin ─────────────────────────────────────────────────────────────────────
+
+#[test]
+/// `check -` reads a clean grammar from stdin and exits 0.
+fn check_reads_clean_grammar_from_stdin() {
+    let mut child = tool()
+        .args(["check", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(CLEAN_BNF.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "check via stdin must succeed for clean grammar"
     );
 }
 
