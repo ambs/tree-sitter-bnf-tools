@@ -406,6 +406,97 @@ pub fn first_sets(grammar: &Grammar) -> HashMap<&str, HashSet<FirstTerminal<'_>>
     first
 }
 
+/// Returns the number of productions whose body contains no [`GrammarNode::NonTerminal`]
+/// references — i.e. rules that are defined entirely in terms of terminals.
+pub fn count_leaf_rules(grammar: &Grammar) -> usize {
+    grammar
+        .productions
+        .values()
+        .filter(|p| !p.body.contains_nonterminal())
+        .count()
+}
+
+/// Walks `node` recursively, inserting every [`GrammarNode::TerminalLiteral`]
+/// into `literals` and every [`GrammarNode::TerminalPattern`] into `patterns`.
+fn collect_terminals<'g>(
+    node: &'g GrammarNode,
+    literals: &mut HashSet<&'g str>,
+    patterns: &mut HashSet<&'g str>,
+) {
+    match node {
+        GrammarNode::TerminalLiteral(s) => {
+            literals.insert(s.as_str());
+        }
+        GrammarNode::TerminalPattern(s) => {
+            patterns.insert(s.as_str());
+        }
+        GrammarNode::NonTerminal(_) => {}
+        GrammarNode::Sequence(children) | GrammarNode::Choice(children) => {
+            for child in children {
+                collect_terminals(child, literals, patterns);
+            }
+        }
+        GrammarNode::Optional(inner)
+        | GrammarNode::ZeroOrMore(inner)
+        | GrammarNode::OneOrMore(inner)
+        | GrammarNode::Token(inner)
+        | GrammarNode::TokenImmediate(inner) => collect_terminals(inner, literals, patterns),
+        GrammarNode::Field(_, inner) => collect_terminals(inner, literals, patterns),
+        GrammarNode::Alias(body, _) => collect_terminals(body, literals, patterns),
+        GrammarNode::Prec(_, _, inner) => collect_terminals(inner, literals, patterns),
+    }
+}
+
+/// Returns the number of unique terminal literals and unique terminal patterns
+/// across all production bodies in the grammar.
+///
+/// The returned tuple is `(unique_literals, unique_patterns)`. Uniqueness is
+/// determined by the raw source string (e.g. `'x'` and `"x"` count as two
+/// distinct literals even if they match the same character).
+pub fn count_unique_terminals(grammar: &Grammar) -> (usize, usize) {
+    let mut literals = HashSet::new();
+    let mut patterns = HashSet::new();
+    for production in grammar.productions.values() {
+        collect_terminals(&production.body, &mut literals, &mut patterns);
+    }
+    (literals.len(), patterns.len())
+}
+
+/// Returns the number of directly and mutually left-recursive rules as
+/// `(direct, mutual)`.
+///
+/// Delegates to [`left_recursive_rules`], which computes the full transitive
+/// closure, and partitions the result on the `is_direct` flag.
+pub fn count_left_recursive(grammar: &Grammar) -> (usize, usize) {
+    let (direct, mutual): (Vec<_>, Vec<_>) = left_recursive_rules(grammar)
+        .into_iter()
+        .partition(|(_, is_direct)| *is_direct);
+    (direct.len(), mutual.len())
+}
+
+/// Computes min, max, and average FIRST-set size across all productions.
+///
+/// Returns [`None`] when the grammar has no productions (no sizes to aggregate).
+/// This function runs the full [`first_sets`] fixpoint — it is not free and
+/// should only be called when `--summary` is requested.
+pub fn first_set_stats(grammar: &Grammar) -> Option<super::summary::FirstSetStats> {
+    let sets = first_sets(grammar);
+    if sets.is_empty() {
+        return None;
+    }
+    let sizes: Vec<usize> = sets.values().map(|s| s.len()).collect();
+    let min = *sizes.iter().min().unwrap();
+    let max = *sizes.iter().max().unwrap();
+    let avg = {
+        let sum: usize = sizes.iter().sum();
+        let raw = sum as f64 / sizes.len() as f64;
+        // Round to one decimal place: shift up, round to integer, shift back.
+        // e.g. 3.25 → 32.5 → 33.0 → 3.3
+        (raw * 10.0).round() / 10.0
+    };
+    Some(super::summary::FirstSetStats { min, max, avg })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,5 +701,193 @@ mod tests {
             first_sets(&g)["a"],
             HashSet::from([FirstTerminal::Literal("'x'")])
         );
+    }
+
+    // ── count_leaf_rules ──────────────────────────────────────────────────────
+
+    #[test]
+    /// An empty grammar has no leaf rules.
+    fn leaf_rules_empty_grammar() {
+        assert_eq!(count_leaf_rules(&grammar(vec![])), 0);
+    }
+
+    #[test]
+    /// A rule whose body is a single terminal is a leaf.
+    fn leaf_rules_single_terminal() {
+        let g = grammar(vec![p("tok", lit("'x'"))]);
+        assert_eq!(count_leaf_rules(&g), 1);
+    }
+
+    #[test]
+    /// A rule that references another rule is not a leaf.
+    fn leaf_rules_nonterminal_body_not_leaf() {
+        let g = grammar(vec![p("tok", lit("'x'")), p("expr", nt("tok"))]);
+        assert_eq!(count_leaf_rules(&g), 1);
+    }
+
+    #[test]
+    /// All rules in a purely terminal grammar are counted as leaves.
+    fn leaf_rules_all_terminal() {
+        let g = grammar(vec![
+            p("a", lit("'x'")),
+            p("b", TerminalPattern("/[0-9]+/".into())),
+            p("c", Choice(vec![lit("'+'"), lit("'-'")])),
+        ]);
+        assert_eq!(count_leaf_rules(&g), 3);
+    }
+
+    #[test]
+    /// A token(…) wrapping a terminal is still a leaf — token contains no NonTerminal.
+    fn leaf_rules_token_wrapping_terminal_is_leaf() {
+        let g = grammar(vec![p(
+            "tok",
+            Token(Box::new(TerminalPattern("/[a-z]+/".into()))),
+        )]);
+        assert_eq!(count_leaf_rules(&g), 1);
+    }
+
+    // ── count_unique_terminals ────────────────────────────────────────────────
+
+    #[test]
+    /// An empty grammar has no terminals.
+    fn unique_terminals_empty_grammar() {
+        assert_eq!(count_unique_terminals(&grammar(vec![])), (0, 0));
+    }
+
+    #[test]
+    /// A single literal produces one unique literal and zero patterns.
+    fn unique_terminals_single_literal() {
+        let g = grammar(vec![p("a", lit("'x'"))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// A single pattern produces zero literals and one unique pattern.
+    fn unique_terminals_single_pattern() {
+        let g = grammar(vec![p("a", pat("/[0-9]+/"))]);
+        assert_eq!(count_unique_terminals(&g), (0, 1));
+    }
+
+    #[test]
+    /// The same literal appearing in two rules is counted only once.
+    fn unique_terminals_deduplicates_across_rules() {
+        let g = grammar(vec![p("a", lit("'x'")), p("b", lit("'x'"))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// The same literal appearing twice inside one rule body is counted once.
+    fn unique_terminals_deduplicates_within_rule() {
+        let g = grammar(vec![p("a", Choice(vec![lit("'x'"), lit("'x'")]))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// Literals and patterns are counted in separate buckets.
+    fn unique_terminals_separates_literals_and_patterns() {
+        let g = grammar(vec![p(
+            "a",
+            Sequence(vec![lit("'+'"), pat("/[0-9]+/"), lit("'-'")]),
+        )]);
+        assert_eq!(count_unique_terminals(&g), (2, 1));
+    }
+
+    #[test]
+    /// Terminals nested inside token(…) are still collected.
+    fn unique_terminals_inside_token() {
+        let g = grammar(vec![p("a", Token(Box::new(lit("'x'"))))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// The alias name node is not a terminal source — only the body is walked.
+    fn unique_terminals_alias_name_not_collected() {
+        // alias(body='x', name=some_rule) — name is a NonTerminal display label.
+        let g = grammar(vec![p(
+            "a",
+            Alias(Box::new(lit("'x'")), Box::new(nt("label"))),
+        )]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    // ── count_left_recursive ──────────────────────────────────────────────────
+
+    #[test]
+    /// A grammar with no recursion returns (0, 0).
+    fn left_recursive_none() {
+        let g = grammar(vec![p("a", lit("'x'"))]);
+        assert_eq!(count_left_recursive(&g), (0, 0));
+    }
+
+    #[test]
+    /// A directly left-recursive rule (`a → a …`) is counted in the direct bucket.
+    fn left_recursive_direct_only() {
+        let g = grammar(vec![p(
+            "a",
+            Choice(vec![Sequence(vec![nt("a"), lit("'x'")]), lit("'y'")]),
+        )]);
+        assert_eq!(count_left_recursive(&g), (1, 0));
+    }
+
+    #[test]
+    /// Two rules that are mutually left-recursive appear in the mutual bucket.
+    fn left_recursive_mutual_only() {
+        let g = grammar(vec![
+            p(
+                "a",
+                Choice(vec![Sequence(vec![nt("b"), lit("'x'")]), lit("'a'")]),
+            ),
+            p(
+                "b",
+                Choice(vec![Sequence(vec![nt("a"), lit("'y'")]), lit("'b'")]),
+            ),
+        ]);
+        let (direct, mutual) = count_left_recursive(&g);
+        assert_eq!(direct, 0);
+        assert_eq!(mutual, 2);
+    }
+
+    // ── first_set_stats ───────────────────────────────────────────────────────
+
+    #[test]
+    /// An empty grammar has no FIRST sets to aggregate.
+    fn first_set_stats_empty_grammar_returns_none() {
+        assert_eq!(first_set_stats(&grammar(vec![])), None);
+    }
+
+    #[test]
+    /// A single rule with one terminal: min = max = avg = 1.
+    fn first_set_stats_single_rule_single_terminal() {
+        let g = grammar(vec![p("a", lit("'x'"))]);
+        let stats = first_set_stats(&g).unwrap();
+        assert_eq!(stats.min, 1);
+        assert_eq!(stats.max, 1);
+        assert_eq!(stats.avg, 1.0);
+    }
+
+    #[test]
+    /// Two rules with FIRST sets of size 1 and 3: min=1, max=3, avg=2.0.
+    fn first_set_stats_min_max_avg() {
+        let g = grammar(vec![
+            p("a", lit("'x'")),
+            p("b", Choice(vec![lit("'x'"), lit("'y'"), lit("'z'")])),
+        ]);
+        let stats = first_set_stats(&g).unwrap();
+        assert_eq!(stats.min, 1);
+        assert_eq!(stats.max, 3);
+        assert_eq!(stats.avg, 2.0);
+    }
+
+    #[test]
+    /// Average is rounded to one decimal place (not truncated).
+    fn first_set_stats_avg_rounds_to_one_decimal() {
+        // Three rules with FIRST sets of size 1, 1, 2 → raw avg = 4/3 ≈ 1.333… → rounded 1.3
+        let g = grammar(vec![
+            p("a", lit("'x'")),
+            p("b", lit("'y'")),
+            p("c", Choice(vec![lit("'p'"), lit("'q'")])),
+        ]);
+        let stats = first_set_stats(&g).unwrap();
+        assert_eq!(stats.avg, 1.3);
     }
 }

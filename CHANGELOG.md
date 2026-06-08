@@ -13,12 +13,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The `%axiom` keyword is highlighted as `@keyword` in `highlights.scm`.
 
 #### `ts-bnf-tool`
+- `check --summary`: appends a compact grammar metrics block to the output after
+  diagnostics. Reports rule count (with leaf and unreachable breakdowns), unique
+  terminal count (literals and patterns separately), undefined-reference count,
+  left-recursive rule count (direct vs. mutual), and FIRST-set size statistics
+  (min / max / avg). Summary is printed to stdout; diagnostics remain on stderr.
+  Exit code is unaffected.
 - `rename` subcommand: safely renames a rule definition and all its references
   (rule bodies, `%axiom`, `%inline`, `%supertypes`, `%extras`, `%conflicts`) in one pass.
   Supports `--in-place` / `-i` for atomic in-place rewrite and `-o <file>` to write to a separate file.
   Exits non-zero if the source rule is not defined or the target name is already taken.
 - `highlights` subcommand: generates a skeleton `highlights.scm` from a BNF grammar using naming-convention heuristics. Rules whose bodies contain no terminals are omitted; unrecognised rules get a `; TODO: @???` placeholder. Supports `-o <file>` to write directly to a file and `--no-todos` to suppress placeholder entries.
-- `--json` flag on `check`: emits diagnostics as a JSON array to stdout instead of plain text to stderr.
+- `--json` flag on `check`: emits output as a JSON object `{"diagnostics":[…]}` to stdout instead of plain text to stderr. Combined with `--summary`, a `"summary":{…}` key is added to the same object.
 - `--json` flag on `firsts`: emits FIRST sets as a JSON object `{"rule": ["terminal", ...]}` to stdout instead of plain text.
 - `%axiom ruleName` directive: declares an explicit root (start) rule.
   - `check`: emits an error if the named rule is undefined, and an error if
