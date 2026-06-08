@@ -565,3 +565,159 @@ fn visit(
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dom::{ParseError, Severity};
+    use std::fs;
+
+    /// Writes `content` to `$TMPDIR/name` and returns the path.
+    fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(name);
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    /// Parses the BNF file at `path` (already on disk) through the full visitor,
+    /// returning the merged grammar and any diagnostics.
+    fn parse_path(path: &std::path::Path) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
+        let source = fs::read_to_string(path).unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_bnf::LANGUAGE.into())
+            .map_err(|_| ParseError::ParseFailed)?;
+        let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
+        if tree.root_node().has_error() {
+            return Err(ParseError::SyntaxError);
+        }
+        let ctx = SourceFile {
+            source: &source,
+            filename: path.to_str().unwrap_or(""),
+            path: path.canonicalize().ok(),
+        };
+        visit_grammar(&tree.root_node(), &ctx)
+    }
+
+    // ── basic include ─────────────────────────────────────────────────────────
+
+    #[test]
+    /// Productions from an included file are merged into the parent grammar.
+    fn include_basic_merges_productions() {
+        write_tmp("inc_basic_b.bnf", "rule_b -> 'y' ;");
+        let a = write_tmp(
+            "inc_basic_a.bnf",
+            "%include \"inc_basic_b.bnf\"\nrule_a -> 'x' ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("rule_a"));
+        assert!(grammar.productions.contains_key("rule_b"));
+    }
+
+    // ── nested include ────────────────────────────────────────────────────────
+
+    #[test]
+    /// A→B→C: productions from all three files are visible in the final grammar.
+    fn include_nested_merges_all_levels() {
+        write_tmp("inc_nest_c.bnf", "rule_c -> 'z' ;");
+        write_tmp(
+            "inc_nest_b.bnf",
+            "%include \"inc_nest_c.bnf\"\nrule_b -> 'y' ;",
+        );
+        let a = write_tmp(
+            "inc_nest_a.bnf",
+            "%include \"inc_nest_b.bnf\"\nrule_a -> 'x' ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("rule_a"));
+        assert!(grammar.productions.contains_key("rule_b"));
+        assert!(grammar.productions.contains_key("rule_c"));
+    }
+
+    // ── cycle detection ───────────────────────────────────────────────────────
+
+    #[test]
+    /// A circular include (A→B→A) is detected and returns IncludeCycle.
+    fn include_cycle_is_detected() {
+        write_tmp(
+            "inc_cycle_b.bnf",
+            "%include \"inc_cycle_a.bnf\"\nrule_b -> 'y' ;",
+        );
+        let a = write_tmp(
+            "inc_cycle_a.bnf",
+            "%include \"inc_cycle_b.bnf\"\nrule_a -> 'x' ;",
+        );
+        assert!(
+            matches!(parse_path(&a), Err(ParseError::IncludeCycle(_))),
+            "expected IncludeCycle error"
+        );
+    }
+
+    // ── missing file ──────────────────────────────────────────────────────────
+
+    #[test]
+    /// Including a file that does not exist returns IncludeNotFound.
+    fn include_missing_file_returns_not_found() {
+        let a = write_tmp(
+            "inc_missing_a.bnf",
+            "%include \"no_such_file_xyzzy.bnf\"\nroot -> 'x' ;",
+        );
+        assert!(
+            matches!(parse_path(&a), Err(ParseError::IncludeNotFound(_))),
+            "expected IncludeNotFound error"
+        );
+    }
+
+    // ── stdin guard ───────────────────────────────────────────────────────────
+
+    #[test]
+    /// parse_source (no backing file) returns IncludeFromStdin on %include.
+    fn include_from_stdin_returns_error() {
+        assert!(
+            matches!(
+                parse_source("%include \"foo.bnf\"\nroot -> 'x' ;"),
+                Err(ParseError::IncludeFromStdin)
+            ),
+            "expected IncludeFromStdin error"
+        );
+    }
+
+    // ── duplicate rule warning ────────────────────────────────────────────────
+
+    #[test]
+    /// A rule defined in both the root and an included file produces a warning.
+    fn include_duplicate_rule_emits_warning() {
+        write_tmp("inc_dup_b.bnf", "foo -> 'b' ;");
+        let a = write_tmp(
+            "inc_dup_a.bnf",
+            "%include \"inc_dup_b.bnf\"\nfoo -> 'a' ;\nroot -> foo ;",
+        );
+        let (grammar, diags) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("foo"));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Warning
+                    && d.message.contains("defined more than once")),
+            "expected duplicate-rule warning, got {diags:?}"
+        );
+    }
+
+    // ── duplicate %axiom error ────────────────────────────────────────────────
+
+    #[test]
+    /// Two %axiom declarations across included files produce an error diagnostic.
+    fn include_duplicate_axiom_emits_error() {
+        write_tmp("inc_axiom_b.bnf", "%axiom b\nb -> 'y' ;");
+        let a = write_tmp(
+            "inc_axiom_a.bnf",
+            "%axiom a\na -> 'x' ;\n%include \"inc_axiom_b.bnf\"",
+        );
+        let (_, diags) = parse_path(&a).unwrap();
+        assert!(
+            diags.iter().any(|d| d.severity == Severity::Error
+                && d.message.contains("%axiom declared more than once")),
+            "expected duplicate-%axiom error, got {diags:?}"
+        );
+    }
+}

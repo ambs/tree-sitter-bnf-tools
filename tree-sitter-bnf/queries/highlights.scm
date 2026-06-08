@@ -31,6 +31,7 @@
 ; Directives
 "%axiom" @keyword
 "%conflicts" @keyword
+"%include" @keyword
 "%inline" @keyword
 "%supertypes" @keyword
 "%extras" @keyword
