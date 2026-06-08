@@ -496,7 +496,7 @@ ts-bnf-tool check json.bnf
 echo $?   # 0 if clean, 1 if warnings only, 2 if any errors
 ```
 
-Pass `--json` to get diagnostics as a JSON array on stdout instead of plain
+Pass `--json` to get diagnostics as a JSON object on stdout instead of plain
 text on stderr. Exit codes are not affected:
 
 ```sh
@@ -504,7 +504,7 @@ ts-bnf-tool check --json json.bnf
 ```
 
 ```json
-[{"severity":"warning","message":"rule 'unused' is never referenced (line 3)"}]
+{"diagnostics":[{"severity":"warning","message":"rule 'unused' is never referenced (line 3)"}]}
 ```
 
 Detected issues include undefined rule references, unreferenced rules,
@@ -558,6 +558,66 @@ unused -> 'x' ;   # never referenced
 ```
 warning: rule 'unused' is never referenced (line 3)
 ```
+
+### Summarising grammar shape
+
+`check --summary` appends a compact metrics block to stdout after the run.
+Diagnostics still go to stderr, so the two streams can be captured independently
+in shell pipelines.
+
+```sh
+ts-bnf-tool check --summary json.bnf
+```
+
+```
+Rules            6  (leaf: 2, unreachable: 0)
+Terminals       12  (literals: 10, patterns: 2, unique values)
+Undefined refs   0
+Left-recursive   0  (direct: 0, mutual: 0)
+FIRST sets      min 1  max 7  avg 2
+```
+
+Each row measures a different aspect of the grammar:
+
+| Row | What it tells you |
+|-----|-------------------|
+| **Rules** | Total named productions. *leaf* = rules whose body contains no rule references (only terminals). *unreachable* = rules never reached from the root, which `check` also flags as warnings. |
+| **Terminals** | Unique terminal values across all rule bodies, split into string literals and regex patterns. See the note on uniqueness below. |
+| **Undefined refs** | Rule names used in bodies but never defined — `check` flags these as warnings too. |
+| **Left-recursive** | Rules involved in left-recursion, split into *direct* (`a → a …`) and *mutual* (`a → b …`, `b → a …`). `check` flags these as errors. |
+| **FIRST sets** | Size statistics (min / max / average) of the FIRST set of each rule — the set of terminals that can open a derivation. A large max or high average suggests the grammar may have ambiguous alternatives. |
+
+> **Terminal uniqueness** is measured by raw source text, not by what the lexer
+> matches. `'x'` and `"x"` are counted as two distinct literals even though they
+> match the same character. The count reflects how many distinct token patterns
+> the grammar author wrote, which is a useful proxy for lexer complexity.
+
+#### Using `--summary` with `--json`
+
+Combining `--json` and `--summary` adds a `"summary"` key to the JSON output
+alongside `"diagnostics"`, making both machine-readable in a single pass:
+
+```sh
+ts-bnf-tool check --json --summary json.bnf | jq .summary.rules
+```
+
+The full `"summary"` object shape:
+
+```json
+{
+  "rules": 6,
+  "leaf_rules": 2,
+  "unreachable_rules": 0,
+  "unique_literals": 8,
+  "unique_patterns": 6,
+  "undefined_refs": 0,
+  "left_recursive_direct": 0,
+  "left_recursive_mutual": 0,
+  "first_sets": { "min": 1, "max": 7, "avg": 3.3 }
+}
+```
+
+`first_sets` is `null` when the grammar has no productions.
 
 ### Inspecting FIRST sets
 

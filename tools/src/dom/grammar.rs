@@ -1,8 +1,12 @@
 use std::collections::HashSet;
 
-use super::analysis::left_recursive_rules;
+use super::analysis::{
+    count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats,
+    left_recursive_rules,
+};
 use super::diagnostic::Diagnostic;
 use super::directive::{ConflictGroup, DirectiveItem};
+use super::summary::GrammarSummary;
 use super::types::Grammar;
 
 impl Grammar {
@@ -135,6 +139,40 @@ impl Grammar {
                 Diagnostic::warning(format!("rule '{name}' is never referenced (line {line})"))
             })
             .collect()
+    }
+
+    /// Returns the number of non-terminal references in rule bodies that have no definition.
+    ///
+    /// Exposed for use by the summary builder; the full diagnostic list is produced by [`check`](Self::check).
+    pub(crate) fn count_undefined_refs(&self) -> usize {
+        self.undefined_refs_check(&self.known_rules()).len()
+    }
+
+    /// Returns the number of rules that are never referenced from the root.
+    ///
+    /// Exposed for use by the summary builder; the full diagnostic list is produced by [`check`](Self::check).
+    pub(crate) fn count_unreachable_rules(&self) -> usize {
+        self.unreachable_rules_check().len()
+    }
+
+    /// Builds a [`GrammarSummary`] by running all summary analyses over this grammar.
+    ///
+    /// This includes FIRST-set computation, which is not free; only call it
+    /// when the caller has explicitly requested a summary (e.g. `check --summary`).
+    pub fn summarise(&self) -> GrammarSummary {
+        let (unique_literals, unique_patterns) = count_unique_terminals(self);
+        let (left_recursive_direct, left_recursive_mutual) = count_left_recursive(self);
+        GrammarSummary {
+            rules: self.productions.len(),
+            leaf_rules: count_leaf_rules(self),
+            unreachable_rules: self.count_unreachable_rules(),
+            unique_literals,
+            unique_patterns,
+            undefined_refs: self.count_undefined_refs(),
+            left_recursive_direct,
+            left_recursive_mutual,
+            first_sets: first_set_stats(self),
+        }
     }
 
     /// Runs all cross-reference checks and returns any diagnostics.
@@ -440,6 +478,48 @@ mod tests {
         }));
     }
 
+    // ── count_undefined_refs ──────────────────────────────────────────────────
+
+    #[test]
+    /// Zero when all referenced rules are defined.
+    fn count_undefined_refs_zero_when_all_defined() {
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.rhs_nonterminals.insert("a".into());
+        assert_eq!(g.count_undefined_refs(), 0);
+    }
+
+    #[test]
+    /// Counts each distinct undefined reference once, regardless of how many rules use it.
+    fn count_undefined_refs_counts_distinct_names() {
+        let mut g = Grammar::new();
+        g.rhs_nonterminals.insert("ghost".into());
+        g.rhs_nonterminals.insert("phantom".into());
+        assert_eq!(g.count_undefined_refs(), 2);
+    }
+
+    // ── count_unreachable_rules ───────────────────────────────────────────────
+
+    #[test]
+    /// Zero when every rule is reachable from the root.
+    fn count_unreachable_rules_zero_when_all_reachable() {
+        let mut g = Grammar::from_rules([
+            p("root", GrammarNode::NonTerminal("helper".into())),
+            p("helper", TerminalLiteral("'x'".into())),
+        ]);
+        g.rhs_nonterminals.insert("helper".into());
+        assert_eq!(g.count_unreachable_rules(), 0);
+    }
+
+    #[test]
+    /// Counts rules that are never referenced and not the root.
+    fn count_unreachable_rules_counts_orphans() {
+        let g = Grammar::from_rules([
+            p("root", TerminalLiteral("'x'".into())),
+            p("orphan", TerminalLiteral("'y'".into())),
+        ]);
+        assert_eq!(g.count_unreachable_rules(), 1);
+    }
+
     #[test]
     fn check_no_warning_for_right_recursive_rule() {
         use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
@@ -457,5 +537,97 @@ mod tests {
         assert!(!diagnostics
             .iter()
             .any(|d| d.message.contains("left-recursive")));
+    }
+
+    // ── Grammar::summarise ────────────────────────────────────────────────────
+
+    #[test]
+    /// An empty grammar produces a zeroed summary with no FIRST sets.
+    fn summarise_empty_grammar() {
+        let s = Grammar::new().summarise();
+        assert_eq!(s.rules, 0);
+        assert_eq!(s.leaf_rules, 0);
+        assert_eq!(s.unreachable_rules, 0);
+        assert_eq!(s.unique_literals, 0);
+        assert_eq!(s.unique_patterns, 0);
+        assert_eq!(s.undefined_refs, 0);
+        assert_eq!(s.left_recursive_direct, 0);
+        assert_eq!(s.left_recursive_mutual, 0);
+        assert!(s.first_sets.is_none());
+    }
+
+    #[test]
+    /// Rule count, leaf count, and terminal counts are correct for a simple grammar.
+    fn summarise_counts_rules_and_terminals() {
+        let g = Grammar::from_rules([
+            p("root", GrammarNode::NonTerminal("tok".into())),
+            p("tok", TerminalLiteral("'x'".into())),
+        ]);
+        let s = g.summarise();
+        assert_eq!(s.rules, 2);
+        assert_eq!(s.leaf_rules, 1); // "tok" has no non-terminals
+        assert_eq!(s.unique_literals, 1);
+        assert_eq!(s.unique_patterns, 0);
+    }
+
+    #[test]
+    /// Unreachable rules are counted correctly.
+    fn summarise_unreachable_rules() {
+        let g = Grammar::from_rules([
+            p("root", TerminalLiteral("'x'".into())),
+            p("orphan", TerminalLiteral("'y'".into())),
+        ]);
+        let s = g.summarise();
+        assert_eq!(s.unreachable_rules, 1);
+    }
+
+    #[test]
+    /// Undefined rule references are counted correctly.
+    fn summarise_undefined_refs() {
+        let mut g = Grammar::new();
+        g.rhs_nonterminals.insert("ghost".into());
+        let s = g.summarise();
+        assert_eq!(s.undefined_refs, 1);
+    }
+
+    #[test]
+    /// Direct left-recursion is counted in the direct bucket, not mutual.
+    fn summarise_left_recursive_direct() {
+        use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
+        let g = Grammar::from_rules([p(
+            "expr",
+            Choice(vec![
+                Sequence(vec![
+                    NonTerminal("expr".into()),
+                    TerminalLiteral("'+'".into()),
+                    TerminalLiteral("'n'".into()),
+                ]),
+                TerminalLiteral("'n'".into()),
+            ]),
+        )]);
+        let s = g.summarise();
+        assert_eq!(s.left_recursive_direct, 1);
+        assert_eq!(s.left_recursive_mutual, 0);
+    }
+
+    #[test]
+    /// FIRST-set stats are present and non-trivial for a non-empty grammar.
+    fn summarise_first_sets_present_for_nonempty_grammar() {
+        let g = Grammar::from_rules([
+            p("a", TerminalLiteral("'x'".into())),
+            p(
+                "b",
+                GrammarNode::Choice(vec![
+                    TerminalLiteral("'y'".into()),
+                    TerminalLiteral("'z'".into()),
+                ]),
+            ),
+        ]);
+        let s = g.summarise();
+        let fs = s
+            .first_sets
+            .expect("first_sets must be Some for non-empty grammar");
+        assert_eq!(fs.min, 1);
+        assert_eq!(fs.max, 2);
     }
 }

@@ -339,19 +339,60 @@ Checks performed:
 Options:
 
 ```
-  --json   Emit diagnostics as JSON instead of plain text
+  --json      Emit output as a JSON object instead of plain text
+  --summary   Append a grammar metrics block after diagnostics
 ```
 
-With `--json`, diagnostics are written to stdout as a JSON array. Each element
-has a `severity` field (`"warning"` or `"error"`) and a `message` field. Exit
-codes are unaffected.
+#### `--json`
+
+With `--json`, output is written to stdout as a JSON object with a
+`"diagnostics"` key. Each diagnostic has a `"severity"` field (`"warning"` or
+`"error"`) and a `"message"` field. Exit codes are unaffected.
 
 ```sh
 ts-bnf-tool check --json grammar.bnf
 ```
 
 ```json
-[{"severity":"warning","message":"rule 'foo' is never referenced (line 3)"}]
+{"diagnostics":[{"severity":"warning","message":"rule 'foo' is never referenced (line 3)"}]}
+```
+
+#### `--summary`
+
+With `--summary`, a compact metrics block is appended to stdout after the run.
+Diagnostics still go to stderr; the summary goes to stdout so they can be
+captured separately in shell pipelines.
+
+```sh
+ts-bnf-tool check --summary grammar.bnf
+```
+
+```
+Rules           35  (leaf: 10, unreachable: 0)
+Terminals       33  (literals: 26, patterns: 7, unique values)
+Undefined refs   0
+Left-recursive   0  (direct: 0, mutual: 0)
+FIRST sets      min 1  max 8  avg 2.7
+```
+
+The flags can be combined: `--json --summary` adds a `"summary"` key to the
+JSON object alongside `"diagnostics"`.
+
+```sh
+ts-bnf-tool check --json --summary grammar.bnf
+```
+
+```json
+{
+  "diagnostics": [],
+  "summary": {
+    "rules": 35, "leaf_rules": 10, "unreachable_rules": 0,
+    "unique_literals": 26, "unique_patterns": 7,
+    "undefined_refs": 0,
+    "left_recursive_direct": 0, "left_recursive_mutual": 0,
+    "first_sets": {"min": 1, "max": 8, "avg": 2.7}
+  }
+}
 ```
 
 Exit codes: `0` clean, `1` warnings only, `2` one or more errors.

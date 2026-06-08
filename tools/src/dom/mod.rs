@@ -20,6 +20,8 @@ mod production;
 pub mod rename;
 /// Renders a [`Grammar`] as a complete `grammar.js` file.
 mod scaffold;
+/// Grammar shape metrics produced by `check --summary`.
+pub mod summary;
 /// Shared helpers for constructing test fixtures.
 #[doc(hidden)]
 pub mod test_utils;
@@ -35,4 +37,5 @@ pub use nodes::{GrammarNode, PrecKind};
 pub use production::Production;
 pub use rename::rename_grammar;
 pub use scaffold::Scaffold;
+pub use summary::{FirstSetStats, GrammarSummary};
 pub use types::Grammar;

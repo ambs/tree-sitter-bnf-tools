@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 
 use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 use ts_bnf_tool::dom::rename_grammar;
+use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity};
 use ts_bnf_tool::visitors::{visit_grammar, SourceFile};
 
@@ -71,6 +72,9 @@ enum Subcommands {
         /// Emit diagnostics as JSON instead of plain text
         #[arg(long)]
         json: bool,
+        /// Append a grammar metrics summary after diagnostics
+        #[arg(long)]
+        summary: bool,
     },
     /// Generate a skeleton highlights.scm from a BNF grammar
     Highlights {
@@ -439,13 +443,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             run_rename(&filename, &from, &to, in_place, output.as_deref())?;
         }
 
-        Subcommands::Check { filename, json } => {
-            let (_, diagnostics) = parse_file(&filename, true)?;
+        Subcommands::Check {
+            filename,
+            json,
+            summary,
+        } => {
+            let (grammar, diagnostics) = parse_file(&filename, true)?;
+            // bool::then is lazy — the closure (and first_sets inside it) only
+            // runs when --summary was passed. Without it, summarise() would
+            // always execute regardless of the flag.
+            let grammar_summary = summary.then(|| grammar.summarise());
             if json {
-                println!("{}", serde_json::to_string(&diagnostics)?);
+                // Always emit an object so the shape is stable regardless of
+                // whether --summary is also passed. The "summary" key is
+                // omitted when not requested.
+                #[derive(serde::Serialize)]
+                struct CheckJsonOutput<'a> {
+                    diagnostics: &'a [Diagnostic],
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    summary: Option<GrammarSummary>,
+                }
+                let out = CheckJsonOutput {
+                    diagnostics: &diagnostics,
+                    summary: grammar_summary,
+                };
+                println!("{}", serde_json::to_string(&out)?);
             } else {
                 for d in &diagnostics {
                     eprintln!("{d}");
+                }
+                if let Some(s) = grammar_summary {
+                    println!("{s}");
                 }
             }
             let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);

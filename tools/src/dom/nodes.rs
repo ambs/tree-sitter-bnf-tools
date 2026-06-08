@@ -43,6 +43,27 @@ pub enum GrammarNode {
     Prec(PrecKind, Option<u32>, Box<GrammarNode>),
 }
 
+impl GrammarNode {
+    /// Returns `true` if this node or any descendant is a [`GrammarNode::NonTerminal`].
+    pub fn contains_nonterminal(&self) -> bool {
+        match self {
+            GrammarNode::NonTerminal(_) => true,
+            GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => false,
+            GrammarNode::Sequence(children) | GrammarNode::Choice(children) => {
+                children.iter().any(|c| c.contains_nonterminal())
+            }
+            GrammarNode::Optional(inner)
+            | GrammarNode::ZeroOrMore(inner)
+            | GrammarNode::OneOrMore(inner)
+            | GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner) => inner.contains_nonterminal(),
+            GrammarNode::Field(_, inner) => inner.contains_nonterminal(),
+            GrammarNode::Alias(body, _) => body.contains_nonterminal(),
+            GrammarNode::Prec(_, _, inner) => inner.contains_nonterminal(),
+        }
+    }
+}
+
 impl Display for GrammarNode {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -260,5 +281,73 @@ mod tests {
             Choice(vec![NonTerminal("a".into()), NonTerminal("b".into())]).to_string(),
             "choice($.a, $.b)"
         );
+    }
+
+    // ── contains_nonterminal ───────────────────────────────────────────────────
+
+    #[test]
+    /// A bare NonTerminal node must report true.
+    fn nonterminal_contains_nonterminal() {
+        assert!(NonTerminal("a".into()).contains_nonterminal());
+    }
+
+    #[test]
+    /// A literal terminal has no rule references.
+    fn terminal_literal_does_not_contain_nonterminal() {
+        assert!(!TerminalLiteral("'x'".into()).contains_nonterminal());
+    }
+
+    #[test]
+    /// A regex pattern terminal has no rule references.
+    fn terminal_pattern_does_not_contain_nonterminal() {
+        assert!(!TerminalPattern("/a+/".into()).contains_nonterminal());
+    }
+
+    #[test]
+    /// A sequence is non-leaf if any child is a NonTerminal.
+    fn sequence_with_nonterminal_contains_nonterminal() {
+        let node = Sequence(vec![TerminalLiteral("'x'".into()), NonTerminal("a".into())]);
+        assert!(node.contains_nonterminal());
+    }
+
+    #[test]
+    /// A sequence of only terminals is leaf.
+    fn sequence_of_terminals_does_not_contain_nonterminal() {
+        let node = Sequence(vec![
+            TerminalLiteral("'x'".into()),
+            TerminalPattern("/y/".into()),
+        ]);
+        assert!(!node.contains_nonterminal());
+    }
+
+    #[test]
+    /// optional(…) propagates the check into its inner node.
+    fn optional_nonterminal_contains_nonterminal() {
+        assert!(Optional(Box::new(NonTerminal("a".into()))).contains_nonterminal());
+    }
+
+    #[test]
+    /// token(…) wrapping a terminal is still leaf.
+    fn token_wrapping_terminal_does_not_contain_nonterminal() {
+        assert!(!Token(Box::new(TerminalPattern("/x/".into()))).contains_nonterminal());
+    }
+
+    #[test]
+    /// prec(…) propagates the check into its inner node.
+    fn prec_wrapping_nonterminal_contains_nonterminal() {
+        assert!(
+            Prec(PrecKind::Left, Some(1), Box::new(NonTerminal("a".into()))).contains_nonterminal()
+        );
+    }
+
+    #[test]
+    /// In alias(body, name) the name node is a display label, not a rule
+    /// reference — only the body is checked.
+    fn alias_body_checked_not_name() {
+        let node = Alias(
+            Box::new(TerminalLiteral("'x'".into())),
+            Box::new(NonTerminal("label".into())),
+        );
+        assert!(!node.contains_nonterminal());
     }
 }

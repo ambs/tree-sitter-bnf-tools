@@ -37,7 +37,8 @@ fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
 // ── check --json ──────────────────────────────────────────────────────────────
 
 #[test]
-fn check_json_clean_exits_zero_and_emits_empty_array() {
+/// --json emits an object with a "diagnostics" key (never a bare array).
+fn check_json_clean_exits_zero_and_emits_empty_diagnostics() {
     let path = write_tmp("ts_bnf_check_clean.bnf", CLEAN_BNF);
     let out = tool()
         .args(["check", "--json"])
@@ -46,10 +47,12 @@ fn check_json_clean_exits_zero_and_emits_empty_array() {
         .unwrap();
     assert!(out.status.success(), "expected exit 0");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(stdout.trim(), "[]");
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["diagnostics"], serde_json::json!([]));
 }
 
 #[test]
+/// --json warning output is nested under the "diagnostics" key.
 fn check_json_warning_exits_one_and_contains_severity() {
     let path = write_tmp("ts_bnf_check_warn.bnf", WARN_BNF);
     let out = tool()
@@ -60,12 +63,13 @@ fn check_json_warning_exits_one_and_contains_severity() {
     assert_eq!(out.status.code(), Some(1), "expected exit 1 for warnings");
     let stdout = String::from_utf8(out.stdout).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    let arr = parsed.as_array().unwrap();
+    let arr = parsed["diagnostics"].as_array().unwrap();
     assert!(!arr.is_empty());
     assert!(arr.iter().any(|d| d["severity"] == "warning"));
 }
 
 #[test]
+/// --json error output is nested under the "diagnostics" key.
 fn check_json_error_exits_two_and_contains_severity() {
     let path = write_tmp("ts_bnf_check_err.bnf", ERROR_BNF);
     let out = tool()
@@ -76,7 +80,7 @@ fn check_json_error_exits_two_and_contains_severity() {
     assert_eq!(out.status.code(), Some(2), "expected exit 2 for errors");
     let stdout = String::from_utf8(out.stdout).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    let arr = parsed.as_array().unwrap();
+    let arr = parsed["diagnostics"].as_array().unwrap();
     assert!(arr.iter().any(|d| d["severity"] == "error"));
 }
 
@@ -414,4 +418,127 @@ fn highlights_output_file_flag() {
     assert!(out_path.exists(), "-o must create the output file");
     let content = std::fs::read_to_string(&out_path).unwrap();
     assert!(content.contains("(string) @string"));
+}
+
+// ── check --summary ───────────────────────────────────────────────────────────
+
+#[test]
+/// Plain-text summary appears on stdout, not stderr, so it is separable from
+/// diagnostic output in shell pipelines.
+fn check_summary_plain_goes_to_stdout() {
+    let path = write_tmp("ts_bnf_summary_plain.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["check", "--summary"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(!stdout.is_empty(), "summary must appear on stdout");
+    assert!(out.stderr.is_empty(), "no diagnostics expected on stderr");
+}
+
+#[test]
+/// All five expected row labels are present in the plain-text summary.
+fn check_summary_plain_contains_all_rows() {
+    let path = write_tmp("ts_bnf_summary_rows.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["check", "--summary"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    for label in &[
+        "Rules",
+        "Terminals",
+        "Undefined refs",
+        "Left-recursive",
+        "FIRST sets",
+    ] {
+        assert!(stdout.contains(label), "missing row: {label}");
+    }
+}
+
+#[test]
+/// With warnings present: diagnostics go to stderr, summary still goes to
+/// stdout, and the exit code is 1 (warnings) — unaffected by --summary.
+fn check_summary_with_warnings_exit_one_and_separates_streams() {
+    let path = write_tmp("ts_bnf_summary_warn.bnf", WARN_BNF);
+    let out = tool()
+        .args(["check", "--summary"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "expected exit 1 for warnings");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stdout.contains("Rules"), "summary must be on stdout");
+    assert!(stderr.contains("warning"), "diagnostics must be on stderr");
+}
+
+#[test]
+/// With errors present: exit code is 2 — --summary does not change exit
+/// code semantics.
+fn check_summary_with_errors_exit_two() {
+    let path = write_tmp("ts_bnf_summary_err.bnf", ERROR_BNF);
+    let out = tool()
+        .args(["check", "--summary"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "expected exit 2 for errors");
+}
+
+#[test]
+/// --json --summary emits a JSON object with both "diagnostics" and "summary"
+/// keys, and the summary contains all expected fields.
+fn check_summary_json_contains_summary_key() {
+    let path = write_tmp("ts_bnf_summary_json.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["check", "--json", "--summary"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["diagnostics"], serde_json::json!([]));
+    let summary = &parsed["summary"];
+    assert!(summary.is_object(), "summary must be a JSON object");
+    for field in &[
+        "rules",
+        "leaf_rules",
+        "unreachable_rules",
+        "unique_literals",
+        "unique_patterns",
+        "undefined_refs",
+        "left_recursive_direct",
+        "left_recursive_mutual",
+    ] {
+        assert!(
+            summary[field].is_number(),
+            "missing or non-numeric field: {field}"
+        );
+    }
+    assert!(
+        summary["first_sets"].is_object(),
+        "first_sets must be present for non-empty grammar"
+    );
+}
+
+#[test]
+/// --json without --summary must not include a "summary" key.
+fn check_json_without_summary_has_no_summary_key() {
+    let path = write_tmp("ts_bnf_summary_json_absent.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["check", "--json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert!(
+        parsed["summary"].is_null(),
+        "summary key must be absent without --summary"
+    );
 }
