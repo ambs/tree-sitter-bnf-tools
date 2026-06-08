@@ -11,8 +11,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### `tree-sitter-bnf`
 - `axiomDirective` grammar rule: `%axiom ruleName` is now valid syntax.
   The `%axiom` keyword is highlighted as `@keyword` in `highlights.scm`.
+- `includeDirective` grammar rule: `%include "path.bnf"` is now valid syntax.
+  The `%include` keyword is highlighted as `@keyword` in `highlights.scm`.
 
 #### `ts-bnf-tool`
+- `%include "path.bnf"` directive: splits a large grammar across multiple files.
+  Paths are resolved relative to the including file. Included files are merged
+  in order, as if their contents were inlined at the `%include` site.
+  Recursive includes (A→B→C) are supported. Circular includes (A→B→A) are
+  detected and reported as an error. Including a file from stdin is an error.
+  Duplicate rule names across files produce a warning (last definition wins);
+  duplicate `%axiom` declarations are an error (first wins).
+  All directives (`%extras`, `%inline`, `%supertypes`, `%conflicts`) from
+  included files are merged additively. The `check`, `firsts`, `convert`, and
+  `format` subcommands all operate on the fully-merged grammar.
 - `check --summary`: appends a compact grammar metrics block to the output after
   diagnostics. Reports rule count (with leaf and unreachable breakdowns), unique
   terminal count (literals and patterns separately), undefined-reference count,

@@ -720,4 +720,71 @@ mod tests {
             "expected duplicate-%axiom error, got {diags:?}"
         );
     }
+
+    // ── merge directives ──────────────────────────────────────────────────────
+
+    #[test]
+    /// %inline from an included file appears in the merged grammar.
+    fn include_merges_inline_directive() {
+        write_tmp(
+            "inc_inline_b.bnf",
+            "%inline _helper\n_helper -> 'y' ;\nroot -> _helper ;",
+        );
+        let a = write_tmp(
+            "inc_inline_a.bnf",
+            "%include \"inc_inline_b.bnf\"\na -> 'x' ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.inline.iter().any(|d| d.name == "_helper"),
+            "expected %inline from included file in merged grammar"
+        );
+    }
+
+    #[test]
+    /// %extras from an included file appears in the merged grammar.
+    fn include_merges_extras_directive() {
+        write_tmp("inc_extras_b.bnf", "%extras /\\s/\nb -> 'y' ;");
+        let a = write_tmp(
+            "inc_extras_a.bnf",
+            "%include \"inc_extras_b.bnf\"\nroot -> b ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.extras.iter().any(|d| d.name == "/\\s/"),
+            "expected %extras from included file in merged grammar"
+        );
+    }
+
+    #[test]
+    /// %supertypes from an included file appears in the merged grammar.
+    fn include_merges_supertypes_directive() {
+        write_tmp("inc_super_b.bnf", "%supertypes expr\nexpr -> 'y' ;");
+        let a = write_tmp(
+            "inc_super_a.bnf",
+            "%include \"inc_super_b.bnf\"\nroot -> expr ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.supertypes.iter().any(|d| d.name == "expr"),
+            "expected %supertypes from included file in merged grammar"
+        );
+    }
+
+    #[test]
+    /// %conflicts from an included file appears in the merged grammar.
+    fn include_merges_conflicts_directive() {
+        write_tmp(
+            "inc_conf_b.bnf",
+            "%conflicts [a, b]\na -> 'x' ;\nb -> 'y' ;",
+        );
+        let a = write_tmp("inc_conf_a.bnf", "%include \"inc_conf_b.bnf\"\nroot -> a ;");
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.conflicts.iter().any(
+                |cg| cg.rules.contains(&"a".to_string()) && cg.rules.contains(&"b".to_string())
+            ),
+            "expected %conflicts from included file in merged grammar"
+        );
+    }
 }
