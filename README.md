@@ -50,6 +50,7 @@ factor  -> /[0-9]+/ | '(' expr ')' ;
 | Inline directive       | `%inline r1, r2, ...`       | `%inline _helper, _wrapper` |
 | Supertypes directive   | `%supertypes r1, r2, ...`   | `%supertypes expression, statement` |
 | Extras directive       | `%extras item, ...`         | `%extras /\s/, comment` |
+| Include directive      | `%include "path.bnf"`       | `%include "expressions.bnf"` |
 
 See the [tutorial](docs/tutorial.md) for worked examples and an explanation of
 each construct. The key points are summarised below.
@@ -75,6 +76,14 @@ sub-rule in isolation without rearranging the file. The named rule is emitted
 first in `grammar.js`'s `rules:` block so tree-sitter treats it as the start
 symbol. Declaring `%axiom` more than once, or naming an undefined rule, is an
 error.
+
+`%include "path.bnf"` merges another BNF file into the current grammar at the
+point of the directive. Paths are relative to the including file. Includes may
+be nested (A includes B includes C); circular includes (A includes B includes A)
+are detected and reported as an error. All directives from included files are
+merged additively. Duplicate rule names produce a warning (last definition wins);
+duplicate `%axiom` declarations across files are an error. `%include` cannot be
+used when reading from stdin.
 
 All five directives (`%axiom`, `%conflicts`, `%inline`, `%supertypes`, `%extras`)
 map directly to the same-named fields in the generated `grammar.js` (except
@@ -210,6 +219,18 @@ Options:
   --strip-comments       Strip # comments from output (default)
   --no-strip-comments    Preserve # comments in output
 ```
+
+**Merging `%include` files into a single file**
+
+`format` inlines all `%include` directives and emits the fully-merged grammar.
+Use this to collapse a multi-file grammar into one canonical `.bnf` file:
+
+```sh
+ts-bnf-tool format main.bnf > merged.bnf
+```
+
+The `%include` directives do not appear in the output — only the combined rules
+and directives from all files are emitted.
 
 ### rename
 

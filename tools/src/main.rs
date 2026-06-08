@@ -273,9 +273,15 @@ fn parse_file(
     if root_node.has_error() {
         return Err(ParseError::SyntaxError.into());
     }
+    let path = if filename == "-" {
+        None
+    } else {
+        std::path::Path::new(filename).canonicalize().ok()
+    };
     let ctx = SourceFile {
         source: &source_code,
         filename,
+        path,
     };
     let (grammar, diagnostics) = visit_grammar(&root_node, &ctx)?;
     if run_checks {

@@ -1,14 +1,19 @@
-use crate::dom::directive::{ConflictGroup, DirectiveItem};
+use crate::dom::directive::{loc, ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use tree_sitter::Node;
 
-/// Groups a source file's text and its filename for use throughout the visitor.
+/// Groups a source file's text, filename, and resolved filesystem path for use throughout the visitor.
 pub struct SourceFile<'a> {
     /// The original source text.
     pub source: &'a str,
     /// The filename associated with this source (empty string if unknown).
     pub filename: &'a str,
+    /// Canonical absolute path to the file, used to resolve `%include` paths.
+    /// `None` when parsing from stdin or an in-memory string (no file backing).
+    pub path: Option<PathBuf>,
 }
 
 /// Parses a BNF source string and returns the [`Grammar`] DOM and any diagnostics.
@@ -21,6 +26,7 @@ pub fn parse_source(src: &str) -> Result<(Grammar, Vec<Diagnostic>), ParseError>
     let ctx = SourceFile {
         source: src,
         filename: "",
+        path: None,
     };
     visit_grammar(&tree.root_node(), &ctx)
 }
@@ -40,9 +46,24 @@ fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
 /// Converts the root `grammar` tree-sitter node into a [`Grammar`] DOM.
 ///
 /// Returns the grammar and any diagnostics from cross-reference checks.
+/// Seeds the cycle-detection set with the current file's path before delegating
+/// to [`visit_grammar_inner`].
 pub fn visit_grammar(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
+    let mut seen = HashSet::new();
+    if let Some(path) = &ctx.path {
+        seen.insert(path.clone());
+    }
+    visit_grammar_inner(node, ctx, &mut seen)
+}
+
+/// Inner implementation of [`visit_grammar`], carrying the cycle-detection set.
+fn visit_grammar_inner(
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+    seen: &mut HashSet<PathBuf>,
 ) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar::new();
@@ -54,8 +75,9 @@ pub fn visit_grammar(
                 let prod = visit_rule(&mut grammar, &child, ctx)?;
                 if grammar.productions.contains_key(&prod.name) {
                     grammar.parse_diagnostics.push(Diagnostic::warning(format!(
-                        "rule '{}' is defined more than once (line {})",
-                        prod.name, prod.line
+                        "rule '{}' is defined more than once ({})",
+                        prod.name,
+                        loc(&prod.filename, prod.line)
                     )));
                 }
                 grammar.productions.insert(prod.name.clone(), prod);
@@ -80,11 +102,14 @@ pub fn visit_grammar(
                 let item = visit_axiom_directive(&child, ctx);
                 if grammar.axiom.is_some() {
                     grammar.parse_diagnostics.push(Diagnostic::error(format!(
-                        "%axiom declared more than once (line {})",
-                        item.line
+                        "%axiom declared more than once ({})",
+                        loc(&item.filename, item.line)
                     )));
                 }
                 grammar.axiom = Some(item);
+            }
+            "includeDirective" => {
+                visit_include_directive(&mut grammar, &child, ctx, seen)?;
             }
             _ => {}
         }
@@ -93,10 +118,79 @@ pub fn visit_grammar(
     Ok((grammar, warnings))
 }
 
+/// Resolves a `%include` directive, parses the referenced file, and merges it into `grammar`.
+///
+/// `seen` is the set of canonical paths on the current include stack; it is used to detect
+/// cycles (e.g. A includes B which includes A again). After the recursive call returns,
+/// the path is removed from `seen` so that diamond includes (two files independently
+/// including the same third file) are allowed — they produce duplicate-rule warnings
+/// rather than a cycle error.
+///
+/// Check diagnostics for each included file in isolation are discarded — cross-reference
+/// checks run on the fully-merged grammar once the top-level `visit_grammar` call returns.
+fn visit_include_directive(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<(), ParseError> {
+    let raw = node
+        .named_child(0)
+        .expect("includeDirective has a literal child")
+        .utf8_text(ctx.source.as_bytes())
+        .expect("valid UTF-8");
+    let path_str = &raw[1..raw.len() - 1]; // strip surrounding ' or "
+
+    let base_dir = ctx
+        .path
+        .as_deref()
+        .and_then(|p| p.parent())
+        .ok_or(ParseError::IncludeFromStdin)?;
+    let resolved = base_dir.join(path_str);
+
+    let source = std::fs::read_to_string(&resolved)
+        .map_err(|_| ParseError::IncludeNotFound(resolved.display().to_string()))?;
+
+    // Cycle detection: canonicalize after confirming the file exists (read above).
+    let canonical = resolved.canonicalize().ok();
+    if let Some(ref canon) = canonical {
+        if seen.contains(canon) {
+            return Err(ParseError::IncludeCycle(resolved.display().to_string()));
+        }
+        seen.insert(canon.clone());
+    }
+
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .map_err(|_| ParseError::ParseFailed)?;
+    let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
+    if tree.root_node().has_error() {
+        return Err(ParseError::SyntaxError);
+    }
+
+    let filename_owned = resolved.to_string_lossy().into_owned();
+    let included_ctx = SourceFile {
+        source: &source,
+        filename: &filename_owned,
+        path: canonical.clone(),
+    };
+    let (included, _) = visit_grammar_inner(&tree.root_node(), &included_ctx, seen)?;
+
+    // Backtrack: remove from the stack so diamond includes are not misreported as cycles.
+    if let Some(ref canon) = canonical {
+        seen.remove(canon);
+    }
+
+    grammar.merge_from(included);
+    Ok(())
+}
+
 /// Collects every named child of `node` into a [`Vec<DirectiveItem>`], recording the
 /// directive's 1-based source line for each entry.
 fn collect_directive_items(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<DirectiveItem> {
     let line = node.start_position().row + 1;
+    let filename = ctx.filename.to_string();
     (0..node.named_child_count() as u32)
         .map(|i| {
             let name = node
@@ -105,7 +199,11 @@ fn collect_directive_items(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<Directi
                 .utf8_text(ctx.source.as_bytes())
                 .expect("valid UTF-8")
                 .to_string();
-            DirectiveItem { name, line }
+            DirectiveItem {
+                name,
+                line,
+                filename: filename.clone(),
+            }
         })
         .collect()
 }
@@ -134,7 +232,11 @@ fn visit_axiom_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> DirectiveItem
         .utf8_text(ctx.source.as_bytes())
         .expect("valid UTF-8")
         .to_string();
-    DirectiveItem { name, line }
+    DirectiveItem {
+        name,
+        line,
+        filename: ctx.filename.to_string(),
+    }
 }
 
 /// Converts a `conflictsDirective` node into a list of [`ConflictGroup`]s.
@@ -157,7 +259,11 @@ fn visit_conflicts_directive(
                         .to_string()
                 })
                 .collect();
-            groups.push(ConflictGroup { rules, line });
+            groups.push(ConflictGroup {
+                rules,
+                line,
+                filename: ctx.filename.to_string(),
+            });
         }
     }
     Ok(groups)
@@ -457,5 +563,261 @@ fn visit(
         "ruleBodyInner" => visit_rule_body(grammar, node, ctx),
         "symbolSeqInner" => visit_symbol_seq(grammar, node, ctx),
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dom::{ParseError, Severity};
+    use std::fs;
+
+    /// Writes `content` to `$TMPDIR/name` and returns the path.
+    fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(name);
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    /// Parses the BNF file at `path` (already on disk) through the full visitor,
+    /// returning the merged grammar and any diagnostics.
+    fn parse_path(path: &std::path::Path) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
+        let source = fs::read_to_string(path).unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_bnf::LANGUAGE.into())
+            .map_err(|_| ParseError::ParseFailed)?;
+        let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
+        if tree.root_node().has_error() {
+            return Err(ParseError::SyntaxError);
+        }
+        let ctx = SourceFile {
+            source: &source,
+            filename: path.to_str().unwrap_or(""),
+            path: path.canonicalize().ok(),
+        };
+        visit_grammar(&tree.root_node(), &ctx)
+    }
+
+    // ── basic include ─────────────────────────────────────────────────────────
+
+    #[test]
+    /// Productions from an included file are merged into the parent grammar.
+    fn include_basic_merges_productions() {
+        write_tmp("inc_basic_b.bnf", "rule_b -> 'y' ;");
+        let a = write_tmp(
+            "inc_basic_a.bnf",
+            "%include \"inc_basic_b.bnf\"\nrule_a -> 'x' ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("rule_a"));
+        assert!(grammar.productions.contains_key("rule_b"));
+    }
+
+    // ── nested include ────────────────────────────────────────────────────────
+
+    #[test]
+    /// A→B→C: productions from all three files are visible in the final grammar.
+    fn include_nested_merges_all_levels() {
+        write_tmp("inc_nest_c.bnf", "rule_c -> 'z' ;");
+        write_tmp(
+            "inc_nest_b.bnf",
+            "%include \"inc_nest_c.bnf\"\nrule_b -> 'y' ;",
+        );
+        let a = write_tmp(
+            "inc_nest_a.bnf",
+            "%include \"inc_nest_b.bnf\"\nrule_a -> 'x' ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("rule_a"));
+        assert!(grammar.productions.contains_key("rule_b"));
+        assert!(grammar.productions.contains_key("rule_c"));
+    }
+
+    // ── cycle detection ───────────────────────────────────────────────────────
+
+    #[test]
+    /// A circular include (A→B→A) is detected and returns IncludeCycle.
+    fn include_cycle_is_detected() {
+        write_tmp(
+            "inc_cycle_b.bnf",
+            "%include \"inc_cycle_a.bnf\"\nrule_b -> 'y' ;",
+        );
+        let a = write_tmp(
+            "inc_cycle_a.bnf",
+            "%include \"inc_cycle_b.bnf\"\nrule_a -> 'x' ;",
+        );
+        assert!(
+            matches!(parse_path(&a), Err(ParseError::IncludeCycle(_))),
+            "expected IncludeCycle error"
+        );
+    }
+
+    // ── missing file ──────────────────────────────────────────────────────────
+
+    #[test]
+    /// Including a file that does not exist returns IncludeNotFound.
+    fn include_missing_file_returns_not_found() {
+        let a = write_tmp(
+            "inc_missing_a.bnf",
+            "%include \"no_such_file_xyzzy.bnf\"\nroot -> 'x' ;",
+        );
+        assert!(
+            matches!(parse_path(&a), Err(ParseError::IncludeNotFound(_))),
+            "expected IncludeNotFound error"
+        );
+    }
+
+    // ── stdin guard ───────────────────────────────────────────────────────────
+
+    #[test]
+    /// parse_source (no backing file) returns IncludeFromStdin on %include.
+    fn include_from_stdin_returns_error() {
+        assert!(
+            matches!(
+                parse_source("%include \"foo.bnf\"\nroot -> 'x' ;"),
+                Err(ParseError::IncludeFromStdin)
+            ),
+            "expected IncludeFromStdin error"
+        );
+    }
+
+    // ── duplicate rule warning ────────────────────────────────────────────────
+
+    #[test]
+    /// A rule defined in both the root and an included file produces a warning.
+    fn include_duplicate_rule_emits_warning() {
+        write_tmp("inc_dup_b.bnf", "foo -> 'b' ;");
+        let a = write_tmp(
+            "inc_dup_a.bnf",
+            "%include \"inc_dup_b.bnf\"\nfoo -> 'a' ;\nroot -> foo ;",
+        );
+        let (grammar, diags) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("foo"));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Warning
+                    && d.message.contains("defined more than once")),
+            "expected duplicate-rule warning, got {diags:?}"
+        );
+    }
+
+    // ── duplicate %axiom error ────────────────────────────────────────────────
+
+    #[test]
+    /// Two %axiom declarations across included files produce an error diagnostic.
+    fn include_duplicate_axiom_emits_error() {
+        write_tmp("inc_axiom_b.bnf", "%axiom b\nb -> 'y' ;");
+        let a = write_tmp(
+            "inc_axiom_a.bnf",
+            "%axiom a\na -> 'x' ;\n%include \"inc_axiom_b.bnf\"",
+        );
+        let (_, diags) = parse_path(&a).unwrap();
+        assert!(
+            diags.iter().any(|d| d.severity == Severity::Error
+                && d.message.contains("%axiom declared more than once")),
+            "expected duplicate-%axiom error, got {diags:?}"
+        );
+    }
+
+    // ── axiom from included file ──────────────────────────────────────────────
+
+    #[test]
+    /// When the parent has no %axiom but the included file does, the included
+    /// axiom is adopted (the else-branch of merge_from's axiom handling).
+    fn include_adopts_axiom_from_included_file() {
+        write_tmp("inc_ax_b.bnf", "%axiom b\nb -> 'y' ;");
+        let a = write_tmp("inc_ax_a.bnf", "%include \"inc_ax_b.bnf\"\na -> b ;");
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert_eq!(
+            grammar.axiom.as_ref().map(|ax| ax.name.as_str()),
+            Some("b"),
+            "axiom from included file must be adopted when parent has none"
+        );
+    }
+
+    // ── syntax error in included file ─────────────────────────────────────────
+
+    #[test]
+    /// An included file with a syntax error returns ParseError::SyntaxError.
+    fn include_syntax_error_in_included_file() {
+        // "-> 'x' ;" has no left-hand side and is not valid BNF syntax.
+        write_tmp("inc_synerr_b.bnf", "-> 'x' ;");
+        let a = write_tmp(
+            "inc_synerr_a.bnf",
+            "%include \"inc_synerr_b.bnf\"\nroot -> 'y' ;",
+        );
+        assert!(
+            matches!(parse_path(&a), Err(ParseError::SyntaxError)),
+            "expected SyntaxError when included file has invalid syntax"
+        );
+    }
+
+    // ── merge directives ──────────────────────────────────────────────────────
+
+    #[test]
+    /// %inline from an included file appears in the merged grammar.
+    fn include_merges_inline_directive() {
+        write_tmp(
+            "inc_inline_b.bnf",
+            "%inline _helper\n_helper -> 'y' ;\nroot -> _helper ;",
+        );
+        let a = write_tmp(
+            "inc_inline_a.bnf",
+            "%include \"inc_inline_b.bnf\"\na -> 'x' ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.inline.iter().any(|d| d.name == "_helper"),
+            "expected %inline from included file in merged grammar"
+        );
+    }
+
+    #[test]
+    /// %extras from an included file appears in the merged grammar.
+    fn include_merges_extras_directive() {
+        write_tmp("inc_extras_b.bnf", "%extras /\\s/\nb -> 'y' ;");
+        let a = write_tmp(
+            "inc_extras_a.bnf",
+            "%include \"inc_extras_b.bnf\"\nroot -> b ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.extras.iter().any(|d| d.name == "/\\s/"),
+            "expected %extras from included file in merged grammar"
+        );
+    }
+
+    #[test]
+    /// %supertypes from an included file appears in the merged grammar.
+    fn include_merges_supertypes_directive() {
+        write_tmp("inc_super_b.bnf", "%supertypes expr\nexpr -> 'y' ;");
+        let a = write_tmp(
+            "inc_super_a.bnf",
+            "%include \"inc_super_b.bnf\"\nroot -> expr ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.supertypes.iter().any(|d| d.name == "expr"),
+            "expected %supertypes from included file in merged grammar"
+        );
+    }
+
+    #[test]
+    /// %conflicts from an included file appears in the merged grammar.
+    fn include_merges_conflicts_directive() {
+        write_tmp(
+            "inc_conf_b.bnf",
+            "%conflicts [a, b]\na -> 'x' ;\nb -> 'y' ;",
+        );
+        let a = write_tmp("inc_conf_a.bnf", "%include \"inc_conf_b.bnf\"\nroot -> a ;");
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar.conflicts.iter().any(
+                |cg| cg.rules.contains(&"a".to_string()) && cg.rules.contains(&"b".to_string())
+            ),
+            "expected %conflicts from included file in merged grammar"
+        );
     }
 }

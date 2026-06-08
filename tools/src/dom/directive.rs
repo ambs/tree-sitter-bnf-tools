@@ -6,6 +6,8 @@ pub struct DirectiveItem {
     pub name: String,
     /// 1-based line number of the directive in the source file.
     pub line: usize,
+    /// Source filename where this directive appears (empty string if unknown).
+    pub filename: String,
 }
 
 /// A conflict group declared with `%conflicts`, together with its 1-based source line.
@@ -15,4 +17,18 @@ pub struct ConflictGroup {
     pub rules: Vec<String>,
     /// 1-based line number of the `%conflicts` directive in the source file.
     pub line: usize,
+    /// Source filename where this directive appears (empty string if unknown).
+    pub filename: String,
+}
+
+/// Formats a source location for use in diagnostic messages.
+///
+/// Returns `"filename:line"` when `filename` is non-empty, or `"line N"` otherwise.
+/// The result is suitable for embedding in parentheses: `format!("... ({loc})")`.
+pub(crate) fn loc(filename: &str, line: usize) -> String {
+    if filename.is_empty() {
+        format!("line {line}")
+    } else {
+        format!("{filename}:{line}")
+    }
 }

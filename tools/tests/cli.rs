@@ -4,7 +4,8 @@
 //! dispatch — including the `--json` output branches — is exercised.
 use indoc::indoc;
 use std::fs;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn tool() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
@@ -540,5 +541,130 @@ fn check_json_without_summary_has_no_summary_key() {
     assert!(
         parsed["summary"].is_null(),
         "summary key must be absent without --summary"
+    );
+}
+
+// ── stdin ─────────────────────────────────────────────────────────────────────
+
+#[test]
+/// `check -` reads a clean grammar from stdin and exits 0.
+fn check_reads_clean_grammar_from_stdin() {
+    let mut child = tool()
+        .args(["check", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(CLEAN_BNF.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "check via stdin must succeed for clean grammar"
+    );
+}
+
+// ── %include ──────────────────────────────────────────────────────────────────
+
+/// Creates a two-file setup: `a_name` has `root -> b_rule ;` followed by an
+/// `%include` of `b_name`, which defines `b_rule -> 'y' ;`.
+///
+/// `root` is declared before the `%include` so it is the first entry in the
+/// merged productions map and acts as the implicit root rule.  This keeps the
+/// grammar free of "unreachable rule" warnings.
+fn write_include_pair(a_name: &str, b_name: &str) -> std::path::PathBuf {
+    let tmp = std::env::temp_dir();
+    let b_path = tmp.join(b_name);
+    fs::write(&b_path, "b_rule -> 'y' ;\n").unwrap();
+    let a_path = tmp.join(a_name);
+    fs::write(
+        &a_path,
+        format!("root -> b_rule ;\n%include \"{b_name}\"\n"),
+    )
+    .unwrap();
+    a_path
+}
+
+#[test]
+/// `check` on a grammar that uses `%include` merges the included file and
+/// exits 0 when the combined grammar is clean.
+fn include_check_passes_for_valid_included_grammar() {
+    let path = write_include_pair("cli_inc_check_a.bnf", "cli_inc_check_b.bnf");
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "check must exit 0 for a clean included grammar; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+/// `firsts --json` output contains rules from both the root file and the
+/// included file after merging.
+fn include_firsts_contains_rules_from_included_file() {
+    let path = write_include_pair("cli_inc_firsts_a.bnf", "cli_inc_firsts_b.bnf");
+    let out = tool()
+        .args(["firsts", "--json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let obj = parsed.as_object().unwrap();
+    assert!(obj.contains_key("root"), "firsts must contain root rule");
+    assert!(
+        obj.contains_key("b_rule"),
+        "firsts must contain rule from included file"
+    );
+}
+
+#[test]
+/// `convert --rules-only` output contains rules from both the root file and
+/// the included file after merging.
+fn include_convert_outputs_merged_rules() {
+    let path = write_include_pair("cli_inc_conv_a.bnf", "cli_inc_conv_b.bnf");
+    let out = tool()
+        .args(["convert", "--rules-only"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("root"),
+        "convert output must include root rule"
+    );
+    assert!(
+        stdout.contains("b_rule"),
+        "convert output must include rule from included file"
+    );
+}
+
+#[test]
+/// `format` inlines all `%include` directives and emits the merged grammar in
+/// canonical BNF form; the `%include` directive itself does not appear in the
+/// output.
+fn include_format_outputs_merged_grammar() {
+    let path = write_include_pair("cli_inc_fmt_a.bnf", "cli_inc_fmt_b.bnf");
+    let out = tool().args(["format"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("root ->"),
+        "format output must include root rule"
+    );
+    assert!(
+        stdout.contains("b_rule ->"),
+        "format output must include rule from included file"
+    );
+    assert!(
+        !stdout.contains("%include"),
+        "format output must not contain %include directives"
     );
 }

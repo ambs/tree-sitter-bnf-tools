@@ -1,0 +1,101 @@
+================================================================================
+Single-quoted include path
+================================================================================
+
+%include 'expressions.bnf'
+root -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (includeDirective
+    (literal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Double-quoted include path
+================================================================================
+
+%include "expressions.bnf"
+root -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (includeDirective
+    (literal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Include before rules
+================================================================================
+
+%include "tokens.bnf"
+root -> token ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (includeDirective
+    (literal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Include interleaved with rules and directives
+================================================================================
+
+root -> token ;
+%include "tokens.bnf"
+%extras /\s/
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal)))))
+  (includeDirective
+    (literal))
+  (extrasDirective
+    (extrasItem
+      (pattern))))
+
+================================================================================
+Multiple include directives
+================================================================================
+
+%include "a.bnf"
+%include "b.bnf"
+root -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (includeDirective
+    (literal))
+  (includeDirective
+    (literal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))

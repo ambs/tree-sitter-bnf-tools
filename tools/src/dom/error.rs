@@ -19,6 +19,12 @@ pub enum ParseError {
     SyntaxError,
     /// The tree-sitter parser returned no tree for the input.
     ParseFailed,
+    /// `%include` was used but the source has no associated file path (e.g. stdin).
+    IncludeFromStdin,
+    /// The path in a `%include` directive could not be read; carries the resolved absolute path.
+    IncludeNotFound(String),
+    /// A `%include` chain forms a cycle; carries the path that was seen twice.
+    IncludeCycle(String),
 }
 
 impl Display for ParseError {
@@ -33,8 +39,46 @@ impl Display for ParseError {
             }
             ParseError::SyntaxError => write!(f, "input contains syntax errors"),
             ParseError::ParseFailed => write!(f, "parser returned no tree"),
+            ParseError::IncludeFromStdin => {
+                write!(f, "%include cannot be used when reading from stdin")
+            }
+            ParseError::IncludeNotFound(path) => {
+                write!(f, "included file not found: {}", path)
+            }
+            ParseError::IncludeCycle(path) => {
+                write!(f, "circular %include detected: {}", path)
+            }
         }
     }
 }
 
 impl std::error::Error for ParseError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn include_from_stdin_display() {
+        assert_eq!(
+            ParseError::IncludeFromStdin.to_string(),
+            "%include cannot be used when reading from stdin"
+        );
+    }
+
+    #[test]
+    fn include_not_found_display() {
+        assert_eq!(
+            ParseError::IncludeNotFound("/tmp/foo.bnf".into()).to_string(),
+            "included file not found: /tmp/foo.bnf"
+        );
+    }
+
+    #[test]
+    fn include_cycle_display() {
+        assert_eq!(
+            ParseError::IncludeCycle("/tmp/foo.bnf".into()).to_string(),
+            "circular %include detected: /tmp/foo.bnf"
+        );
+    }
+}
