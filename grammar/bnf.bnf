@@ -23,6 +23,7 @@ grammar             -> (rule | _directive)+ ;
 
 _directive          -> axiomDirective
                      | conflictsDirective
+                     | includeDirective
                      | inlineDirective
                      | supertypesDirective
                      | extrasDirective
@@ -31,6 +32,8 @@ _directive          -> axiomDirective
 # ── Grammar-level directives ─────────────────────────────────────────────────
 
 axiomDirective      -> '%axiom' nonTerminal ;
+
+includeDirective    -> '%include' literal ;
 
 conflictsDirective  -> '%conflicts' conflictGroup (',' conflictGroup)* ;
 conflictGroup       -> '[' nonTerminal (',' nonTerminal)* ']' ;
