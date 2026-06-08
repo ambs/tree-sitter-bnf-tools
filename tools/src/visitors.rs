@@ -1,14 +1,18 @@
 use crate::dom::directive::{ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
+use std::path::PathBuf;
 use tree_sitter::Node;
 
-/// Groups a source file's text and its filename for use throughout the visitor.
+/// Groups a source file's text, filename, and resolved filesystem path for use throughout the visitor.
 pub struct SourceFile<'a> {
     /// The original source text.
     pub source: &'a str,
     /// The filename associated with this source (empty string if unknown).
     pub filename: &'a str,
+    /// Canonical absolute path to the file, used to resolve `%include` paths.
+    /// `None` when parsing from stdin or an in-memory string (no file backing).
+    pub path: Option<PathBuf>,
 }
 
 /// Parses a BNF source string and returns the [`Grammar`] DOM and any diagnostics.
@@ -21,6 +25,7 @@ pub fn parse_source(src: &str) -> Result<(Grammar, Vec<Diagnostic>), ParseError>
     let ctx = SourceFile {
         source: src,
         filename: "",
+        path: None,
     };
     visit_grammar(&tree.root_node(), &ctx)
 }
