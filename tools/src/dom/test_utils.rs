@@ -29,6 +29,11 @@ pub fn di(name: &str, line: usize) -> DirectiveItem {
     }
 }
 
+/// Creates a [`GrammarNode::NonTerminal`] with the given name.
+pub fn nt(name: &str) -> GrammarNode {
+    GrammarNode::NonTerminal(name.into())
+}
+
 /// Creates a [`ConflictGroup`] with the given rule names and source line.
 pub fn cg(rules: &[&str], line: usize) -> ConflictGroup {
     ConflictGroup {

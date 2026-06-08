@@ -16,6 +16,8 @@ pub mod highlights;
 mod nodes;
 /// A single named grammar rule.
 mod production;
+/// Safe mechanical rename of a rule throughout a [`Grammar`].
+pub mod rename;
 /// Renders a [`Grammar`] as a complete `grammar.js` file.
 mod scaffold;
 /// Shared helpers for constructing test fixtures.
@@ -31,5 +33,6 @@ pub use format::format_grammar;
 pub use highlights::Highlights;
 pub use nodes::{GrammarNode, PrecKind};
 pub use production::Production;
+pub use rename::rename_grammar;
 pub use scaffold::Scaffold;
 pub use types::Grammar;
