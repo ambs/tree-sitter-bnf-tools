@@ -5,7 +5,7 @@ use super::analysis::{
     left_recursive_rules,
 };
 use super::diagnostic::Diagnostic;
-use super::directive::{ConflictGroup, DirectiveItem};
+use super::directive::{loc, ConflictGroup, DirectiveItem};
 use super::summary::GrammarSummary;
 use super::types::Grammar;
 
@@ -14,16 +14,23 @@ impl Grammar {
     fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.conflicts
             .iter()
-            .flat_map(|ConflictGroup { rules, line }| {
-                rules.iter().filter_map(move |name| {
-                    if known.contains(name.as_str()) {
-                        return None;
-                    }
-                    Some(Diagnostic::warning(format!(
-                        "%conflicts references undefined rule '{name}' (line {line})"
-                    )))
-                })
-            })
+            .flat_map(
+                |ConflictGroup {
+                     rules,
+                     line,
+                     filename,
+                 }| {
+                    let location = loc(filename, *line);
+                    rules.iter().filter_map(move |name| {
+                        if known.contains(name.as_str()) {
+                            return None;
+                        }
+                        Some(Diagnostic::warning(format!(
+                            "%conflicts references undefined rule '{name}' ({location})"
+                        )))
+                    })
+                },
+            )
             .collect()
     }
 
@@ -32,11 +39,18 @@ impl Grammar {
         self.inline
             .iter()
             .filter(|item| !known.contains(item.name.as_str()))
-            .map(|DirectiveItem { name, line }| {
-                Diagnostic::warning(format!(
-                    "%inline references undefined rule '{name}' (line {line})"
-                ))
-            })
+            .map(
+                |DirectiveItem {
+                     name,
+                     line,
+                     filename,
+                 }| {
+                    Diagnostic::warning(format!(
+                        "%inline references undefined rule '{name}' ({})",
+                        loc(filename, *line)
+                    ))
+                },
+            )
             .collect()
     }
 
@@ -45,11 +59,18 @@ impl Grammar {
         self.supertypes
             .iter()
             .filter(|item| !known.contains(item.name.as_str()))
-            .map(|DirectiveItem { name, line }| {
-                Diagnostic::warning(format!(
-                    "%supertypes references undefined rule '{name}' (line {line})"
-                ))
-            })
+            .map(
+                |DirectiveItem {
+                     name,
+                     line,
+                     filename,
+                 }| {
+                    Diagnostic::warning(format!(
+                        "%supertypes references undefined rule '{name}' ({})",
+                        loc(filename, *line)
+                    ))
+                },
+            )
             .collect()
     }
 
@@ -58,11 +79,18 @@ impl Grammar {
         self.extras
             .iter()
             .filter(|item| !item.name.starts_with('/') && !known.contains(item.name.as_str()))
-            .map(|DirectiveItem { name, line }| {
-                Diagnostic::warning(format!(
-                    "%extras references undefined rule '{name}' (line {line})"
-                ))
-            })
+            .map(
+                |DirectiveItem {
+                     name,
+                     line,
+                     filename,
+                 }| {
+                    Diagnostic::warning(format!(
+                        "%extras references undefined rule '{name}' ({})",
+                        loc(filename, *line)
+                    ))
+                },
+            )
             .collect()
     }
 
@@ -84,9 +112,14 @@ impl Grammar {
             .into_iter()
             .map(|(rule, is_direct)| {
                 let kind = if is_direct { "directly" } else { "mutually" };
-                let line = self.productions.get(rule).map(|p| p.line).unwrap_or(0);
+                let (line, filename) = self
+                    .productions
+                    .get(rule)
+                    .map(|p| (p.line, p.filename.as_str()))
+                    .unwrap_or((0, ""));
                 Diagnostic::error(format!(
-                    "rule '{rule}' is {kind} left-recursive (line {line})"
+                    "rule '{rule}' is {kind} left-recursive ({})",
+                    loc(filename, line)
                 ))
             })
             .collect()
@@ -95,9 +128,14 @@ impl Grammar {
     /// Returns an error if `%axiom` names an undefined rule.
     fn axiom_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         match &self.axiom {
-            Some(DirectiveItem { name, line }) if !known.contains(name.as_str()) => {
+            Some(DirectiveItem {
+                name,
+                line,
+                filename,
+            }) if !known.contains(name.as_str()) => {
                 vec![Diagnostic::error(format!(
-                    "%axiom references undefined rule '{name}' (line {line})"
+                    "%axiom references undefined rule '{name}' ({})",
+                    loc(filename, *line)
                 ))]
             }
             _ => vec![],
@@ -131,12 +169,15 @@ impl Grammar {
             .keys()
             .filter(|name| name.as_str() != root && !referenced.contains(name.as_str()))
             .map(|name| {
-                let line = self
+                let (line, filename) = self
                     .productions
                     .get(name.as_str())
-                    .map(|p| p.line)
-                    .unwrap_or(0);
-                Diagnostic::warning(format!("rule '{name}' is never referenced (line {line})"))
+                    .map(|p| (p.line, p.filename.as_str()))
+                    .unwrap_or((0, ""));
+                Diagnostic::warning(format!(
+                    "rule '{name}' is never referenced ({})",
+                    loc(filename, line)
+                ))
             })
             .collect()
     }
@@ -153,6 +194,42 @@ impl Grammar {
     /// Exposed for use by the summary builder; the full diagnostic list is produced by [`check`](Self::check).
     pub(crate) fn count_unreachable_rules(&self) -> usize {
         self.unreachable_rules_check().len()
+    }
+
+    /// Merges `other` into `self`, treating its contents as if inlined at the `%include` site.
+    ///
+    /// **Duplicate rules**: the last definition wins (the incoming rule from `other` replaces the
+    /// existing one), but a warning is emitted so the author is aware of the shadowing.
+    ///
+    /// **`%axiom`**: first declaration wins — if `self` already has one, the incoming axiom is
+    /// rejected with an error diagnostic rather than silently overriding the root.
+    pub(crate) fn merge_from(&mut self, other: Grammar) {
+        for (name, prod) in other.productions {
+            if self.productions.contains_key(&name) {
+                self.parse_diagnostics.push(Diagnostic::warning(format!(
+                    "rule '{}' is defined more than once ({})",
+                    name,
+                    loc(&prod.filename, prod.line)
+                )));
+            }
+            self.productions.insert(name, prod);
+        }
+        if let Some(axiom) = other.axiom {
+            if self.axiom.is_some() {
+                self.parse_diagnostics.push(Diagnostic::error(format!(
+                    "%axiom declared more than once ({})",
+                    loc(&axiom.filename, axiom.line)
+                )));
+            } else {
+                self.axiom = Some(axiom);
+            }
+        }
+        self.conflicts.extend(other.conflicts);
+        self.inline.extend(other.inline);
+        self.supertypes.extend(other.supertypes);
+        self.extras.extend(other.extras);
+        self.rhs_nonterminals.extend(other.rhs_nonterminals);
+        self.parse_diagnostics.extend(other.parse_diagnostics);
     }
 
     /// Builds a [`GrammarSummary`] by running all summary analyses over this grammar.
@@ -396,7 +473,7 @@ mod tests {
         ]);
         assert_eq!(
             strs(&g.unreachable_rules_check()),
-            vec!["warning: rule 'orphan' is never referenced (line 1)"]
+            vec!["warning: rule 'orphan' is never referenced (test.bnf:1)"]
         );
     }
 

@@ -1,6 +1,7 @@
-use crate::dom::directive::{ConflictGroup, DirectiveItem};
+use crate::dom::directive::{loc, ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tree_sitter::Node;
 
@@ -45,9 +46,24 @@ fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
 /// Converts the root `grammar` tree-sitter node into a [`Grammar`] DOM.
 ///
 /// Returns the grammar and any diagnostics from cross-reference checks.
+/// Seeds the cycle-detection set with the current file's path before delegating
+/// to [`visit_grammar_inner`].
 pub fn visit_grammar(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
+    let mut seen = HashSet::new();
+    if let Some(path) = &ctx.path {
+        seen.insert(path.clone());
+    }
+    visit_grammar_inner(node, ctx, &mut seen)
+}
+
+/// Inner implementation of [`visit_grammar`], carrying the cycle-detection set.
+fn visit_grammar_inner(
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+    seen: &mut HashSet<PathBuf>,
 ) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar::new();
@@ -59,8 +75,9 @@ pub fn visit_grammar(
                 let prod = visit_rule(&mut grammar, &child, ctx)?;
                 if grammar.productions.contains_key(&prod.name) {
                     grammar.parse_diagnostics.push(Diagnostic::warning(format!(
-                        "rule '{}' is defined more than once (line {})",
-                        prod.name, prod.line
+                        "rule '{}' is defined more than once ({})",
+                        prod.name,
+                        loc(&prod.filename, prod.line)
                     )));
                 }
                 grammar.productions.insert(prod.name.clone(), prod);
@@ -85,11 +102,14 @@ pub fn visit_grammar(
                 let item = visit_axiom_directive(&child, ctx);
                 if grammar.axiom.is_some() {
                     grammar.parse_diagnostics.push(Diagnostic::error(format!(
-                        "%axiom declared more than once (line {})",
-                        item.line
+                        "%axiom declared more than once ({})",
+                        loc(&item.filename, item.line)
                     )));
                 }
                 grammar.axiom = Some(item);
+            }
+            "includeDirective" => {
+                visit_include_directive(&mut grammar, &child, ctx, seen)?;
             }
             _ => {}
         }
@@ -98,10 +118,79 @@ pub fn visit_grammar(
     Ok((grammar, warnings))
 }
 
+/// Resolves a `%include` directive, parses the referenced file, and merges it into `grammar`.
+///
+/// `seen` is the set of canonical paths on the current include stack; it is used to detect
+/// cycles (e.g. A includes B which includes A again). After the recursive call returns,
+/// the path is removed from `seen` so that diamond includes (two files independently
+/// including the same third file) are allowed — they produce duplicate-rule warnings
+/// rather than a cycle error.
+///
+/// Check diagnostics for each included file in isolation are discarded — cross-reference
+/// checks run on the fully-merged grammar once the top-level `visit_grammar` call returns.
+fn visit_include_directive(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<(), ParseError> {
+    let raw = node
+        .named_child(0)
+        .expect("includeDirective has a literal child")
+        .utf8_text(ctx.source.as_bytes())
+        .expect("valid UTF-8");
+    let path_str = &raw[1..raw.len() - 1]; // strip surrounding ' or "
+
+    let base_dir = ctx
+        .path
+        .as_deref()
+        .and_then(|p| p.parent())
+        .ok_or(ParseError::IncludeFromStdin)?;
+    let resolved = base_dir.join(path_str);
+
+    let source = std::fs::read_to_string(&resolved)
+        .map_err(|_| ParseError::IncludeNotFound(resolved.display().to_string()))?;
+
+    // Cycle detection: canonicalize after confirming the file exists (read above).
+    let canonical = resolved.canonicalize().ok();
+    if let Some(ref canon) = canonical {
+        if seen.contains(canon) {
+            return Err(ParseError::IncludeCycle(resolved.display().to_string()));
+        }
+        seen.insert(canon.clone());
+    }
+
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .map_err(|_| ParseError::ParseFailed)?;
+    let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
+    if tree.root_node().has_error() {
+        return Err(ParseError::SyntaxError);
+    }
+
+    let filename_owned = resolved.to_string_lossy().into_owned();
+    let included_ctx = SourceFile {
+        source: &source,
+        filename: &filename_owned,
+        path: canonical.clone(),
+    };
+    let (included, _) = visit_grammar_inner(&tree.root_node(), &included_ctx, seen)?;
+
+    // Backtrack: remove from the stack so diamond includes are not misreported as cycles.
+    if let Some(ref canon) = canonical {
+        seen.remove(canon);
+    }
+
+    grammar.merge_from(included);
+    Ok(())
+}
+
 /// Collects every named child of `node` into a [`Vec<DirectiveItem>`], recording the
 /// directive's 1-based source line for each entry.
 fn collect_directive_items(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<DirectiveItem> {
     let line = node.start_position().row + 1;
+    let filename = ctx.filename.to_string();
     (0..node.named_child_count() as u32)
         .map(|i| {
             let name = node
@@ -110,7 +199,11 @@ fn collect_directive_items(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<Directi
                 .utf8_text(ctx.source.as_bytes())
                 .expect("valid UTF-8")
                 .to_string();
-            DirectiveItem { name, line }
+            DirectiveItem {
+                name,
+                line,
+                filename: filename.clone(),
+            }
         })
         .collect()
 }
@@ -139,7 +232,11 @@ fn visit_axiom_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> DirectiveItem
         .utf8_text(ctx.source.as_bytes())
         .expect("valid UTF-8")
         .to_string();
-    DirectiveItem { name, line }
+    DirectiveItem {
+        name,
+        line,
+        filename: ctx.filename.to_string(),
+    }
 }
 
 /// Converts a `conflictsDirective` node into a list of [`ConflictGroup`]s.
@@ -162,7 +259,11 @@ fn visit_conflicts_directive(
                         .to_string()
                 })
                 .collect();
-            groups.push(ConflictGroup { rules, line });
+            groups.push(ConflictGroup {
+                rules,
+                line,
+                filename: ctx.filename.to_string(),
+            });
         }
     }
     Ok(groups)
