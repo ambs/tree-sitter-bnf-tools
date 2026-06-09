@@ -50,7 +50,7 @@ fill:rgba(90, 90, 150, .1);
 </style>
 <rect width="100%" height="100%" class="railroad_canvas"/>
 <g id="rule-expr" transform="translate(0, 0)">
-<text x="10" y="18" style="font:bold 14px monospace">expr</text>
+<text x="10" y="18" style="font:bold 14px monospace;text-anchor:start">expr</text>
 <g transform="translate(0, 24)">
 <g class="sequence">
 <path d=" M 10 34 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5 m 10 0 h 5"/>
@@ -104,7 +104,7 @@ term</text>
 </g>
 </g>
 <g id="rule-term" transform="translate(0, 138)">
-<text x="10" y="18" style="font:bold 14px monospace">term</text>
+<text x="10" y="18" style="font:bold 14px monospace;text-anchor:start">term</text>
 <g transform="translate(0, 24)">
 <g class="sequence">
 <path d=" M 10 34 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5 m 10 0 h 5"/>
@@ -158,7 +158,7 @@ factor</text>
 </g>
 </g>
 <g id="rule-factor" transform="translate(0, 276)">
-<text x="10" y="18" style="font:bold 14px monospace">factor</text>
+<text x="10" y="18" style="font:bold 14px monospace;text-anchor:start">factor</text>
 <g transform="translate(0, 24)">
 <g class="sequence">
 <path d=" M 10 21 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5 m 10 0 h 5"/>
