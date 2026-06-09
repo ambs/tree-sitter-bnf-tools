@@ -102,6 +102,23 @@ enum Subcommands {
         #[arg(long, short = 'o', conflicts_with = "in_place")]
         output: Option<String>,
     },
+    /// Generate railroad / syntax diagrams from a BNF grammar
+    Railroad {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+        /// Write output to file instead of stdout (single-file mode)
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+        /// Emit one SVG file per rule; requires `--output-dir`
+        #[arg(long, requires = "output_dir", conflicts_with = "rule")]
+        split: bool,
+        /// Directory for per-rule SVG files (used with `--split`)
+        #[arg(long)]
+        output_dir: Option<String>,
+        /// Render only the named rule; incompatible with `--split`
+        #[arg(long)]
+        rule: Option<String>,
+    },
     /// Pretty-print a BNF file in canonical style.
     Format {
         /// Input BNF file, or `-` to read from stdin
@@ -403,6 +420,34 @@ fn main() -> Result<(), Box<dyn Error>> {
             match output {
                 Some(path) => fs::write(&path, &skeleton)?,
                 None => print!("{}", skeleton),
+            }
+        }
+
+        Subcommands::Railroad {
+            filename,
+            output,
+            split,
+            output_dir,
+            rule,
+        } => {
+            let (grammar, _) = parse_file(&filename, false)?;
+            if split {
+                let dir = PathBuf::from(output_dir.unwrap());
+                let warnings = ts_bnf_tool::dom::railroad::emit_split(&grammar, &dir)?;
+                for w in &warnings {
+                    eprintln!("{w}");
+                }
+            } else {
+                let (svg, warnings) =
+                    ts_bnf_tool::dom::railroad::emit_single_file(&grammar, rule.as_deref())
+                        .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
+                for w in &warnings {
+                    eprintln!("{w}");
+                }
+                match output {
+                    Some(path) => fs::write(&path, &svg)?,
+                    None => print!("{svg}"),
+                }
             }
         }
 
