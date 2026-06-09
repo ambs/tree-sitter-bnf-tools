@@ -163,8 +163,7 @@ pub fn emit_single_file(
 ) -> Result<(String, Vec<String>), String> {
     // Collect defined rule names so the walker can detect undefined references.
     // Always uses the full grammar even in single-rule mode so hrefs are correct.
-    let defined: std::collections::HashSet<String> =
-        grammar.productions.keys().cloned().collect();
+    let defined: std::collections::HashSet<String> = grammar.productions.keys().cloned().collect();
     let mut warnings = Vec::new();
 
     // Per-rule rendering result: the extracted SVG content and its pixel dimensions.
@@ -181,9 +180,10 @@ pub fn emit_single_file(
     let selected: Vec<_> = match only_rule {
         None => grammar.productions.iter().collect(),
         Some(name) => {
-            let entry = grammar.productions.get_key_value(name).ok_or_else(|| {
-                format!("rule '{name}' not found in grammar")
-            })?;
+            let entry = grammar
+                .productions
+                .get_key_value(name)
+                .ok_or_else(|| format!("rule '{name}' not found in grammar"))?;
             vec![entry]
         }
     };
@@ -198,7 +198,12 @@ pub fn emit_single_file(
             let svg = railroad::Diagram::new(seq).to_string();
             let (width, height) = parse_viewbox(&svg);
             let content = extract_diagram_content(&svg).to_owned();
-            Rule { name, content, width, height }
+            Rule {
+                name,
+                content,
+                width,
+                height,
+            }
         })
         .collect();
 
@@ -226,7 +231,10 @@ pub fn emit_single_file(
     let mut y: i64 = 0;
     for rule in &rules {
         // `id="rule-<name>"` is the fragment anchor target for #rule-<name> hrefs.
-        out.push_str(&format!("<g id=\"rule-{name}\" transform=\"translate(0, {y})\">\n", name = rule.name));
+        out.push_str(&format!(
+            "<g id=\"rule-{name}\" transform=\"translate(0, {y})\">\n",
+            name = rule.name
+        ));
         // Rule name label sits just above the diagram (baseline at LABEL_HEIGHT - 6).
         out.push_str(&format!(
             "<text x=\"10\" y=\"{label_y}\" style=\"font:bold 14px monospace\">{name}</text>\n",
@@ -265,8 +273,7 @@ pub fn emit_split(
     output_dir: &std::path::Path,
 ) -> Result<Vec<String>, std::io::Error> {
     // Collect defined rule names so the walker can detect undefined references.
-    let defined: std::collections::HashSet<String> =
-        grammar.productions.keys().cloned().collect();
+    let defined: std::collections::HashSet<String> = grammar.productions.keys().cloned().collect();
     let mut warnings = Vec::new();
 
     // Create the output directory (and any missing parents) before writing files.
@@ -276,8 +283,8 @@ pub fn emit_split(
     for (name, prod) in &grammar.productions {
         let seq = production_to_sequence(prod, &LinkMode::Split, &defined, &mut warnings);
         // Each file stands alone, so embed the stylesheet for correct rendering.
-        let svg = railroad::Diagram::new_with_stylesheet(seq, &railroad::Stylesheet::Light)
-            .to_string();
+        let svg =
+            railroad::Diagram::new_with_stylesheet(seq, &railroad::Stylesheet::Light).to_string();
         std::fs::write(output_dir.join(format!("{name}.svg")), svg)?;
     }
 
@@ -315,12 +322,17 @@ mod tests {
     use super::*;
     use crate::dom::{GrammarNode, PrecKind};
 
+    /// Builds a `HashSet<String>` of defined rule names for use in walker tests.
     fn def(names: &[&str]) -> HashSet<String> {
         names.iter().map(|s| s.to_string()).collect()
     }
 
     /// Converts `node` to a railroad combinator and renders it to an SVG string.
-    fn to_svg(node: &GrammarNode, mode: &LinkMode, defined: &HashSet<String>) -> (String, Vec<String>) {
+    fn to_svg(
+        node: &GrammarNode,
+        mode: &LinkMode,
+        defined: &HashSet<String>,
+    ) -> (String, Vec<String>) {
         let mut warnings = Vec::new();
         let n = node_to_railroad(node, mode, defined, &mut warnings);
         let svg = railroad::Diagram::new(n).to_string();
@@ -386,7 +398,10 @@ mod tests {
             &def(&[]),
             &mut warnings,
         );
-        assert_eq!(warnings, ["warning: rule 'ghost' referenced but not defined"]);
+        assert_eq!(
+            warnings,
+            ["warning: rule 'ghost' referenced but not defined"]
+        );
     }
 
     #[test]
@@ -446,7 +461,8 @@ mod tests {
     #[test]
     /// TokenImmediate is a tree-sitter annotation; only the inner expression is rendered.
     fn token_immediate_is_transparent() {
-        let node = GrammarNode::TokenImmediate(Box::new(GrammarNode::TerminalLiteral("IMM".into())));
+        let node =
+            GrammarNode::TokenImmediate(Box::new(GrammarNode::TerminalLiteral("IMM".into())));
         let (svg, _) = to_svg(&node, &LinkMode::SingleFile, &def(&[]));
         assert!(svg.contains("IMM"));
     }
@@ -529,16 +545,26 @@ mod tests {
     fn single_file_hrefs_resolve_to_local_anchors() {
         let (svg, _) = emit_single_file(&two_rule_grammar(), None).unwrap();
         // expr references term, so there must be an href to #rule-term
-        assert!(svg.contains("#rule-term"), "href to referenced rule must be present");
+        assert!(
+            svg.contains("#rule-term"),
+            "href to referenced rule must be present"
+        );
         // and the corresponding anchor must also exist in the same document
-        assert!(svg.contains("id=\"rule-term\""), "anchor target must exist in the document");
+        assert!(
+            svg.contains("id=\"rule-term\""),
+            "anchor target must exist in the document"
+        );
     }
 
     #[test]
     /// The stylesheet is embedded exactly once at the top of the combined SVG.
     fn single_file_embeds_stylesheet_once() {
         let (svg, _) = emit_single_file(&two_rule_grammar(), None).unwrap();
-        assert_eq!(svg.matches("<style>").count(), 1, "stylesheet must appear exactly once");
+        assert_eq!(
+            svg.matches("<style>").count(),
+            1,
+            "stylesheet must appear exactly once"
+        );
     }
 
     // ── emit_single_file --rule ───────────────────────────────────────────────
@@ -547,8 +573,14 @@ mod tests {
     /// When only_rule names an existing rule, only that rule's diagram appears in the output.
     fn single_rule_renders_only_named_rule() {
         let (svg, _) = emit_single_file(&two_rule_grammar(), Some("expr")).unwrap();
-        assert!(svg.contains("id=\"rule-expr\""), "named rule anchor must be present");
-        assert!(!svg.contains("id=\"rule-term\""), "other rule anchors must be absent");
+        assert!(
+            svg.contains("id=\"rule-expr\""),
+            "named rule anchor must be present"
+        );
+        assert!(
+            !svg.contains("id=\"rule-term\""),
+            "other rule anchors must be absent"
+        );
     }
 
     #[test]
@@ -556,14 +588,18 @@ mod tests {
     fn single_rule_unknown_name_returns_error() {
         let result = emit_single_file(&two_rule_grammar(), Some("ghost"));
         assert!(result.is_err(), "unknown rule must return Err");
-        assert!(result.unwrap_err().contains("ghost"), "error message must include the missing rule name");
+        assert!(
+            result.unwrap_err().contains("ghost"),
+            "error message must include the missing rule name"
+        );
     }
 
     // ── emit_split ────────────────────────────────────────────────────────────
 
     /// Returns a temporary directory unique to the calling test (cleaned up by the caller).
     fn make_temp_dir(suffix: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("railroad_test_{}_{}", std::process::id(), suffix));
+        let dir =
+            std::env::temp_dir().join(format!("railroad_test_{}_{}", std::process::id(), suffix));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -585,8 +621,14 @@ mod tests {
         let dir = make_temp_dir("split_standalone");
         emit_split(&two_rule_grammar(), &dir).unwrap();
         let svg = std::fs::read_to_string(dir.join("expr.svg")).unwrap();
-        assert!(svg.starts_with("<svg"), "each split file must be a valid SVG");
-        assert!(svg.contains("<style"), "each split file must embed the stylesheet");
+        assert!(
+            svg.starts_with("<svg"),
+            "each split file must be a valid SVG"
+        );
+        assert!(
+            svg.contains("<style"),
+            "each split file must embed the stylesheet"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -597,7 +639,10 @@ mod tests {
         emit_split(&two_rule_grammar(), &dir).unwrap();
         // expr references term, so expr.svg must link to term.svg
         let svg = std::fs::read_to_string(dir.join("expr.svg")).unwrap();
-        assert!(svg.contains("term.svg"), "non-terminal href must point to <name>.svg");
+        assert!(
+            svg.contains("term.svg"),
+            "non-terminal href must point to <name>.svg"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
