@@ -15,6 +15,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The `%include` keyword is highlighted as `@keyword` in `highlights.scm`.
 
 #### `ts-bnf-tool`
+- `railroad` subcommand: generates railroad / syntax diagrams (SVG) from a BNF
+  grammar. Supports single-file mode (all rules stacked in one SVG, with
+  `#rule-<name>` fragment anchors and cross-rule links), split mode
+  (`--split --output-dir <dir>`, one `<rule>.svg` per rule with relative-path
+  links between files), and single-rule mode (`--rule <name>`). Non-terminal
+  references to undefined rules emit a `warning:` to stderr but still produce a
+  valid SVG node; exit code remains 0. No external binary is required.
 - `%include "path.bnf"` directive: splits a large grammar across multiple files.
   Paths are resolved relative to the including file. Included files are merged
   in order, as if their contents were inlined at the `%include` site.

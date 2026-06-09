@@ -140,6 +140,8 @@ Pass `-` as the filename to read from stdin.
 | `highlights` | Generate a skeleton `highlights.scm` |
 | `firsts` | Print FIRST sets for each rule |
 | `check` | Run static checks; exit non-zero on any issue |
+| `railroad` | Generate railroad / syntax diagrams as SVG |
+| `rename` | Rename a rule and all its references |
 
 ### convert
 
@@ -424,6 +426,25 @@ left-recursive if its own name can appear as the first symbol of one of its
 alternatives (e.g. `expr -> expr '+' term | term`). It is *mutually*
 left-recursive if two or more rules form a cycle where each can start with
 the next (e.g. `a -> b 'x' | 'a'` and `b -> a 'y' | 'b'`).
+
+### railroad
+
+Generates railroad / syntax diagrams (SVG) from a BNF grammar. No external
+binary is required — SVG is produced directly from Rust using the
+[`railroad`](https://crates.io/crates/railroad) crate.
+
+```sh
+ts-bnf-tool railroad grammar.bnf                          # all rules, single SVG to stdout
+ts-bnf-tool railroad -o grammar.svg grammar.bnf           # all rules, single SVG to file
+ts-bnf-tool railroad --split --output-dir diagrams/ grammar.bnf  # one SVG per rule
+ts-bnf-tool railroad --rule expr grammar.bnf              # single named rule to stdout
+```
+
+In single-file mode each rule is preceded by its name as a label and wrapped
+in a `<g id="rule-<name>">` element so that `#rule-<name>` fragment links work.
+In split mode each file is named `<rule>.svg` and non-terminal labels link to
+`<rule>.svg` relative paths, enabling navigation when the directory is served
+as a static site.
 
 ## Development
 

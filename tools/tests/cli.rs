@@ -576,6 +576,46 @@ fn railroad_undefined_ref_warns_but_exits_zero() {
 }
 
 #[test]
+/// Dogfood: `grammar/bnf.bnf` renders without error in single-file mode (R-20).
+fn railroad_dogfood_single_file() {
+    let grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../grammar/bnf.bnf");
+    let out = tool().args(["railroad"]).arg(&grammar).output().unwrap();
+    assert!(
+        out.status.success(),
+        "railroad on bnf.bnf must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.starts_with("<svg"), "output must be an SVG element");
+}
+
+#[test]
+/// Dogfood: `grammar/bnf.bnf` renders without error in split mode (R-20).
+fn railroad_dogfood_split() {
+    let grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../grammar/bnf.bnf");
+    let out_dir = std::env::temp_dir().join("ts_bnf_rr_dogfood_split");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["railroad", "--split", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&grammar)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "railroad --split on bnf.bnf must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out_dir.exists(), "--output-dir must be created");
+    let svgs: Vec<_> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |x| x == "svg"))
+        .collect();
+    assert!(!svgs.is_empty(), "at least one .svg file must be written");
+}
+
+#[test]
 /// Grammar composed via `%include` renders rules from both files in the output (R-19).
 fn railroad_include_renders_all_rules() {
     let path = write_include_pair("cli_rr_inc_a.bnf", "cli_rr_inc_b.bnf");

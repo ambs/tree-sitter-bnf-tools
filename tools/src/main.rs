@@ -102,7 +102,10 @@ enum Subcommands {
         #[arg(long, short = 'o', conflicts_with = "in_place")]
         output: Option<String>,
     },
-    /// Generate railroad / syntax diagrams from a BNF grammar
+    /// Generate railroad / syntax diagrams from a BNF grammar.
+    ///
+    /// Produces SVG output directly from Rust — no external binary required
+    /// (unlike `graph --format svg`, which shells out to `dot`).
     Railroad {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
