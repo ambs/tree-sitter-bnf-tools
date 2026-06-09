@@ -544,6 +544,28 @@ fn check_json_without_summary_has_no_summary_key() {
     );
 }
 
+// ── railroad ──────────────────────────────────────────────────────────────────
+
+#[test]
+/// `--rule <unknown>` exits non-zero and names the missing rule in stderr (R-17).
+fn railroad_unknown_rule_exits_nonzero() {
+    let path = write_tmp("ts_bnf_rr_unknown.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["railroad", "--rule", "ghost"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "must exit non-zero for unknown --rule"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("ghost"),
+        "stderr must name the missing rule"
+    );
+}
+
 // ── stdin ─────────────────────────────────────────────────────────────────────
 
 #[test]
