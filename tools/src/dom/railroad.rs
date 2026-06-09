@@ -100,14 +100,14 @@ fn parse_viewbox(svg: &str) -> (i64, i64) {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r#"viewBox="0 0 (\d+) (\d+)""#)
+        regex::Regex::new(r#"viewBox="0 0 ([\d.]+) ([\d.]+)""#)
             .expect("hardcoded viewBox regex is always valid")
     });
     match re.captures(svg) {
         None => (0, 0),
         Some(caps) => {
-            let w = caps[1].parse().unwrap_or(0);
-            let h = caps[2].parse().unwrap_or(0);
+            let w = caps[1].parse::<f64>().unwrap_or(0.0) as i64;
+            let h = caps[2].parse::<f64>().unwrap_or(0.0) as i64;
             (w, h)
         }
     }
@@ -249,6 +249,8 @@ pub fn emit_single_file(
     }
 
     out.push_str("</svg>");
+    warnings.sort_unstable();
+    warnings.dedup();
     Ok((out, warnings))
 }
 
@@ -288,6 +290,8 @@ pub fn emit_split(
         std::fs::write(output_dir.join(format!("{name}.svg")), svg)?;
     }
 
+    warnings.sort_unstable();
+    warnings.dedup();
     Ok(warnings)
 }
 

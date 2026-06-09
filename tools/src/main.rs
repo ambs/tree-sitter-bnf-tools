@@ -434,23 +434,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             rule,
         } => {
             let (grammar, _) = parse_file(&filename, false)?;
+            let warnings;
             if split {
-                let dir = PathBuf::from(output_dir.unwrap());
-                let warnings = ts_bnf_tool::dom::railroad::emit_split(&grammar, &dir)?;
-                for w in &warnings {
-                    eprintln!("{w}");
-                }
+                let dir = PathBuf::from(
+                    output_dir.expect("clap requires --output-dir when --split is given"),
+                );
+                warnings = ts_bnf_tool::dom::railroad::emit_split(&grammar, &dir)?;
             } else {
-                let (svg, warnings) =
+                let svg;
+                (svg, warnings) =
                     ts_bnf_tool::dom::railroad::emit_single_file(&grammar, rule.as_deref())
                         .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
-                for w in &warnings {
-                    eprintln!("{w}");
-                }
                 match output {
                     Some(path) => fs::write(&path, &svg)?,
                     None => print!("{svg}"),
                 }
+            }
+            for w in &warnings {
+                eprintln!("{w}");
             }
         }
 
