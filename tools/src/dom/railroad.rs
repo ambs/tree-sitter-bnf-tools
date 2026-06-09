@@ -135,7 +135,11 @@ const LABEL_HEIGHT: i64 = 24;
 /// Vertical gap (px) inserted between consecutive rule blocks.
 const RULE_GAP: i64 = 16;
 
-/// Renders all rules in `grammar` stacked vertically into a single SVG document.
+/// Renders rules from `grammar` stacked vertically into a single SVG document.
+///
+/// When `only_rule` is `Some(name)`, only that rule is rendered; when `None`,
+/// all rules are rendered in declaration order.  In both cases the full grammar
+/// is used to build the `defined` set so non-terminal hrefs resolve correctly.
 ///
 /// Each rule is preceded by its name as a `<text>` label and wrapped in a
 /// `<g id="rule-<name>">` element so that `#rule-<name>` fragment links within
@@ -143,15 +147,22 @@ const RULE_GAP: i64 = 16;
 ///
 /// Non-terminal references use [`LinkMode::SingleFile`] hrefs (`#rule-<name>`).
 ///
-/// Returns `(svg_string, warnings)` where warnings are produced for any
+/// Returns `Ok((svg_string, warnings))` on success.  Warnings are produced for any
 /// non-terminal referenced but not defined in the grammar.
+///
+/// Returns `Err(message)` when `only_rule` names a rule that does not exist in
+/// the grammar.
 ///
 /// # Safety note
 /// Rule names are interpolated directly into SVG without escaping.  This is safe
 /// because BNF rule names match `[A-Za-z_][A-Za-z0-9_-]*` and contain no XML-special
 /// characters.
-pub fn emit_single_file(grammar: &super::types::Grammar) -> (String, Vec<String>) {
+pub fn emit_single_file(
+    grammar: &super::types::Grammar,
+    only_rule: Option<&str>,
+) -> Result<(String, Vec<String>), String> {
     // Collect defined rule names so the walker can detect undefined references.
+    // Always uses the full grammar even in single-rule mode so hrefs are correct.
     let defined: std::collections::HashSet<String> =
         grammar.productions.keys().cloned().collect();
     let mut warnings = Vec::new();
@@ -164,11 +175,23 @@ pub fn emit_single_file(grammar: &super::types::Grammar) -> (String, Vec<String>
         height: i64,
     }
 
+    // Select productions to render: either the single named rule or all rules.
+    // Validate the rule name immediately so callers get a clear error rather than
+    // a silently empty SVG.
+    let selected: Vec<_> = match only_rule {
+        None => grammar.productions.iter().collect(),
+        Some(name) => {
+            let entry = grammar.productions.get_key_value(name).ok_or_else(|| {
+                format!("rule '{name}' not found in grammar")
+            })?;
+            vec![entry]
+        }
+    };
+
     // Convert each production to a railroad diagram, render it to an SVG string,
     // parse the dimensions from the viewBox, and strip the outer <svg> wrapper so
     // the content can be re-embedded inside the combined document.
-    let rules: Vec<Rule<'_>> = grammar
-        .productions
+    let rules: Vec<Rule<'_>> = selected
         .iter()
         .map(|(name, prod)| {
             let seq = production_to_sequence(prod, &LinkMode::SingleFile, &defined, &mut warnings);
@@ -218,7 +241,7 @@ pub fn emit_single_file(grammar: &super::types::Grammar) -> (String, Vec<String>
     }
 
     out.push_str("</svg>");
-    (out, warnings)
+    Ok((out, warnings))
 }
 
 /// Renders each rule in `grammar` as a standalone SVG file written to `output_dir`.
@@ -488,7 +511,7 @@ mod tests {
     #[test]
     /// Single-file output is a valid SVG element containing both rule names as labels.
     fn single_file_is_svg() {
-        let (svg, _) = emit_single_file(&two_rule_grammar());
+        let (svg, _) = emit_single_file(&two_rule_grammar(), None).unwrap();
         assert!(svg.starts_with("<svg"), "output must open with <svg");
         assert!(svg.ends_with("</svg>"), "output must close with </svg>");
     }
@@ -496,7 +519,7 @@ mod tests {
     #[test]
     /// Single-file output contains one `id="rule-X"` anchor element per rule (R-12).
     fn single_file_has_one_anchor_per_rule() {
-        let (svg, _) = emit_single_file(&two_rule_grammar());
+        let (svg, _) = emit_single_file(&two_rule_grammar(), None).unwrap();
         assert!(svg.contains("id=\"rule-expr\""));
         assert!(svg.contains("id=\"rule-term\""));
     }
@@ -504,7 +527,7 @@ mod tests {
     #[test]
     /// Non-terminal hrefs in single-file mode point to anchors that exist in the same document (R-13).
     fn single_file_hrefs_resolve_to_local_anchors() {
-        let (svg, _) = emit_single_file(&two_rule_grammar());
+        let (svg, _) = emit_single_file(&two_rule_grammar(), None).unwrap();
         // expr references term, so there must be an href to #rule-term
         assert!(svg.contains("#rule-term"), "href to referenced rule must be present");
         // and the corresponding anchor must also exist in the same document
@@ -514,8 +537,26 @@ mod tests {
     #[test]
     /// The stylesheet is embedded exactly once at the top of the combined SVG.
     fn single_file_embeds_stylesheet_once() {
-        let (svg, _) = emit_single_file(&two_rule_grammar());
+        let (svg, _) = emit_single_file(&two_rule_grammar(), None).unwrap();
         assert_eq!(svg.matches("<style>").count(), 1, "stylesheet must appear exactly once");
+    }
+
+    // ── emit_single_file --rule ───────────────────────────────────────────────
+
+    #[test]
+    /// When only_rule names an existing rule, only that rule's diagram appears in the output.
+    fn single_rule_renders_only_named_rule() {
+        let (svg, _) = emit_single_file(&two_rule_grammar(), Some("expr")).unwrap();
+        assert!(svg.contains("id=\"rule-expr\""), "named rule anchor must be present");
+        assert!(!svg.contains("id=\"rule-term\""), "other rule anchors must be absent");
+    }
+
+    #[test]
+    /// When only_rule names a rule that does not exist, an error is returned instead of a silent empty SVG.
+    fn single_rule_unknown_name_returns_error() {
+        let result = emit_single_file(&two_rule_grammar(), Some("ghost"));
+        assert!(result.is_err(), "unknown rule must return Err");
+        assert!(result.unwrap_err().contains("ghost"), "error message must include the missing rule name");
     }
 
     // ── emit_split ────────────────────────────────────────────────────────────
