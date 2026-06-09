@@ -443,7 +443,7 @@ ts-bnf-tool railroad --rule expr grammar.bnf              # single named rule to
 
 Example output for a simple arithmetic grammar:
 
-![Railroad diagram for expr / term / factor](docs/railroad-example.svg)
+![Railroad diagram for the BNF grammar](docs/railroad-example.svg)
 
 In single-file mode each rule is preceded by its name as a label and wrapped
 in a `<g id="rule-<name>">` element so that `#rule-<name>` fragment links work.
