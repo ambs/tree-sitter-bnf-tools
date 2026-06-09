@@ -259,3 +259,11 @@ fn highlights_output_defaults_to_none() {
 fn railroad_split_requires_output_dir() {
     assert!(parse_railroad(&["--split", "f.bnf"]).is_err());
 }
+
+#[test]
+/// `--split` and `--rule` together are rejected at parse time (R-16).
+fn railroad_split_and_rule_conflict() {
+    assert!(
+        parse_railroad(&["--split", "--output-dir", "/tmp", "--rule", "expr", "f.bnf"]).is_err()
+    );
+}
