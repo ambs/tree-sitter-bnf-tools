@@ -544,6 +544,117 @@ fn check_json_without_summary_has_no_summary_key() {
     );
 }
 
+// ── railroad ──────────────────────────────────────────────────────────────────
+
+#[test]
+/// Undefined non-terminal reference emits a warning to stderr, still produces
+/// valid SVG on stdout, and exits 0 (R-18).
+fn railroad_undefined_ref_warns_but_exits_zero() {
+    // `ghost` is referenced but never defined.
+    let bnf = "expr -> ghost '+' expr ;\n";
+    let path = write_tmp("ts_bnf_rr_undef.bnf", bnf);
+    let out = tool().args(["railroad"]).arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "undefined reference must not abort; exit code was {:?}",
+        out.status.code()
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.starts_with("<svg"),
+        "stdout must be a valid SVG element"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("ghost"),
+        "stderr must name the undefined rule"
+    );
+    assert!(
+        stderr.contains("warning"),
+        "stderr must label the message as a warning"
+    );
+}
+
+#[test]
+/// Dogfood: `grammar/bnf.bnf` renders without error in single-file mode (R-20).
+fn railroad_dogfood_single_file() {
+    let grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../grammar/bnf.bnf");
+    let out = tool().args(["railroad"]).arg(&grammar).output().unwrap();
+    assert!(
+        out.status.success(),
+        "railroad on bnf.bnf must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.starts_with("<svg"), "output must be an SVG element");
+}
+
+#[test]
+/// Dogfood: `grammar/bnf.bnf` renders without error in split mode (R-20).
+fn railroad_dogfood_split() {
+    let grammar = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../grammar/bnf.bnf");
+    let out_dir = std::env::temp_dir().join("ts_bnf_rr_dogfood_split");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["railroad", "--split", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&grammar)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "railroad --split on bnf.bnf must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out_dir.exists(), "--output-dir must be created");
+    let svgs: Vec<_> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |x| x == "svg"))
+        .collect();
+    assert!(!svgs.is_empty(), "at least one .svg file must be written");
+}
+
+#[test]
+/// Grammar composed via `%include` renders rules from both files in the output (R-19).
+fn railroad_include_renders_all_rules() {
+    let path = write_include_pair("cli_rr_inc_a.bnf", "cli_rr_inc_b.bnf");
+    let out = tool().args(["railroad"]).arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "railroad on included grammar must exit 0"
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("id=\"rule-root\""),
+        "SVG must contain anchor for root rule"
+    );
+    assert!(
+        stdout.contains("id=\"rule-b_rule\""),
+        "SVG must contain anchor for included rule b_rule"
+    );
+}
+
+#[test]
+/// `--rule <unknown>` exits non-zero and names the missing rule in stderr (R-17).
+fn railroad_unknown_rule_exits_nonzero() {
+    let path = write_tmp("ts_bnf_rr_unknown.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["railroad", "--rule", "ghost"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "must exit non-zero for unknown --rule"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("ghost"),
+        "stderr must name the missing rule"
+    );
+}
+
 // ── stdin ─────────────────────────────────────────────────────────────────────
 
 #[test]
