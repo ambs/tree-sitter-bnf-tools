@@ -547,6 +547,35 @@ fn check_json_without_summary_has_no_summary_key() {
 // ── railroad ──────────────────────────────────────────────────────────────────
 
 #[test]
+/// Undefined non-terminal reference emits a warning to stderr, still produces
+/// valid SVG on stdout, and exits 0 (R-18).
+fn railroad_undefined_ref_warns_but_exits_zero() {
+    // `ghost` is referenced but never defined.
+    let bnf = "expr -> ghost '+' expr ;\n";
+    let path = write_tmp("ts_bnf_rr_undef.bnf", bnf);
+    let out = tool().args(["railroad"]).arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "undefined reference must not abort; exit code was {:?}",
+        out.status.code()
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.starts_with("<svg"),
+        "stdout must be a valid SVG element"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("ghost"),
+        "stderr must name the undefined rule"
+    );
+    assert!(
+        stderr.contains("warning"),
+        "stderr must label the message as a warning"
+    );
+}
+
+#[test]
 /// `--rule <unknown>` exits non-zero and names the missing rule in stderr (R-17).
 fn railroad_unknown_rule_exits_nonzero() {
     let path = write_tmp("ts_bnf_rr_unknown.bnf", CLEAN_BNF);
