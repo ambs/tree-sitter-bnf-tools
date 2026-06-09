@@ -142,6 +142,7 @@ Pass `-` as the filename to read from stdin.
 | `check` | Run static checks; exit non-zero on any issue |
 | `railroad` | Generate railroad / syntax diagrams as SVG |
 | `rename` | Rename a rule and all its references |
+| `graph` | Emit a rule-dependency graph (DOT / Mermaid / SVG / PDF / PNG) |
 
 ### convert
 
@@ -449,6 +450,41 @@ in a `<g id="rule-<name>">` element so that `#rule-<name>` fragment links work.
 In split mode each file is named `<rule>.svg` and non-terminal labels link to
 `<rule>.svg` relative paths, enabling navigation when the directory is served
 as a static site.
+
+### graph
+
+Emits a directed rule-dependency graph where nodes are grammar rules and edges
+are non-terminal references (lhs → each non-terminal used in its body).
+
+```sh
+ts-bnf-tool graph grammar.bnf                           # DOT to stdout (default)
+ts-bnf-tool graph --format mermaid grammar.bnf          # Mermaid flowchart to stdout
+ts-bnf-tool graph --format svg grammar.bnf              # SVG via Graphviz to stdout
+ts-bnf-tool graph --format svg -o grammar.svg grammar.bnf
+ts-bnf-tool graph --format pdf -o grammar.pdf grammar.bnf   # PDF requires -o
+ts-bnf-tool graph --format png -o grammar.png grammar.bnf   # PNG requires -o
+ts-bnf-tool graph --start expression grammar.bnf        # reachable from `expression` only
+```
+
+Example Mermaid output for a simple arithmetic grammar:
+
+```mermaid
+graph TD
+  expr(["expr  ★"])
+
+  expr --> term
+  term --> factor
+  factor --> expr
+```
+
+The start symbol (first production) is shown with a `★` suffix in Mermaid and
+`shape=doublecircle` in DOT. Non-terminals that are referenced but never defined
+are shown with a `⚠` suffix (Mermaid) or `style=dashed` (DOT) and a warning is
+printed to stderr. `--start <rule>` restricts the output to the subgraph
+reachable from that rule, which becomes the start symbol for styling purposes.
+
+`svg`, `pdf`, and `png` formats shell out to `dot` (Graphviz); install it from
+[graphviz.org](https://graphviz.org/download/) if needed.
 
 ## Development
 

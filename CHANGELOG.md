@@ -15,6 +15,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The `%include` keyword is highlighted as `@keyword` in `highlights.scm`.
 
 #### `ts-bnf-tool`
+- `graph` subcommand: emits a directed rule-dependency graph from a BNF grammar.
+  Default output is Graphviz DOT (`--format dot`); Mermaid flowchart is
+  available with `--format mermaid`. Rendered formats `svg`, `pdf`, and `png`
+  are produced by shelling out to `dot` (Graphviz); `pdf` and `png` require
+  `-o <file>`. The start symbol (first production) is highlighted with
+  `shape=doublecircle` (DOT) or a `★` suffix (Mermaid). Undefined references
+  are styled as dashed nodes (DOT) or carry a `⚠` suffix (Mermaid) and emit a
+  warning to stderr. `--start <rule>` restricts output to the subgraph reachable
+  from the named rule. Grammar files composed with `%include` are supported.
 - `railroad` subcommand: generates railroad / syntax diagrams (SVG) from a BNF
   grammar. Supports single-file mode (all rules stacked in one SVG, with
   `#rule-<name>` fragment anchors and cross-rule links), split mode

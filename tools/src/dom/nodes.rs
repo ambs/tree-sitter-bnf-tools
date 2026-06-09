@@ -44,6 +44,38 @@ pub enum GrammarNode {
 }
 
 impl GrammarNode {
+    /// Returns all non-terminal names referenced anywhere in this node's subtree.
+    ///
+    /// Tree-sitter annotations ([`GrammarNode::Token`], [`GrammarNode::Field`], etc.) are
+    /// transparent; only [`GrammarNode::Alias`] is special — its name child is a display label,
+    /// not a rule reference, so only its body is traversed.
+    pub fn nonterminal_names(&self) -> Vec<&str> {
+        let mut names = Vec::new();
+        self.collect_names(&mut names);
+        names
+    }
+
+    /// Recursive accumulator for [`GrammarNode::nonterminal_names`].
+    fn collect_names<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            GrammarNode::NonTerminal(name) => out.push(name),
+            GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => {}
+            GrammarNode::Sequence(children) | GrammarNode::Choice(children) => {
+                for c in children {
+                    c.collect_names(out);
+                }
+            }
+            GrammarNode::Optional(inner)
+            | GrammarNode::ZeroOrMore(inner)
+            | GrammarNode::OneOrMore(inner)
+            | GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner) => inner.collect_names(out),
+            GrammarNode::Field(_, inner) => inner.collect_names(out),
+            GrammarNode::Alias(body, _) => body.collect_names(out),
+            GrammarNode::Prec(_, _, inner) => inner.collect_names(out),
+        }
+    }
+
     /// Returns `true` if this node or any descendant is a [`GrammarNode::NonTerminal`].
     pub fn contains_nonterminal(&self) -> bool {
         match self {
