@@ -42,6 +42,14 @@ fn parse_firsts(args: &[&str]) -> Result<Cli, clap::Error> {
     Cli::try_parse_from(full)
 }
 
+fn parse_railroad(args: &[&str]) -> Result<Cli, clap::Error> {
+    let full: Vec<&str> = std::iter::once("ts-bnf-tool")
+        .chain(std::iter::once("railroad"))
+        .chain(args.iter().copied())
+        .collect();
+    Cli::try_parse_from(full)
+}
+
 #[test]
 fn format_strip_comments_default_is_true() {
     let cli = parse_format(&["f.bnf"]).unwrap();
@@ -244,4 +252,10 @@ fn highlights_output_defaults_to_none() {
         panic!("wrong subcommand");
     };
     assert!(output.is_none());
+}
+
+#[test]
+/// `--split` without `--output-dir` is rejected at parse time (R-15).
+fn railroad_split_requires_output_dir() {
+    assert!(parse_railroad(&["--split", "f.bnf"]).is_err());
 }
