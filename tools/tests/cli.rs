@@ -576,6 +576,26 @@ fn railroad_undefined_ref_warns_but_exits_zero() {
 }
 
 #[test]
+/// Grammar composed via `%include` renders rules from both files in the output (R-19).
+fn railroad_include_renders_all_rules() {
+    let path = write_include_pair("cli_rr_inc_a.bnf", "cli_rr_inc_b.bnf");
+    let out = tool().args(["railroad"]).arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "railroad on included grammar must exit 0"
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("id=\"rule-root\""),
+        "SVG must contain anchor for root rule"
+    );
+    assert!(
+        stdout.contains("id=\"rule-b_rule\""),
+        "SVG must contain anchor for included rule b_rule"
+    );
+}
+
+#[test]
 /// `--rule <unknown>` exits non-zero and names the missing rule in stderr (R-17).
 fn railroad_unknown_rule_exits_nonzero() {
     let path = write_tmp("ts_bnf_rr_unknown.bnf", CLEAN_BNF);
