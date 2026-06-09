@@ -16,6 +16,8 @@ pub mod highlights;
 mod nodes;
 /// A single named grammar rule.
 mod production;
+/// Walker that converts a [`GrammarNode`] tree into railroad-diagram combinators.
+pub mod railroad;
 /// Safe mechanical rename of a rule throughout a [`Grammar`].
 pub mod rename;
 /// Renders a [`Grammar`] as a complete `grammar.js` file.
