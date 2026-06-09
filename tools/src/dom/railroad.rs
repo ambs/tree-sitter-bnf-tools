@@ -113,6 +113,23 @@ fn parse_viewbox(svg: &str) -> (i64, i64) {
     }
 }
 
+/// Converts a single production body into a railroad `Sequence` framed by start/end markers.
+///
+/// This is the shared building block for both single-file and split-mode emitters.
+fn production_to_sequence(
+    prod: &super::production::Production,
+    mode: &LinkMode,
+    defined: &std::collections::HashSet<String>,
+    warnings: &mut Vec<String>,
+) -> railroad::Sequence<Box<dyn Node>> {
+    let body = node_to_railroad(&prod.body, mode, defined, warnings);
+    railroad::Sequence::new(vec![
+        Box::new(railroad::SimpleStart) as Box<dyn Node>,
+        body,
+        Box::new(railroad::SimpleEnd) as Box<dyn Node>,
+    ])
+}
+
 /// Vertical space (px) reserved above each diagram for the rule-name label.
 const LABEL_HEIGHT: i64 = 24;
 /// Vertical gap (px) inserted between consecutive rule blocks.
@@ -154,12 +171,7 @@ pub fn emit_single_file(grammar: &super::types::Grammar) -> (String, Vec<String>
         .productions
         .iter()
         .map(|(name, prod)| {
-            let body = node_to_railroad(&prod.body, &LinkMode::SingleFile, &defined, &mut warnings);
-            let seq = railroad::Sequence::new(vec![
-                Box::new(railroad::SimpleStart) as Box<dyn Node>,
-                body,
-                Box::new(railroad::SimpleEnd) as Box<dyn Node>,
-            ]);
+            let seq = production_to_sequence(prod, &LinkMode::SingleFile, &defined, &mut warnings);
             let svg = railroad::Diagram::new(seq).to_string();
             let (width, height) = parse_viewbox(&svg);
             let content = extract_diagram_content(&svg).to_owned();
@@ -207,6 +219,46 @@ pub fn emit_single_file(grammar: &super::types::Grammar) -> (String, Vec<String>
 
     out.push_str("</svg>");
     (out, warnings)
+}
+
+/// Renders each rule in `grammar` as a standalone SVG file written to `output_dir`.
+///
+/// Each file is named `<rule>.svg` and includes the railroad stylesheet so it renders
+/// correctly when opened on its own.  Non-terminal references use [`LinkMode::Split`]
+/// hrefs (`<name>.svg`), enabling navigation between files when served from the same
+/// directory.
+///
+/// `output_dir` is created if it does not already exist.
+///
+/// Returns the collected warnings on success, or an [`std::io::Error`] if any file
+/// could not be written.
+///
+/// # Safety note
+/// Rule names are interpolated into file-system paths without sanitisation.  This is
+/// safe because BNF rule names match `[A-Za-z_][A-Za-z0-9_-]*` and contain no
+/// path-separator or other shell-special characters.
+pub fn emit_split(
+    grammar: &super::types::Grammar,
+    output_dir: &std::path::Path,
+) -> Result<Vec<String>, std::io::Error> {
+    // Collect defined rule names so the walker can detect undefined references.
+    let defined: std::collections::HashSet<String> =
+        grammar.productions.keys().cloned().collect();
+    let mut warnings = Vec::new();
+
+    // Create the output directory (and any missing parents) before writing files.
+    std::fs::create_dir_all(output_dir)?;
+
+    // Render each rule as a self-contained SVG file.
+    for (name, prod) in &grammar.productions {
+        let seq = production_to_sequence(prod, &LinkMode::Split, &defined, &mut warnings);
+        // Each file stands alone, so embed the stylesheet for correct rendering.
+        let svg = railroad::Diagram::new_with_stylesheet(seq, &railroad::Stylesheet::Light)
+            .to_string();
+        std::fs::write(output_dir.join(format!("{name}.svg")), svg)?;
+    }
+
+    Ok(warnings)
 }
 
 /// Extracts the drawable elements from a single railroad diagram SVG string.
@@ -464,5 +516,47 @@ mod tests {
     fn single_file_embeds_stylesheet_once() {
         let (svg, _) = emit_single_file(&two_rule_grammar());
         assert_eq!(svg.matches("<style>").count(), 1, "stylesheet must appear exactly once");
+    }
+
+    // ── emit_split ────────────────────────────────────────────────────────────
+
+    /// Returns a temporary directory unique to the calling test (cleaned up by the caller).
+    fn make_temp_dir(suffix: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("railroad_test_{}_{}", std::process::id(), suffix));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    /// Split mode writes one .svg file per rule to the output directory (R-14).
+    fn split_writes_one_file_per_rule() {
+        let dir = make_temp_dir("split_files");
+        let warnings = emit_split(&two_rule_grammar(), &dir).unwrap();
+        assert!(dir.join("expr.svg").exists(), "expr.svg must be written");
+        assert!(dir.join("term.svg").exists(), "term.svg must be written");
+        assert!(warnings.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    /// Each per-rule SVG is a valid standalone SVG with an embedded stylesheet.
+    fn split_files_are_standalone_svgs() {
+        let dir = make_temp_dir("split_standalone");
+        emit_split(&two_rule_grammar(), &dir).unwrap();
+        let svg = std::fs::read_to_string(dir.join("expr.svg")).unwrap();
+        assert!(svg.starts_with("<svg"), "each split file must be a valid SVG");
+        assert!(svg.contains("<style"), "each split file must embed the stylesheet");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    /// Non-terminal hrefs in split mode point to `<name>.svg` relative paths (R-14).
+    fn split_hrefs_are_relative_svg_filenames() {
+        let dir = make_temp_dir("split_hrefs");
+        emit_split(&two_rule_grammar(), &dir).unwrap();
+        // expr references term, so expr.svg must link to term.svg
+        let svg = std::fs::read_to_string(dir.join("expr.svg")).unwrap();
+        assert!(svg.contains("term.svg"), "non-terminal href must point to <name>.svg");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
