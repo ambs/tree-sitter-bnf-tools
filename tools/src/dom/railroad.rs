@@ -95,6 +95,146 @@ pub fn node_to_railroad(
     }
 }
 
+/// Parses `viewBox="0 0 W H"` from a railroad SVG string and returns `(W, H)`.
+fn parse_viewbox(svg: &str) -> (i64, i64) {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r#"viewBox="0 0 (\d+) (\d+)""#)
+            .expect("hardcoded viewBox regex is always valid")
+    });
+    match re.captures(svg) {
+        None => (0, 0),
+        Some(caps) => {
+            let w = caps[1].parse().unwrap_or(0);
+            let h = caps[2].parse().unwrap_or(0);
+            (w, h)
+        }
+    }
+}
+
+/// Vertical space (px) reserved above each diagram for the rule-name label.
+const LABEL_HEIGHT: i64 = 24;
+/// Vertical gap (px) inserted between consecutive rule blocks.
+const RULE_GAP: i64 = 16;
+
+/// Renders all rules in `grammar` stacked vertically into a single SVG document.
+///
+/// Each rule is preceded by its name as a `<text>` label and wrapped in a
+/// `<g id="rule-<name>">` element so that `#rule-<name>` fragment links within
+/// the document resolve to the correct diagram.
+///
+/// Non-terminal references use [`LinkMode::SingleFile`] hrefs (`#rule-<name>`).
+///
+/// Returns `(svg_string, warnings)` where warnings are produced for any
+/// non-terminal referenced but not defined in the grammar.
+///
+/// # Safety note
+/// Rule names are interpolated directly into SVG without escaping.  This is safe
+/// because BNF rule names match `[A-Za-z_][A-Za-z0-9_-]*` and contain no XML-special
+/// characters.
+pub fn emit_single_file(grammar: &super::types::Grammar) -> (String, Vec<String>) {
+    // Collect defined rule names so the walker can detect undefined references.
+    let defined: std::collections::HashSet<String> =
+        grammar.productions.keys().cloned().collect();
+    let mut warnings = Vec::new();
+
+    // Per-rule rendering result: the extracted SVG content and its pixel dimensions.
+    struct Rule<'a> {
+        name: &'a str,
+        content: String,
+        width: i64,
+        height: i64,
+    }
+
+    // Convert each production to a railroad diagram, render it to an SVG string,
+    // parse the dimensions from the viewBox, and strip the outer <svg> wrapper so
+    // the content can be re-embedded inside the combined document.
+    let rules: Vec<Rule<'_>> = grammar
+        .productions
+        .iter()
+        .map(|(name, prod)| {
+            let body = node_to_railroad(&prod.body, &LinkMode::SingleFile, &defined, &mut warnings);
+            let seq = railroad::Sequence::new(vec![
+                Box::new(railroad::SimpleStart) as Box<dyn Node>,
+                body,
+                Box::new(railroad::SimpleEnd) as Box<dyn Node>,
+            ]);
+            let svg = railroad::Diagram::new(seq).to_string();
+            let (width, height) = parse_viewbox(&svg);
+            let content = extract_diagram_content(&svg).to_owned();
+            Rule { name, content, width, height }
+        })
+        .collect();
+
+    // The combined SVG is as wide as the widest rule (minimum 200px) and tall
+    // enough to stack every rule block (label + diagram + gap) without overlap.
+    let max_width = rules.iter().map(|r| r.width).max().unwrap_or(200).max(200);
+    let total_height: i64 = rules
+        .iter()
+        .map(|r| LABEL_HEIGHT + r.height + RULE_GAP)
+        .sum();
+
+    // Open the combined SVG and embed the railroad stylesheet once at the top.
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" \
+         xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
+         class=\"railroad\" \
+         viewBox=\"0 0 {max_width} {total_height}\">\n"
+    ));
+    out.push_str(&format!("<style>{}</style>\n", railroad::DEFAULT_CSS));
+    out.push_str("<rect width=\"100%\" height=\"100%\" class=\"railroad_canvas\"/>\n");
+
+    // Emit each rule block: a named anchor group, a rule-name label, and the diagram.
+    // The group is translated to its vertical position so rules stack without overlap.
+    let mut y: i64 = 0;
+    for rule in &rules {
+        // `id="rule-<name>"` is the fragment anchor target for #rule-<name> hrefs.
+        out.push_str(&format!("<g id=\"rule-{name}\" transform=\"translate(0, {y})\">\n", name = rule.name));
+        // Rule name label sits just above the diagram (baseline at LABEL_HEIGHT - 6).
+        out.push_str(&format!(
+            "<text x=\"10\" y=\"{label_y}\" style=\"font:bold 14px monospace\">{name}</text>\n",
+            label_y = LABEL_HEIGHT - 6,
+            name = rule.name,
+        ));
+        // Shift the diagram content down by LABEL_HEIGHT to leave room for the label.
+        out.push_str(&format!("<g transform=\"translate(0, {LABEL_HEIGHT})\">\n"));
+        out.push_str(&rule.content);
+        out.push_str("\n</g>\n</g>\n");
+        y += LABEL_HEIGHT + rule.height + RULE_GAP;
+    }
+
+    out.push_str("</svg>");
+    (out, warnings)
+}
+
+/// Extracts the drawable elements from a single railroad diagram SVG string.
+///
+/// Strips the outer `<svg …>` opening tag, the `<rect … railroad_canvas … />` background,
+/// and the `</svg>` closing tag, returning only the diagram's inner elements.
+fn extract_diagram_content(svg: &str) -> &str {
+    // Skip the <svg …> opening tag (ends at the first '>')
+    let after_open = match svg.find('>') {
+        Some(i) => svg[i + 1..].trim_start(),
+        None => return svg,
+    };
+    // Skip the canvas background <rect … />
+    let after_rect = if after_open.starts_with("<rect") {
+        match after_open.find('>') {
+            Some(i) => after_open[i + 1..].trim_start(),
+            None => after_open,
+        }
+    } else {
+        after_open
+    };
+    // Strip the </svg> closing tag
+    match after_rect.rfind("</svg>") {
+        Some(i) => after_rect[..i].trim_end(),
+        None => after_rect,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +410,59 @@ mod tests {
         );
         let (svg, _) = to_svg(&node, &LinkMode::SingleFile, &def(&[]));
         assert!(svg.contains("PRC"));
+    }
+
+    // ── emit_single_file ─────────────────────────────────────────────────────
+
+    /// Builds a two-rule Grammar fixture for emit_single_file tests.
+    fn two_rule_grammar() -> super::super::types::Grammar {
+        use super::super::production::Production;
+        super::super::types::Grammar::from_rules([
+            Production {
+                name: "expr".into(),
+                body: GrammarNode::NonTerminal("term".into()),
+                line: 1,
+                filename: "test.bnf".into(),
+            },
+            Production {
+                name: "term".into(),
+                body: GrammarNode::TerminalLiteral("NUM".into()),
+                line: 2,
+                filename: "test.bnf".into(),
+            },
+        ])
+    }
+
+    #[test]
+    /// Single-file output is a valid SVG element containing both rule names as labels.
+    fn single_file_is_svg() {
+        let (svg, _) = emit_single_file(&two_rule_grammar());
+        assert!(svg.starts_with("<svg"), "output must open with <svg");
+        assert!(svg.ends_with("</svg>"), "output must close with </svg>");
+    }
+
+    #[test]
+    /// Single-file output contains one `id="rule-X"` anchor element per rule (R-12).
+    fn single_file_has_one_anchor_per_rule() {
+        let (svg, _) = emit_single_file(&two_rule_grammar());
+        assert!(svg.contains("id=\"rule-expr\""));
+        assert!(svg.contains("id=\"rule-term\""));
+    }
+
+    #[test]
+    /// Non-terminal hrefs in single-file mode point to anchors that exist in the same document (R-13).
+    fn single_file_hrefs_resolve_to_local_anchors() {
+        let (svg, _) = emit_single_file(&two_rule_grammar());
+        // expr references term, so there must be an href to #rule-term
+        assert!(svg.contains("#rule-term"), "href to referenced rule must be present");
+        // and the corresponding anchor must also exist in the same document
+        assert!(svg.contains("id=\"rule-term\""), "anchor target must exist in the document");
+    }
+
+    #[test]
+    /// The stylesheet is embedded exactly once at the top of the combined SVG.
+    fn single_file_embeds_stylesheet_once() {
+        let (svg, _) = emit_single_file(&two_rule_grammar());
+        assert_eq!(svg.matches("<style>").count(), 1, "stylesheet must appear exactly once");
     }
 }

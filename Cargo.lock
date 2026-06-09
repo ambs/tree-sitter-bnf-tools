@@ -771,6 +771,7 @@ dependencies = [
  "indexmap",
  "indoc",
  "railroad",
+ "regex",
  "serde",
  "serde_json",
  "tree-sitter",
