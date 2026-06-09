@@ -237,7 +237,7 @@ pub fn emit_single_file(
         ));
         // Rule name label sits just above the diagram (baseline at LABEL_HEIGHT - 6).
         out.push_str(&format!(
-            "<text x=\"10\" y=\"{label_y}\" style=\"font:bold 14px monospace\">{name}</text>\n",
+            "<text x=\"10\" y=\"{label_y}\" style=\"font:bold 14px monospace;text-anchor:start\">{name}</text>\n",
             label_y = LABEL_HEIGHT - 6,
             name = rule.name,
         ));
