@@ -768,6 +768,8 @@ highlighted: `shape=doublecircle` in DOT and a `★` suffix in Mermaid.
 Non-terminals that are referenced but never defined are shown with
 `style=dashed` (DOT) or a `⚠` suffix (Mermaid), and a warning is printed to
 stderr. The edge and the node are still emitted — the graph is never incomplete.
+DOT node IDs are always quoted, so rule names that collide with Graphviz
+keywords (`node`, `edge`, `graph`, …) remain valid.
 
 `--start <rule>` restricts the output to the subgraph reachable from the named
 rule via BFS. Rules not reachable from it are silently omitted. The named rule
@@ -784,40 +786,40 @@ The `--start` flag focuses the output on a single subtree.
 
 ```dot
 digraph grammar {
-  rule [shape=doublecircle];
-  rule -> nonTerminal;
-  rule -> ruleBody;
-  ruleBody -> symbolSeq;
-  symbolSeq -> symbol;
-  symbolSeq -> precAnnotation;
-  ruleBodyInner -> symbolSeqInner;
-  symbolSeqInner -> symbol;
-  symbol -> fieldLabel;
-  symbol -> _symbolContent;
-  symbol -> _kleeneOp;
-  _symbolContent -> nonTerminal;
-  _symbolContent -> _terminal;
-  _symbolContent -> subSeq;
-  _symbolContent -> aliasGroup;
-  _symbolContent -> tokenExpr;
-  _symbolContent -> tokenImmediateExpr;
-  _symbolContent -> precGroup;
-  subSeq -> ruleBodyInner;
-  aliasGroup -> ruleBody;
-  aliasGroup -> aliasName;
-  aliasName -> nonTerminal;
-  aliasName -> literal;
-  tokenExpr -> ruleBody;
-  tokenImmediateExpr -> ruleBody;
-  precGroup -> ruleBodyInner;
-  precGroup -> precAnnotation;
-  _kleeneOp -> plus;
-  _kleeneOp -> asterisk;
-  _kleeneOp -> questionMark;
-  precAnnotation -> precKind;
-  precAnnotation -> integer;
-  _terminal -> pattern;
-  _terminal -> literal;
+  "rule" [shape=doublecircle];
+  "rule" -> "nonTerminal";
+  "rule" -> "ruleBody";
+  "ruleBody" -> "symbolSeq";
+  "symbolSeq" -> "symbol";
+  "symbolSeq" -> "precAnnotation";
+  "ruleBodyInner" -> "symbolSeqInner";
+  "symbolSeqInner" -> "symbol";
+  "symbol" -> "fieldLabel";
+  "symbol" -> "_symbolContent";
+  "symbol" -> "_kleeneOp";
+  "_symbolContent" -> "nonTerminal";
+  "_symbolContent" -> "_terminal";
+  "_symbolContent" -> "subSeq";
+  "_symbolContent" -> "aliasGroup";
+  "_symbolContent" -> "tokenExpr";
+  "_symbolContent" -> "tokenImmediateExpr";
+  "_symbolContent" -> "precGroup";
+  "subSeq" -> "ruleBodyInner";
+  "aliasGroup" -> "ruleBody";
+  "aliasGroup" -> "aliasName";
+  "aliasName" -> "nonTerminal";
+  "aliasName" -> "literal";
+  "tokenExpr" -> "ruleBody";
+  "tokenImmediateExpr" -> "ruleBody";
+  "precGroup" -> "ruleBodyInner";
+  "precGroup" -> "precAnnotation";
+  "_kleeneOp" -> "plus";
+  "_kleeneOp" -> "asterisk";
+  "_kleeneOp" -> "questionMark";
+  "precAnnotation" -> "precKind";
+  "precAnnotation" -> "integer";
+  "_terminal" -> "pattern";
+  "_terminal" -> "literal";
 }
 ```
 
@@ -825,42 +827,71 @@ The same subgraph as Mermaid (`--format mermaid --start rule`):
 
 ```mermaid
 graph TD
-  rule(["rule  ★"])
+  _kleeneOp_["_kleeneOp"]
+  _symbolContent_["_symbolContent"]
+  _terminal_["_terminal"]
+  aliasGroup_["aliasGroup"]
+  aliasName_["aliasName"]
+  asterisk_["asterisk"]
+  fieldLabel_["fieldLabel"]
+  integer_["integer"]
+  literal_["literal"]
+  nonTerminal_["nonTerminal"]
+  pattern_["pattern"]
+  plus_["plus"]
+  precAnnotation_["precAnnotation"]
+  precGroup_["precGroup"]
+  precKind_["precKind"]
+  questionMark_["questionMark"]
+  rule_(["rule  ★"])
+  ruleBody_["ruleBody"]
+  ruleBodyInner_["ruleBodyInner"]
+  subSeq_["subSeq"]
+  symbol_["symbol"]
+  symbolSeq_["symbolSeq"]
+  symbolSeqInner_["symbolSeqInner"]
+  tokenExpr_["tokenExpr"]
+  tokenImmediateExpr_["tokenImmediateExpr"]
 
-  rule --> nonTerminal
-  rule --> ruleBody
-  ruleBody --> symbolSeq
-  symbolSeq --> symbol
-  symbolSeq --> precAnnotation
-  ruleBodyInner --> symbolSeqInner
-  symbolSeqInner --> symbol
-  symbol --> fieldLabel
-  symbol --> _symbolContent
-  symbol --> _kleeneOp
-  _symbolContent --> nonTerminal
-  _symbolContent --> _terminal
-  _symbolContent --> subSeq
-  _symbolContent --> aliasGroup
-  _symbolContent --> tokenExpr
-  _symbolContent --> tokenImmediateExpr
-  _symbolContent --> precGroup
-  subSeq --> ruleBodyInner
-  aliasGroup --> ruleBody
-  aliasGroup --> aliasName
-  aliasName --> nonTerminal
-  aliasName --> literal
-  tokenExpr --> ruleBody
-  tokenImmediateExpr --> ruleBody
-  precGroup --> ruleBodyInner
-  precGroup --> precAnnotation
-  _kleeneOp --> plus
-  _kleeneOp --> asterisk
-  _kleeneOp --> questionMark
-  precAnnotation --> precKind
-  precAnnotation --> integer
-  _terminal --> pattern
-  _terminal --> literal
+  rule_ --> nonTerminal_
+  rule_ --> ruleBody_
+  ruleBody_ --> symbolSeq_
+  symbolSeq_ --> symbol_
+  symbolSeq_ --> precAnnotation_
+  ruleBodyInner_ --> symbolSeqInner_
+  symbolSeqInner_ --> symbol_
+  symbol_ --> fieldLabel_
+  symbol_ --> _symbolContent_
+  symbol_ --> _kleeneOp_
+  _symbolContent_ --> nonTerminal_
+  _symbolContent_ --> _terminal_
+  _symbolContent_ --> subSeq_
+  _symbolContent_ --> aliasGroup_
+  _symbolContent_ --> tokenExpr_
+  _symbolContent_ --> tokenImmediateExpr_
+  _symbolContent_ --> precGroup_
+  subSeq_ --> ruleBodyInner_
+  aliasGroup_ --> ruleBody_
+  aliasGroup_ --> aliasName_
+  aliasName_ --> nonTerminal_
+  aliasName_ --> literal_
+  tokenExpr_ --> ruleBody_
+  tokenImmediateExpr_ --> ruleBody_
+  precGroup_ --> ruleBodyInner_
+  precGroup_ --> precAnnotation_
+  _kleeneOp_ --> plus_
+  _kleeneOp_ --> asterisk_
+  _kleeneOp_ --> questionMark_
+  precAnnotation_ --> precKind_
+  precAnnotation_ --> integer_
+  _terminal_ --> pattern_
+  _terminal_ --> literal_
 ```
+
+Mermaid node IDs carry a trailing underscore (`rule_`) because Mermaid cannot
+quote IDs and some rule names (`end`, `style`, `class`, …) are flowchart
+keywords; the label in brackets always shows the real rule name, so rendered
+diagrams are unaffected.
 
 `svg`, `pdf`, and `png` formats shell out to `dot` (Graphviz). If `dot` is not
 on your `PATH` the tool prints a clear error with the Graphviz install URL and

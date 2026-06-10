@@ -802,8 +802,8 @@ fn graph_dot_basic_output() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("digraph grammar {"));
-    assert!(stdout.contains("program -> statement"));
-    assert!(stdout.contains("program -> expression"));
+    assert!(stdout.contains("\"program\" -> \"statement\""));
+    assert!(stdout.contains("\"program\" -> \"expression\""));
 }
 
 #[test]
@@ -813,7 +813,25 @@ fn graph_dot_start_symbol_doublecircle() {
     let out = tool().args(["graph"]).arg(&path).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("program [shape=doublecircle]"));
+    assert!(stdout.contains("\"program\" [shape=doublecircle]"));
+}
+
+#[test]
+/// `%axiom` overrides declaration order: the named rule carries `shape=doublecircle`.
+fn graph_dot_axiom_is_start_symbol() {
+    let bnf = indoc! {"
+        %axiom expression
+        program -> statement expression ;
+        statement -> 'let' /[a-z]+/ ;
+        expression -> term '+' term ;
+        term -> /[0-9]+/ ;
+    "};
+    let path = write_tmp("ts_bnf_graph_axiom.bnf", bnf);
+    let out = tool().args(["graph"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"expression\" [shape=doublecircle]"));
+    assert!(!stdout.contains("\"program\" [shape=doublecircle]"));
 }
 
 #[test]
@@ -824,7 +842,7 @@ fn graph_dot_undefined_ref_dashed_and_warns() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stdout.contains("extern_rule [style=dashed]"));
+    assert!(stdout.contains("\"extern_rule\" [style=dashed]"));
     assert!(stderr.contains("extern_rule") && stderr.contains("not defined"));
 }
 
@@ -872,7 +890,7 @@ fn graph_start_prunes_unreachable() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        !stdout.contains("statement ->") && !stdout.contains("statement;"),
+        !stdout.contains("\"statement\""),
         "unreachable rule 'statement' must not appear in output"
     );
     assert!(stdout.contains("expression"));

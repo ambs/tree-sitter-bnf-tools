@@ -7,6 +7,18 @@ use std::process::{Command, Stdio};
 
 use super::types::Grammar;
 
+/// A rule-dependency graph extracted from a BNF grammar.
+pub struct GraphData {
+    /// Deduplicated directed edges in declaration order: `(from_rule, to_rule)`.
+    pub edges: Vec<(String, String)>,
+    /// The name of the start (root) rule.
+    pub start: String,
+    /// Rule names that are defined in the grammar (after any `--start` filtering).
+    pub defined: HashSet<String>,
+    /// Rule names referenced on a RHS but never defined.
+    pub undefined: HashSet<String>,
+}
+
 /// Computes the undefined references and their warning messages for the given edge list.
 fn compute_undefined(
     edges: &[(String, String)],
@@ -59,8 +71,29 @@ fn filter_reachable(
     (filtered_edges, filtered_defined)
 }
 
+/// Returns all deduplicated `(lhs, rhs)` non-terminal edges for the grammar in declaration order.
+fn build_raw_edges(grammar: &Grammar) -> Vec<(String, String)> {
+    let mut edge_set: HashSet<(String, String)> = HashSet::new();
+    let mut edges: Vec<(String, String)> = Vec::new();
+    for (lhs, production) in &grammar.productions {
+        let mut seen_rhs: HashSet<&str> = HashSet::new();
+        for rhs in production.body.nonterminal_names() {
+            if seen_rhs.insert(rhs) {
+                let key = (lhs.clone(), rhs.to_string());
+                if edge_set.insert(key.clone()) {
+                    edges.push(key);
+                }
+            }
+        }
+    }
+    edges
+}
+
 /// Builds a [`GraphData`] from the grammar, optionally restricting to rules
 /// reachable from `start_rule`.
+///
+/// The start symbol is the rule named by `%axiom` when declared (and defined),
+/// otherwise the first production in declaration order; `start_rule` overrides both.
 ///
 /// Returns an error string if `start_rule` is given but does not exist in the grammar.
 /// Returns the graph data together with a list of undefined-reference warnings.
@@ -76,10 +109,11 @@ pub fn build_graph(
         }
         Some(sr) => sr.to_string(),
         None => grammar
-            .productions
-            .keys()
-            .next()
-            .map(String::as_str)
+            .axiom
+            .as_ref()
+            .map(|item| item.name.as_str())
+            .filter(|name| defined.contains(*name))
+            .or_else(|| grammar.productions.keys().next().map(String::as_str))
             .unwrap_or("")
             .to_string(),
     };
@@ -122,55 +156,85 @@ fn isolated_nodes(data: &GraphData) -> Vec<&str> {
 }
 
 /// Emits `data` as a Graphviz DOT digraph string.
+///
+/// All node IDs are double-quoted so that rule names colliding with DOT
+/// keywords (`node`, `graph`, `edge`, …) remain valid; the rule-name charset
+/// (`[A-Za-z_][A-Za-z0-9_]*`) cannot contain quotes, so no escaping is needed.
 pub fn emit_dot(data: &GraphData) -> String {
     let mut lines: Vec<String> = vec!["digraph grammar {".to_string()];
 
     if !data.start.is_empty() {
-        lines.push(format!("  {} [shape=doublecircle];", data.start));
+        lines.push(format!("  \"{}\" [shape=doublecircle];", data.start));
     }
 
     let mut undef: Vec<&str> = data.undefined.iter().map(String::as_str).collect();
     undef.sort_unstable();
     for name in &undef {
-        lines.push(format!("  {} [style=dashed];", name));
+        lines.push(format!("  \"{}\" [style=dashed];", name));
     }
 
     for name in isolated_nodes(data) {
-        lines.push(format!("  {};", name));
+        lines.push(format!("  \"{}\";", name));
     }
 
     for (lhs, rhs) in &data.edges {
-        lines.push(format!("  {} -> {};", lhs, rhs));
+        lines.push(format!("  \"{}\" -> \"{}\";", lhs, rhs));
     }
 
     lines.push("}".to_string());
     lines.join("\n") + "\n"
 }
 
+/// Returns the Mermaid node ID for a rule name.
+///
+/// Mermaid node IDs cannot be quoted, and a bare rule name can collide with a
+/// flowchart keyword (`end` breaks the diagram even as `end["end"]`; a lone
+/// `style`/`class`/`click` line is parsed as a statement). Every ID therefore
+/// carries a trailing underscore — uniform escaping, no keyword list to
+/// maintain — and the node label shows the real rule name.
+fn mermaid_id(name: &str) -> String {
+    format!("{name}_")
+}
+
 /// Emits `data` as a Mermaid flowchart string.
+///
+/// Because node IDs are escaped via [`mermaid_id`], every node gets an
+/// explicit `id["name"]` label declaration so the rendered diagram shows the
+/// original rule names. Declarations come first (sorted), then the edge list
+/// in declaration order.
 pub fn emit_mermaid(data: &GraphData) -> String {
     let mut lines: Vec<String> = vec!["graph TD".to_string()];
 
-    if !data.start.is_empty() {
-        lines.push(format!("  {}([\"{}  ★\"])", data.start, data.start));
+    // One label declaration per node. `defined ∪ undefined` covers every node
+    // in the graph: each edge endpoint is either a defined rule or was
+    // collected into `undefined`, and isolated rules are in `defined`.
+    let mut names: Vec<&str> = data
+        .defined
+        .union(&data.undefined)
+        .map(String::as_str)
+        .collect();
+    names.sort_unstable();
+    for name in names {
+        let line = if name == data.start {
+            // Start symbol: stadium shape with a ★ suffix.
+            format!("  {}([\"{}  ★\"])", mermaid_id(name), name)
+        } else if data.undefined.contains(name) {
+            // Referenced but never defined: ⚠ suffix.
+            format!("  {}[\"{} ⚠\"]", mermaid_id(name), name)
+        } else {
+            // Ordinary rule: plain label.
+            format!("  {}[\"{}\"]", mermaid_id(name), name)
+        };
+        lines.push(line);
     }
 
-    let mut undef: Vec<&str> = data.undefined.iter().map(String::as_str).collect();
-    undef.sort_unstable();
-    for name in &undef {
-        lines.push(format!("  {}[\"{} ⚠\"]", name, name));
-    }
-
-    for name in isolated_nodes(data) {
-        lines.push(format!("  {}", name));
-    }
-
+    // Blank separator between node declarations and the edge list.
     if !data.edges.is_empty() {
         lines.push(String::new());
     }
 
     for (lhs, rhs) in &data.edges {
-        lines.push(format!("  {} --> {}", lhs, rhs));
+        lines.push(format!("  {} --> {}", mermaid_id(lhs), mermaid_id(rhs)));
     }
 
     lines.join("\n") + "\n"
@@ -210,7 +274,7 @@ pub fn run_graphviz(dot_input: &str, format: &str) -> Result<Vec<u8>, Box<dyn Er
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{nt, p};
+    use crate::dom::test_utils::{di, nt, p};
     use crate::dom::{Grammar, GrammarNode};
 
     /// Convenience: build a two-rule grammar `root -> a ; a -> /x/ ;`.
@@ -267,6 +331,25 @@ mod tests {
     }
 
     #[test]
+    /// `%axiom` overrides declaration order: the named rule is the start symbol.
+    fn start_symbol_honors_axiom() {
+        let mut g = two_rule_grammar();
+        g.axiom = Some(di("a", 1));
+        let (data, _) = build_graph(&g, None).unwrap();
+        assert_eq!(data.start, "a");
+    }
+
+    #[test]
+    /// `%axiom` naming an undefined rule is ignored: the start symbol falls
+    /// back to the first production (same graceful fallback as scaffold).
+    fn start_symbol_axiom_undefined_falls_back() {
+        let mut g = two_rule_grammar();
+        g.axiom = Some(di("ghost", 1));
+        let (data, _) = build_graph(&g, None).unwrap();
+        assert_eq!(data.start, "root");
+    }
+
+    #[test]
     /// A non-terminal that is referenced but never defined appears in `undefined` with a warning.
     fn undefined_reference_detected() {
         let g = Grammar::from_rules([p("root", nt("extern_rule"))]);
@@ -309,7 +392,21 @@ mod tests {
     /// The start symbol node carries `shape=doublecircle` in DOT output.
     fn dot_start_is_doublecircle() {
         let (data, _) = build_graph(&two_rule_grammar(), None).unwrap();
-        assert!(emit_dot(&data).contains("root [shape=doublecircle]"));
+        assert!(emit_dot(&data).contains("\"root\" [shape=doublecircle]"));
+    }
+
+    #[test]
+    /// All DOT node IDs are quoted, so rule names that collide with DOT
+    /// keywords (`node`, `graph`, `edge`, …) still produce valid DOT.
+    fn dot_ids_are_quoted() {
+        let g = Grammar::from_rules([
+            p("expr", nt("node")),
+            p("node", GrammarNode::TerminalPattern("/[0-9]+/".into())),
+        ]);
+        let (data, _) = build_graph(&g, None).unwrap();
+        let dot = emit_dot(&data);
+        assert!(dot.contains("\"expr\" [shape=doublecircle];"));
+        assert!(dot.contains("\"expr\" -> \"node\";"));
     }
 
     #[test]
@@ -317,7 +414,7 @@ mod tests {
     fn dot_undefined_is_dashed() {
         let g = Grammar::from_rules([p("root", nt("extern_rule"))]);
         let (data, _) = build_graph(&g, None).unwrap();
-        assert!(emit_dot(&data).contains("extern_rule [style=dashed]"));
+        assert!(emit_dot(&data).contains("\"extern_rule\" [style=dashed]"));
     }
 
     #[test]
@@ -330,6 +427,35 @@ mod tests {
     }
 
     #[test]
+    /// A rule named after a Mermaid keyword (`end`) is emitted under an escaped
+    /// node ID with the real name as label, so the diagram still renders.
+    fn mermaid_reserved_name_escaped_in_edges() {
+        let g = Grammar::from_rules([
+            p("root", nt("end")),
+            p("end", GrammarNode::TerminalPattern("/x/".into())),
+        ]);
+        let (data, _) = build_graph(&g, None).unwrap();
+        let mermaid = emit_mermaid(&data);
+        assert!(mermaid.contains("root_ --> end_"));
+        assert!(mermaid.contains("end_[\"end\"]"));
+        assert!(!mermaid.contains("--> end\n"));
+    }
+
+    #[test]
+    /// An isolated rule named after a Mermaid statement keyword (`style`) is not
+    /// emitted as a bare keyword line, which Mermaid would parse as a statement.
+    fn mermaid_isolated_reserved_name_escaped() {
+        let g = Grammar::from_rules([
+            p("root", GrammarNode::TerminalPattern("/x/".into())),
+            p("style", GrammarNode::TerminalPattern("/y/".into())),
+        ]);
+        let (data, _) = build_graph(&g, None).unwrap();
+        let mermaid = emit_mermaid(&data);
+        assert!(!mermaid.lines().any(|l| l.trim() == "style"));
+        assert!(mermaid.contains("style_[\"style\"]"));
+    }
+
+    #[test]
     /// Undefined references carry the `⚠` suffix in Mermaid output.
     fn mermaid_undefined_has_warning_symbol() {
         let g = Grammar::from_rules([p("root", nt("extern_rule"))]);
@@ -337,34 +463,4 @@ mod tests {
         let mermaid = emit_mermaid(&data);
         assert!(mermaid.contains("⚠") && mermaid.contains("extern_rule"));
     }
-}
-
-/// A rule-dependency graph extracted from a BNF grammar.
-pub struct GraphData {
-    /// Deduplicated directed edges in declaration order: `(from_rule, to_rule)`.
-    pub edges: Vec<(String, String)>,
-    /// The name of the start (root) rule.
-    pub start: String,
-    /// Rule names that are defined in the grammar (after any `--start` filtering).
-    pub defined: HashSet<String>,
-    /// Rule names referenced on a RHS but never defined.
-    pub undefined: HashSet<String>,
-}
-
-/// Returns all deduplicated `(lhs, rhs)` non-terminal edges for the grammar in declaration order.
-fn build_raw_edges(grammar: &Grammar) -> Vec<(String, String)> {
-    let mut edge_set: HashSet<(String, String)> = HashSet::new();
-    let mut edges: Vec<(String, String)> = Vec::new();
-    for (lhs, production) in &grammar.productions {
-        let mut seen_rhs: HashSet<&str> = HashSet::new();
-        for rhs in production.body.nonterminal_names() {
-            if seen_rhs.insert(rhs) {
-                let key = (lhs.clone(), rhs.to_string());
-                if edge_set.insert(key.clone()) {
-                    edges.push(key);
-                }
-            }
-        }
-    }
-    edges
 }

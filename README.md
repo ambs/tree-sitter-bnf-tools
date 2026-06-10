@@ -470,18 +470,24 @@ Example Mermaid output for a simple arithmetic grammar:
 
 ```mermaid
 graph TD
-  expr(["expr  ★"])
+  expr_(["expr  ★"])
+  factor_["factor"]
+  term_["term"]
 
-  expr --> term
-  term --> factor
-  factor --> expr
+  expr_ --> term_
+  term_ --> factor_
+  factor_ --> expr_
 ```
 
-The start symbol (first production) is shown with a `★` suffix in Mermaid and
-`shape=doublecircle` in DOT. Non-terminals that are referenced but never defined
-are shown with a `⚠` suffix (Mermaid) or `style=dashed` (DOT) and a warning is
-printed to stderr. `--start <rule>` restricts the output to the subgraph
-reachable from that rule, which becomes the start symbol for styling purposes.
+The start symbol (the `%axiom` rule if declared, otherwise the first
+production) is shown with a `★` suffix in Mermaid and `shape=doublecircle` in
+DOT. Non-terminals that are referenced but never defined are shown with a `⚠`
+suffix (Mermaid) or `style=dashed` (DOT) and a warning is printed to stderr.
+DOT node IDs are always quoted, and Mermaid node IDs carry a trailing
+underscore (labels show the real rule name), so rule names that collide with
+Graphviz or Mermaid keywords (`node`, `edge`, `end`, …) remain valid.
+`--start <rule>` restricts the output to the subgraph reachable from that
+rule, which becomes the start symbol for styling purposes.
 
 `svg`, `pdf`, and `png` formats shell out to `dot` (Graphviz); install it from
 [graphviz.org](https://graphviz.org/download/) if needed.
