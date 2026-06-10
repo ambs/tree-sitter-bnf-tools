@@ -1,7 +1,7 @@
 //! Integration tests for the BNF → grammar.js visitor pipeline.
 
 use ts_bnf_tool::dom::test_utils::{cg, di};
-use ts_bnf_tool::dom::{Grammar, Severity};
+use ts_bnf_tool::dom::{DirectiveItem, Grammar, Severity};
 use ts_bnf_tool::visitors::parse_source;
 
 fn parse(src: &str) -> String {
@@ -53,39 +53,17 @@ fn sequence() {
 }
 
 #[test]
-fn kleene_star() {
-    assert_eq!(parse("a -> 'x'*;"), "a -> repeat('x')");
-}
-
-#[test]
-fn kleene_question_mark() {
-    assert_eq!(parse("a -> 'x'?;"), "a -> optional('x')");
-}
-
-#[test]
-fn kleene_plus() {
-    assert_eq!(parse("a -> 'x'+;"), "a -> repeat1('x')");
-}
-
-#[test]
-fn grouped_subseq_asterisk() {
-    assert_eq!(parse("a -> ('x' | 'y')*;"), "a -> repeat(choice('x', 'y'))");
-}
-
-#[test]
-fn grouped_subseq_plus() {
-    assert_eq!(
-        parse("a -> ('x' | 'y')+;"),
-        "a -> repeat1(choice('x', 'y'))"
-    );
-}
-
-#[test]
-fn grouped_subseq_optional() {
-    assert_eq!(
-        parse("a -> ('x' | 'y')?;"),
-        "a -> optional(choice('x', 'y'))"
-    );
+fn kleene_operators() {
+    for (src, expected) in [
+        ("a -> 'x'*;", "a -> repeat('x')"),
+        ("a -> 'x'?;", "a -> optional('x')"),
+        ("a -> 'x'+;", "a -> repeat1('x')"),
+        ("a -> ('x' | 'y')*;", "a -> repeat(choice('x', 'y'))"),
+        ("a -> ('x' | 'y')+;", "a -> repeat1(choice('x', 'y'))"),
+        ("a -> ('x' | 'y')?;", "a -> optional(choice('x', 'y'))"),
+    ] {
+        assert_eq!(parse(src), expected, "source: {src}");
+    }
 }
 
 #[test]
@@ -102,56 +80,27 @@ fn multi_rule() {
 }
 
 #[test]
-fn token_expr_single_pattern() {
-    assert_eq!(parse("a -> << /[0-9]+/ >>;"), "a -> token(/[0-9]+/)");
-}
-
-#[test]
-fn token_immediate_expr_single_pattern() {
-    assert_eq!(
-        parse("a -> <<! /[0-9]+/ >>;"),
-        "a -> token.immediate(/[0-9]+/)"
-    );
-}
-
-#[test]
-fn token_immediate_expr_sequence() {
-    assert_eq!(
-        parse("a -> <<! /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;"),
-        "a -> token.immediate(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/))"
-    );
-}
-
-#[test]
-fn token_immediate_expr_literal() {
-    assert_eq!(
-        parse("negative -> '-' <<! /[0-9]+/ >>;"),
-        "negative -> seq('-', token.immediate(/[0-9]+/))"
-    );
-}
-
-#[test]
-fn token_expr_sequence() {
-    assert_eq!(
-        parse("a -> << /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;"),
-        "a -> token(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/))"
-    );
-}
-
-#[test]
-fn token_expr_alternatives() {
-    assert_eq!(
-        parse("a -> << '+' | '-' >>;"),
-        "a -> token(choice('+', '-'))"
-    );
-}
-
-#[test]
-fn token_expr_with_kleene_plus() {
-    assert_eq!(
-        parse("a -> << /[0-9]/ >>+;"),
-        "a -> repeat1(token(/[0-9]/))"
-    );
+fn token_expressions() {
+    for (src, expected) in [
+        ("a -> << /[0-9]+/ >>;", "a -> token(/[0-9]+/)"),
+        ("a -> <<! /[0-9]+/ >>;", "a -> token.immediate(/[0-9]+/)"),
+        (
+            "a -> <<! /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;",
+            "a -> token.immediate(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/))",
+        ),
+        (
+            "negative -> '-' <<! /[0-9]+/ >>;",
+            "negative -> seq('-', token.immediate(/[0-9]+/))",
+        ),
+        (
+            "a -> << /[A-Za-z_]/ /[A-Za-z0-9_]*/ >>;",
+            "a -> token(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/))",
+        ),
+        ("a -> << '+' | '-' >>;", "a -> token(choice('+', '-'))"),
+        ("a -> << /[0-9]/ >>+;", "a -> repeat1(token(/[0-9]/))"),
+    ] {
+        assert_eq!(parse(src), expected, "source: {src}");
+    }
 }
 
 #[test]
@@ -282,102 +231,74 @@ fn prec_group_with_kleene() {
 }
 
 #[test]
-fn conflicts_single_group() {
+fn conflicts_directive() {
+    // single group
     let g = parse_grammar("%conflicts [a, b]\na -> 'x' ;");
     assert_eq!(g.conflicts, vec![cg(&["a", "b"], 1)]);
-}
 
-#[test]
-fn conflicts_three_rules_in_group() {
+    // three rules in one group
     let g = parse_grammar("%conflicts [a, b, c]\na -> 'x' ;");
     assert_eq!(g.conflicts, vec![cg(&["a", "b", "c"], 1)]);
-}
 
-#[test]
-fn conflicts_multiple_groups_one_line() {
+    // several groups on one line
     let g = parse_grammar("%conflicts [a, b], [c, d]\na -> 'x' ;");
     assert_eq!(g.conflicts, vec![cg(&["a", "b"], 1), cg(&["c", "d"], 1)]);
-}
 
-#[test]
-fn conflicts_multiple_directives_are_additive() {
+    // multiple directives are additive
     let g = parse_grammar("%conflicts [a, b]\n%conflicts [c, d]\na -> 'x' ;");
     assert_eq!(g.conflicts, vec![cg(&["a", "b"], 1), cg(&["c", "d"], 2)]);
-}
 
-#[test]
-fn conflicts_interleaved_with_rules() {
+    // interleaved with rules
     let g = parse_grammar("a -> 'x' ;\n%conflicts [a, b]\nb -> 'y' ;");
     assert_eq!(g.conflicts, vec![cg(&["a", "b"], 2)]);
     assert_eq!(g.productions.len(), 2);
-}
 
-#[test]
-fn conflicts_undefined_rule_still_parses() {
+    // undefined rule still parses (check warns later; parsing must not fail)
     let g = parse_grammar("%conflicts [a, ghost]\na -> 'x' ;");
     assert_eq!(g.conflicts, vec![cg(&["a", "ghost"], 1)]);
 }
 
+/// %inline, %supertypes and %extras share their name-list semantics: items
+/// accumulate with their source line, directives are additive and may
+/// interleave with rules, and naming an undefined rule does not abort parsing.
 #[test]
-fn inline_single_rule() {
-    let g = parse_grammar("%inline _helper\na -> _helper ;");
-    assert_eq!(g.inline, vec![di("_helper", 1)]);
-}
+fn name_list_directives() {
+    /// Accessor for the grammar field a name-list directive populates.
+    type Field = fn(&Grammar) -> &Vec<DirectiveItem>;
+    let directives: [(&str, Field); 3] = [
+        ("inline", |g| &g.inline),
+        ("supertypes", |g| &g.supertypes),
+        ("extras", |g| &g.extras),
+    ];
+    for (dir, field) in directives {
+        let g = parse_grammar(&format!("%{dir} foo\na -> foo ;\nfoo -> 'x' ;"));
+        assert_eq!(field(&g), &vec![di("foo", 1)], "%{dir}: single rule");
 
-#[test]
-fn inline_multiple_rules_one_directive() {
-    let g = parse_grammar("%inline _a, _b\na -> _a ;");
-    assert_eq!(g.inline, vec![di("_a", 1), di("_b", 1)]);
-}
+        let g = parse_grammar(&format!("%{dir} foo, bar\na -> 'x' ;"));
+        assert_eq!(
+            field(&g),
+            &vec![di("foo", 1), di("bar", 1)],
+            "%{dir}: two rules in one directive"
+        );
 
-#[test]
-fn inline_multiple_directives_are_additive() {
-    let g = parse_grammar("%inline _a\n%inline _b\na -> _a ;");
-    assert_eq!(g.inline, vec![di("_a", 1), di("_b", 2)]);
-}
+        let g = parse_grammar(&format!("%{dir} foo\n%{dir} bar\na -> 'x' ;"));
+        assert_eq!(
+            field(&g),
+            &vec![di("foo", 1), di("bar", 2)],
+            "%{dir}: directives are additive"
+        );
 
-#[test]
-fn inline_interleaved_with_rules() {
-    let g = parse_grammar("a -> _h ;\n%inline _h\n_h -> 'x' ;");
-    assert_eq!(g.inline, vec![di("_h", 2)]);
-    assert_eq!(g.productions.len(), 2);
-}
+        let g = parse_grammar(&format!("a -> 'x' ;\n%{dir} foo\nb -> 'y' ;"));
+        assert_eq!(field(&g), &vec![di("foo", 2)], "%{dir}: interleaved");
+        assert_eq!(g.productions.len(), 2, "%{dir}: interleaved keeps rules");
 
-#[test]
-fn inline_undefined_rule_still_parses() {
-    let g = parse_grammar("%inline ghost\na -> 'x' ;");
-    assert_eq!(g.inline, vec![di("ghost", 1)]);
-}
-
-#[test]
-fn supertypes_single_rule() {
-    let g = parse_grammar("%supertypes expression\nexpression -> 'x' ;");
-    assert_eq!(g.supertypes, vec![di("expression", 1)]);
-}
-
-#[test]
-fn supertypes_multiple_rules_one_directive() {
-    let g = parse_grammar("%supertypes expression, statement\nexpression -> 'x' ;");
-    assert_eq!(g.supertypes, vec![di("expression", 1), di("statement", 1)]);
-}
-
-#[test]
-fn supertypes_multiple_directives_are_additive() {
-    let g = parse_grammar("%supertypes expression\n%supertypes statement\nexpression -> 'x' ;");
-    assert_eq!(g.supertypes, vec![di("expression", 1), di("statement", 2)]);
-}
-
-#[test]
-fn supertypes_interleaved_with_rules() {
-    let g = parse_grammar("expression -> 'x' ;\n%supertypes expression\nstatement -> 'y' ;");
-    assert_eq!(g.supertypes, vec![di("expression", 2)]);
-    assert_eq!(g.productions.len(), 2);
-}
-
-#[test]
-fn supertypes_undefined_rule_still_parses() {
-    let g = parse_grammar("%supertypes ghost\na -> 'x' ;");
-    assert_eq!(g.supertypes, vec![di("ghost", 1)]);
+        let g = parse_grammar(&format!("%{dir} ghost\na -> 'x' ;"));
+        assert_eq!(
+            field(&g),
+            &vec![di("ghost", 1)],
+            "%{dir}: undefined rule still parses"
+        );
+    }
 }
 
 #[test]
@@ -390,25 +311,6 @@ fn extras_single_pattern() {
 fn extras_pattern_and_rule() {
     let g = parse_grammar("%extras /\\s/, comment\na -> 'x' ;\ncomment -> '#' ;");
     assert_eq!(g.extras, vec![di("/\\s/", 1), di("comment", 1)]);
-}
-
-#[test]
-fn extras_multiple_directives_are_additive() {
-    let g = parse_grammar("%extras /\\s/\n%extras comment\na -> 'x' ;\ncomment -> '#' ;");
-    assert_eq!(g.extras, vec![di("/\\s/", 1), di("comment", 2)]);
-}
-
-#[test]
-fn extras_interleaved_with_rules() {
-    let g = parse_grammar("a -> 'x' ;\n%extras /\\s/\nb -> 'y' ;");
-    assert_eq!(g.extras, vec![di("/\\s/", 2)]);
-    assert_eq!(g.productions.len(), 2);
-}
-
-#[test]
-fn extras_undefined_rule_still_parses() {
-    let g = parse_grammar("%extras ghost\na -> 'x' ;");
-    assert_eq!(g.extras, vec![di("ghost", 1)]);
 }
 
 #[test]

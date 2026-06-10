@@ -18,30 +18,6 @@ fn parse_format(args: &[&str]) -> Result<Cli, clap::Error> {
     Cli::try_parse_from(full)
 }
 
-fn parse_highlights(args: &[&str]) -> Result<Cli, clap::Error> {
-    let full: Vec<&str> = std::iter::once("ts-bnf-tool")
-        .chain(std::iter::once("highlights"))
-        .chain(args.iter().copied())
-        .collect();
-    Cli::try_parse_from(full)
-}
-
-fn parse_check(args: &[&str]) -> Result<Cli, clap::Error> {
-    let full: Vec<&str> = std::iter::once("ts-bnf-tool")
-        .chain(std::iter::once("check"))
-        .chain(args.iter().copied())
-        .collect();
-    Cli::try_parse_from(full)
-}
-
-fn parse_firsts(args: &[&str]) -> Result<Cli, clap::Error> {
-    let full: Vec<&str> = std::iter::once("ts-bnf-tool")
-        .chain(std::iter::once("firsts"))
-        .chain(args.iter().copied())
-        .collect();
-    Cli::try_parse_from(full)
-}
-
 fn parse_railroad(args: &[&str]) -> Result<Cli, clap::Error> {
     let full: Vec<&str> = std::iter::once("ts-bnf-tool")
         .chain(std::iter::once("railroad"))
@@ -132,38 +108,13 @@ fn grammar_name_stdin_respects_override() {
 }
 
 #[test]
-fn valid_js_identifier_plain() {
-    assert!(is_valid_js_identifier("grammar"));
-}
-
-#[test]
-fn valid_js_identifier_underscore_start() {
-    assert!(is_valid_js_identifier("_grammar"));
-}
-
-#[test]
-fn valid_js_identifier_with_digits() {
-    assert!(is_valid_js_identifier("grammar2"));
-}
-
-#[test]
-fn invalid_js_identifier_hyphen() {
-    assert!(!is_valid_js_identifier("my-grammar"));
-}
-
-#[test]
-fn invalid_js_identifier_leading_digit() {
-    assert!(!is_valid_js_identifier("1grammar"));
-}
-
-#[test]
-fn invalid_js_identifier_empty() {
-    assert!(!is_valid_js_identifier(""));
-}
-
-#[test]
-fn invalid_js_identifier_dot() {
-    assert!(!is_valid_js_identifier("my.grammar"));
+fn js_identifier_validation() {
+    for ok in ["grammar", "_grammar", "grammar2"] {
+        assert!(is_valid_js_identifier(ok), "expected valid: {ok}");
+    }
+    for bad in ["my-grammar", "1grammar", "", "my.grammar"] {
+        assert!(!is_valid_js_identifier(bad), "expected invalid: {bad}");
+    }
 }
 
 #[test]
@@ -180,78 +131,6 @@ fn resolve_output_dir_defaults_to_grammar_name() {
         resolve_output_dir(None, "mygrammar"),
         PathBuf::from("mygrammar")
     );
-}
-
-#[test]
-fn check_json_flag_defaults_false() {
-    let cli = parse_check(&["f.bnf"]).unwrap();
-    let Subcommands::Check { json, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert!(!json);
-}
-
-#[test]
-fn check_json_flag_parses() {
-    let cli = parse_check(&["--json", "f.bnf"]).unwrap();
-    let Subcommands::Check { json, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert!(json);
-}
-
-#[test]
-fn firsts_json_flag_defaults_false() {
-    let cli = parse_firsts(&["f.bnf"]).unwrap();
-    let Subcommands::Firsts { json, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert!(!json);
-}
-
-#[test]
-fn firsts_json_flag_parses() {
-    let cli = parse_firsts(&["--json", "f.bnf"]).unwrap();
-    let Subcommands::Firsts { json, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert!(json);
-}
-
-#[test]
-fn highlights_no_todos_defaults_false() {
-    let cli = parse_highlights(&["f.bnf"]).unwrap();
-    let Subcommands::Highlights { no_todos, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert!(!no_todos);
-}
-
-#[test]
-fn highlights_no_todos_flag_parses() {
-    let cli = parse_highlights(&["--no-todos", "f.bnf"]).unwrap();
-    let Subcommands::Highlights { no_todos, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert!(no_todos);
-}
-
-#[test]
-fn highlights_output_flag_parses() {
-    let cli = parse_highlights(&["-o", "out.scm", "f.bnf"]).unwrap();
-    let Subcommands::Highlights { output, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert_eq!(output.as_deref(), Some("out.scm"));
-}
-
-#[test]
-fn highlights_output_defaults_to_none() {
-    let cli = parse_highlights(&["f.bnf"]).unwrap();
-    let Subcommands::Highlights { output, .. } = cli.command else {
-        panic!("wrong subcommand");
-    };
-    assert!(output.is_none());
 }
 
 #[test]

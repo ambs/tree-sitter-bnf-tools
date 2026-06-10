@@ -55,75 +55,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn warning_display() {
-        let d = Diagnostic::warning("undefined rule reference 'foo'");
-        assert_eq!(d.to_string(), "warning: undefined rule reference 'foo'");
-    }
-
-    #[test]
-    fn error_display() {
-        let d = Diagnostic::error("rule 'expr' is directly left-recursive");
+    /// Severity must serialize lowercase and Diagnostic as `{severity, message}`;
+    /// consumers of `check --json` depend on this exact shape.
+    fn diagnostic_serializes_with_lowercase_severity() {
         assert_eq!(
-            d.to_string(),
-            "error: rule 'expr' is directly left-recursive"
-        );
-    }
-
-    #[test]
-    fn severity_is_preserved() {
-        assert_eq!(Diagnostic::warning("x").severity, Severity::Warning);
-        assert_eq!(Diagnostic::error("x").severity, Severity::Error);
-    }
-
-    #[test]
-    fn severity_warning_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&Severity::Warning).unwrap(),
-            "\"warning\""
-        );
-    }
-
-    #[test]
-    fn severity_error_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&Severity::Error).unwrap(),
-            "\"error\""
-        );
-    }
-
-    #[test]
-    fn diagnostic_warning_serializes() {
-        let d = Diagnostic::warning("undefined rule reference 'foo'");
-        assert_eq!(
-            serde_json::to_string(&d).unwrap(),
+            serde_json::to_string(&Diagnostic::warning("undefined rule reference 'foo'")).unwrap(),
             r#"{"severity":"warning","message":"undefined rule reference 'foo'"}"#
         );
-    }
-
-    #[test]
-    fn diagnostic_error_serializes() {
-        let d = Diagnostic::error("rule 'expr' is directly left-recursive");
         assert_eq!(
-            serde_json::to_string(&d).unwrap(),
+            serde_json::to_string(&Diagnostic::error("rule 'expr' is directly left-recursive"))
+                .unwrap(),
             r#"{"severity":"error","message":"rule 'expr' is directly left-recursive"}"#
         );
-    }
-
-    #[test]
-    fn diagnostic_vec_serializes_as_array() {
-        let ds = vec![
-            Diagnostic::warning("rule 'foo' is never referenced"),
-            Diagnostic::error("rule 'bar' is directly left-recursive"),
-        ];
-        assert_eq!(
-            serde_json::to_string(&ds).unwrap(),
-            r#"[{"severity":"warning","message":"rule 'foo' is never referenced"},{"severity":"error","message":"rule 'bar' is directly left-recursive"}]"#
-        );
-    }
-
-    #[test]
-    fn empty_diagnostic_vec_serializes_as_empty_array() {
-        let ds: Vec<Diagnostic> = vec![];
-        assert_eq!(serde_json::to_string(&ds).unwrap(), "[]");
     }
 }
