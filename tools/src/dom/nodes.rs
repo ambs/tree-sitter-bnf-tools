@@ -176,6 +176,35 @@ mod tests {
     }
 
     #[test]
+    /// `nonterminal_names` traverses every wrapper variant transparently.
+    fn nonterminal_names_traverses_wrappers() {
+        let node = Sequence(vec![
+            Optional(Box::new(NonTerminal("a".into()))),
+            ZeroOrMore(Box::new(NonTerminal("b".into()))),
+            OneOrMore(Box::new(NonTerminal("c".into()))),
+            Token(Box::new(NonTerminal("d".into()))),
+            TokenImmediate(Box::new(NonTerminal("e".into()))),
+            Field("f".into(), Box::new(NonTerminal("g".into()))),
+            Prec(PrecKind::Left, Some(1), Box::new(NonTerminal("h".into()))),
+            Choice(vec![NonTerminal("i".into()), TerminalLiteral("'x'".into())]),
+        ]);
+        assert_eq!(
+            node.nonterminal_names(),
+            vec!["a", "b", "c", "d", "e", "g", "h", "i"]
+        );
+    }
+
+    #[test]
+    /// `nonterminal_names` traverses an alias body but not its display name.
+    fn nonterminal_names_skips_alias_name() {
+        let node = Alias(
+            Box::new(NonTerminal("body_rule".into())),
+            Box::new(NonTerminal("display_label".into())),
+        );
+        assert_eq!(node.nonterminal_names(), vec!["body_rule"]);
+    }
+
+    #[test]
     fn terminal_literal_display() {
         assert_eq!(TerminalLiteral("'x'".into()).to_string(), "'x'");
     }

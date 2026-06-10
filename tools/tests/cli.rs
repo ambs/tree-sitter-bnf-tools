@@ -937,6 +937,83 @@ fn graph_png_without_output_exits_nonzero() {
 }
 
 #[test]
+/// Mermaid output can be written to a file with `-o`.
+fn graph_mermaid_output_to_file() {
+    let path = write_tmp("ts_bnf_graph_mermaid_out.bnf", GRAPH_BNF);
+    let out_path = std::env::temp_dir().join("ts_bnf_graph_mermaid_out.mmd");
+    let out = tool()
+        .args(["graph", "--format", "mermaid", "-o"])
+        .arg(&out_path)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let content = fs::read_to_string(&out_path).unwrap();
+    assert!(content.starts_with("graph TD"));
+}
+
+#[test]
+/// An unknown `--format` value exits non-zero with a helpful message.
+fn graph_unknown_format_errors() {
+    let path = write_tmp("ts_bnf_graph_badfmt.bnf", GRAPH_BNF);
+    let out = tool()
+        .args(["graph", "--format", "tikz"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("unknown format 'tikz'"));
+}
+
+#[test]
+/// `--format svg` without Graphviz on PATH exits non-zero with an install hint.
+fn graph_svg_without_dot_on_path_errors() {
+    let path = write_tmp("ts_bnf_graph_nodot.bnf", GRAPH_BNF);
+    let out = tool()
+        .env("PATH", "")
+        .args(["graph", "--format", "svg"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("`dot` not found on PATH"));
+}
+
+#[test]
+/// `--format svg` renders via Graphviz, both to stdout and to a file with `-o`.
+fn graph_svg_renders_via_graphviz() {
+    if std::process::Command::new("dot")
+        .arg("-V")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: graphviz `dot` not installed");
+        return;
+    }
+    let path = write_tmp("ts_bnf_graph_svg.bnf", GRAPH_BNF);
+
+    let out = tool()
+        .args(["graph", "--format", "svg"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("<svg"));
+
+    let out_path = std::env::temp_dir().join("ts_bnf_graph_out.svg");
+    let out = tool()
+        .args(["graph", "--format", "svg", "-o"])
+        .arg(&out_path)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(fs::read_to_string(&out_path).unwrap().contains("<svg"));
+}
+
+#[test]
 /// DOT output can be written to a file with `-o`.
 fn graph_dot_output_to_file() {
     let path = write_tmp("ts_bnf_graph_out.bnf", GRAPH_BNF);

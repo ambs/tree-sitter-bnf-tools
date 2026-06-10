@@ -410,6 +410,45 @@ mod tests {
     }
 
     #[test]
+    /// A defined rule that appears in no edge is still emitted as a DOT node.
+    fn dot_isolated_node_emitted() {
+        let g = Grammar::from_rules([
+            p("root", GrammarNode::TerminalPattern("/x/".into())),
+            p("orphan", GrammarNode::TerminalPattern("/y/".into())),
+        ]);
+        let (data, _) = build_graph(&g, None).unwrap();
+        assert!(emit_dot(&data).contains("  \"orphan\";"));
+    }
+
+    /// Returns `true` when the Graphviz `dot` binary is available on `PATH`.
+    fn dot_available() -> bool {
+        std::process::Command::new("dot").arg("-V").output().is_ok()
+    }
+
+    #[test]
+    /// `run_graphviz` renders DOT input to SVG bytes.
+    fn run_graphviz_renders_svg() {
+        if !dot_available() {
+            eprintln!("skipping: graphviz `dot` not installed");
+            return;
+        }
+        let (data, _) = build_graph(&two_rule_grammar(), None).unwrap();
+        let svg = run_graphviz(&emit_dot(&data), "svg").unwrap();
+        assert!(String::from_utf8_lossy(&svg).contains("<svg"));
+    }
+
+    #[test]
+    /// `run_graphviz` surfaces dot's stderr when it exits non-zero.
+    fn run_graphviz_bad_format_errors() {
+        if !dot_available() {
+            eprintln!("skipping: graphviz `dot` not installed");
+            return;
+        }
+        let err = run_graphviz("digraph g {}", "no_such_format").unwrap_err();
+        assert!(err.to_string().contains("dot exited with error"));
+    }
+
+    #[test]
     /// Undefined references carry `style=dashed` in DOT output.
     fn dot_undefined_is_dashed() {
         let g = Grammar::from_rules([p("root", nt("extern_rule"))]);
