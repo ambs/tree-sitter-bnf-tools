@@ -142,6 +142,7 @@ Pass `-` as the filename to read from stdin.
 | `check` | Run static checks; exit non-zero on any issue |
 | `railroad` | Generate railroad / syntax diagrams as SVG |
 | `rename` | Rename a rule and all its references |
+| `graph` | Emit a rule-dependency graph (DOT / Mermaid / SVG / PDF / PNG) |
 
 ### convert
 
@@ -442,13 +443,54 @@ ts-bnf-tool railroad --rule expr grammar.bnf              # single named rule to
 
 Example output for a simple arithmetic grammar:
 
-![Railroad diagram for expr / term / factor](docs/railroad-example.svg)
+![Railroad diagram for the BNF grammar](docs/railroad-example.svg)
 
 In single-file mode each rule is preceded by its name as a label and wrapped
 in a `<g id="rule-<name>">` element so that `#rule-<name>` fragment links work.
 In split mode each file is named `<rule>.svg` and non-terminal labels link to
 `<rule>.svg` relative paths, enabling navigation when the directory is served
 as a static site.
+
+### graph
+
+Emits a directed rule-dependency graph where nodes are grammar rules and edges
+are non-terminal references (lhs → each non-terminal used in its body).
+
+```sh
+ts-bnf-tool graph grammar.bnf                           # DOT to stdout (default)
+ts-bnf-tool graph --format mermaid grammar.bnf          # Mermaid flowchart to stdout
+ts-bnf-tool graph --format svg grammar.bnf              # SVG via Graphviz to stdout
+ts-bnf-tool graph --format svg -o grammar.svg grammar.bnf
+ts-bnf-tool graph --format pdf -o grammar.pdf grammar.bnf   # PDF requires -o
+ts-bnf-tool graph --format png -o grammar.png grammar.bnf   # PNG requires -o
+ts-bnf-tool graph --start expression grammar.bnf        # reachable from `expression` only
+```
+
+Example Mermaid output for a simple arithmetic grammar:
+
+```mermaid
+graph TD
+  expr_(["expr  ★"])
+  factor_["factor"]
+  term_["term"]
+
+  expr_ --> term_
+  term_ --> factor_
+  factor_ --> expr_
+```
+
+The start symbol (the `%axiom` rule if declared, otherwise the first
+production) is shown with a `★` suffix in Mermaid and `shape=doublecircle` in
+DOT. Non-terminals that are referenced but never defined are shown with a `⚠`
+suffix (Mermaid) or `style=dashed` (DOT) and a warning is printed to stderr.
+DOT node IDs are always quoted, and Mermaid node IDs carry a trailing
+underscore (labels show the real rule name), so rule names that collide with
+Graphviz or Mermaid keywords (`node`, `edge`, `end`, …) remain valid.
+`--start <rule>` restricts the output to the subgraph reachable from that
+rule, which becomes the start symbol for styling purposes.
+
+`svg`, `pdf`, and `png` formats shell out to `dot` (Graphviz); install it from
+[graphviz.org](https://graphviz.org/download/) if needed.
 
 ## Development
 

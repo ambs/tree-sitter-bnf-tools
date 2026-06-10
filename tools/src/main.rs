@@ -122,6 +122,20 @@ enum Subcommands {
         #[arg(long)]
         rule: Option<String>,
     },
+    /// Emit a rule-dependency graph (DOT, Mermaid, or Graphviz-rendered image).
+    Graph {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+        /// Output format: dot (default), mermaid, svg, pdf, png
+        #[arg(long, default_value = "dot")]
+        format: String,
+        /// Write output to this file instead of stdout
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+        /// Restrict graph to rules reachable from this rule
+        #[arg(long)]
+        start: Option<String>,
+    },
     /// Pretty-print a BNF file in canonical style.
     Format {
         /// Input BNF file, or `-` to read from stdin
@@ -452,6 +466,58 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             for w in &warnings {
                 eprintln!("{w}");
+            }
+        }
+
+        Subcommands::Graph {
+            filename,
+            format,
+            output,
+            start,
+        } => {
+            if matches!(format.as_str(), "pdf" | "png") && output.is_none() {
+                eprintln!("error: --format {format} requires -o <file>");
+                std::process::exit(1);
+            }
+            let (grammar, _) = parse_file(&filename, false)?;
+            let (graph_data, warnings) =
+                ts_bnf_tool::dom::graph::build_graph(&grammar, start.as_deref())
+                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            for w in &warnings {
+                eprintln!("{w}");
+            }
+            match format.as_str() {
+                "dot" => {
+                    let text = ts_bnf_tool::dom::graph::emit_dot(&graph_data);
+                    match output {
+                        Some(path) => fs::write(&path, &text)?,
+                        None => print!("{text}"),
+                    }
+                }
+                "mermaid" => {
+                    let text = ts_bnf_tool::dom::graph::emit_mermaid(&graph_data);
+                    match output {
+                        Some(path) => fs::write(&path, &text)?,
+                        None => print!("{text}"),
+                    }
+                }
+                "svg" | "pdf" | "png" => {
+                    let dot = ts_bnf_tool::dom::graph::emit_dot(&graph_data);
+                    let bytes = ts_bnf_tool::dom::graph::run_graphviz(&dot, &format)?;
+                    match output {
+                        Some(path) => fs::write(&path, &bytes)?,
+                        None => {
+                            use std::io::Write;
+                            std::io::stdout().write_all(&bytes)?;
+                        }
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "unknown format '{other}'; expected: dot, mermaid, svg, pdf, png"
+                    )
+                    .into())
+                }
             }
         }
 

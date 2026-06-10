@@ -44,6 +44,38 @@ pub enum GrammarNode {
 }
 
 impl GrammarNode {
+    /// Returns all non-terminal names referenced anywhere in this node's subtree.
+    ///
+    /// Tree-sitter annotations ([`GrammarNode::Token`], [`GrammarNode::Field`], etc.) are
+    /// transparent; only [`GrammarNode::Alias`] is special — its name child is a display label,
+    /// not a rule reference, so only its body is traversed.
+    pub fn nonterminal_names(&self) -> Vec<&str> {
+        let mut names = Vec::new();
+        self.collect_names(&mut names);
+        names
+    }
+
+    /// Recursive accumulator for [`GrammarNode::nonterminal_names`].
+    fn collect_names<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            GrammarNode::NonTerminal(name) => out.push(name),
+            GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => {}
+            GrammarNode::Sequence(children) | GrammarNode::Choice(children) => {
+                for c in children {
+                    c.collect_names(out);
+                }
+            }
+            GrammarNode::Optional(inner)
+            | GrammarNode::ZeroOrMore(inner)
+            | GrammarNode::OneOrMore(inner)
+            | GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner) => inner.collect_names(out),
+            GrammarNode::Field(_, inner) => inner.collect_names(out),
+            GrammarNode::Alias(body, _) => body.collect_names(out),
+            GrammarNode::Prec(_, _, inner) => inner.collect_names(out),
+        }
+    }
+
     /// Returns `true` if this node or any descendant is a [`GrammarNode::NonTerminal`].
     pub fn contains_nonterminal(&self) -> bool {
         match self {
@@ -141,6 +173,35 @@ mod tests {
     #[test]
     fn nonterminal_display() {
         assert_eq!(NonTerminal("foo".into()).to_string(), "$.foo");
+    }
+
+    #[test]
+    /// `nonterminal_names` traverses every wrapper variant transparently.
+    fn nonterminal_names_traverses_wrappers() {
+        let node = Sequence(vec![
+            Optional(Box::new(NonTerminal("a".into()))),
+            ZeroOrMore(Box::new(NonTerminal("b".into()))),
+            OneOrMore(Box::new(NonTerminal("c".into()))),
+            Token(Box::new(NonTerminal("d".into()))),
+            TokenImmediate(Box::new(NonTerminal("e".into()))),
+            Field("f".into(), Box::new(NonTerminal("g".into()))),
+            Prec(PrecKind::Left, Some(1), Box::new(NonTerminal("h".into()))),
+            Choice(vec![NonTerminal("i".into()), TerminalLiteral("'x'".into())]),
+        ]);
+        assert_eq!(
+            node.nonterminal_names(),
+            vec!["a", "b", "c", "d", "e", "g", "h", "i"]
+        );
+    }
+
+    #[test]
+    /// `nonterminal_names` traverses an alias body but not its display name.
+    fn nonterminal_names_skips_alias_name() {
+        let node = Alias(
+            Box::new(NonTerminal("body_rule".into())),
+            Box::new(NonTerminal("display_label".into())),
+        );
+        assert_eq!(node.nonterminal_names(), vec!["body_rule"]);
     }
 
     #[test]

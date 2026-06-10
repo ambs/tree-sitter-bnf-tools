@@ -71,6 +71,10 @@ jobs:
       - name: Install tree-sitter-cli
         if: steps.cache-ts-cli.outputs.cache-hit != 'true'
         run: cargo install tree-sitter-cli --version 0.26.9 --locked
+      # graphviz provides `dot`, needed by the graph subcommand's rendering
+      # tests (they skip when it is missing, which would lose coverage).
+      - name: Install graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
       - run: make generate
       - uses: taiki-e/install-action@6ed6112eb9893c58dd600eebccdf6e77ab7bfa9c # v2
         with:

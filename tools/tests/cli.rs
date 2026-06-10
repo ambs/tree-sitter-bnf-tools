@@ -779,3 +779,252 @@ fn include_format_outputs_merged_grammar() {
         "format output must not contain %include directives"
     );
 }
+
+// ── graph ─────────────────────────────────────────────────────────────────────
+
+const GRAPH_BNF: &str = indoc! {"
+    program -> statement expression ;
+    statement -> 'let' /[a-z]+/ ;
+    expression -> term '+' term ;
+    term -> /[0-9]+/ ;
+"};
+
+const GRAPH_UNDEF_BNF: &str = indoc! {"
+    root -> defined extern_rule ;
+    defined -> /x/ ;
+"};
+
+#[test]
+/// DOT output contains the expected `digraph grammar {` wrapper and edges.
+fn graph_dot_basic_output() {
+    let path = write_tmp("ts_bnf_graph_dot.bnf", GRAPH_BNF);
+    let out = tool().args(["graph"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("digraph grammar {"));
+    assert!(stdout.contains("\"program\" -> \"statement\""));
+    assert!(stdout.contains("\"program\" -> \"expression\""));
+}
+
+#[test]
+/// The start symbol (first production) carries `shape=doublecircle` in DOT output.
+fn graph_dot_start_symbol_doublecircle() {
+    let path = write_tmp("ts_bnf_graph_start.bnf", GRAPH_BNF);
+    let out = tool().args(["graph"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"program\" [shape=doublecircle]"));
+}
+
+#[test]
+/// `%axiom` overrides declaration order: the named rule carries `shape=doublecircle`.
+fn graph_dot_axiom_is_start_symbol() {
+    let bnf = indoc! {"
+        %axiom expression
+        program -> statement expression ;
+        statement -> 'let' /[a-z]+/ ;
+        expression -> term '+' term ;
+        term -> /[0-9]+/ ;
+    "};
+    let path = write_tmp("ts_bnf_graph_axiom.bnf", bnf);
+    let out = tool().args(["graph"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("\"expression\" [shape=doublecircle]"));
+    assert!(!stdout.contains("\"program\" [shape=doublecircle]"));
+}
+
+#[test]
+/// An undefined reference produces a `style=dashed` node and a stderr warning.
+fn graph_dot_undefined_ref_dashed_and_warns() {
+    let path = write_tmp("ts_bnf_graph_undef.bnf", GRAPH_UNDEF_BNF);
+    let out = tool().args(["graph"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stdout.contains("\"extern_rule\" [style=dashed]"));
+    assert!(stderr.contains("extern_rule") && stderr.contains("not defined"));
+}
+
+#[test]
+/// Mermaid output starts with `graph TD` and uses `★` for the start symbol.
+fn graph_mermaid_basic_output() {
+    let path = write_tmp("ts_bnf_graph_mermaid.bnf", GRAPH_BNF);
+    let out = tool()
+        .args(["graph", "--format", "mermaid"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.starts_with("graph TD"));
+    assert!(stdout.contains("★"));
+    assert!(stdout.contains("program"));
+}
+
+#[test]
+/// Mermaid output marks undefined references with `⚠` and warns on stderr.
+fn graph_mermaid_undefined_ref_warns() {
+    let path = write_tmp("ts_bnf_graph_mermaid_undef.bnf", GRAPH_UNDEF_BNF);
+    let out = tool()
+        .args(["graph", "--format", "mermaid"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stdout.contains("⚠"));
+    assert!(stderr.contains("extern_rule"));
+}
+
+#[test]
+/// `--start` restricts the graph to the reachable subgraph; unreachable rules are absent.
+fn graph_start_prunes_unreachable() {
+    let path = write_tmp("ts_bnf_graph_prune.bnf", GRAPH_BNF);
+    let out = tool()
+        .args(["graph", "--start", "expression"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        !stdout.contains("\"statement\""),
+        "unreachable rule 'statement' must not appear in output"
+    );
+    assert!(stdout.contains("expression"));
+}
+
+#[test]
+/// `--start` with an unknown rule name exits non-zero.
+fn graph_start_unknown_rule_exits_nonzero() {
+    let path = write_tmp("ts_bnf_graph_bad_start.bnf", GRAPH_BNF);
+    let out = tool()
+        .args(["graph", "--start", "no_such_rule"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
+/// `--format pdf` without `-o` exits non-zero with an error message.
+fn graph_pdf_without_output_exits_nonzero() {
+    let path = write_tmp("ts_bnf_graph_pdf.bnf", GRAPH_BNF);
+    let out = tool()
+        .args(["graph", "--format", "pdf"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("requires -o"));
+}
+
+#[test]
+/// `--format png` without `-o` exits non-zero with an error message.
+fn graph_png_without_output_exits_nonzero() {
+    let path = write_tmp("ts_bnf_graph_png.bnf", GRAPH_BNF);
+    let out = tool()
+        .args(["graph", "--format", "png"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("requires -o"));
+}
+
+#[test]
+/// Mermaid output can be written to a file with `-o`.
+fn graph_mermaid_output_to_file() {
+    let path = write_tmp("ts_bnf_graph_mermaid_out.bnf", GRAPH_BNF);
+    let out_path = std::env::temp_dir().join("ts_bnf_graph_mermaid_out.mmd");
+    let out = tool()
+        .args(["graph", "--format", "mermaid", "-o"])
+        .arg(&out_path)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let content = fs::read_to_string(&out_path).unwrap();
+    assert!(content.starts_with("graph TD"));
+}
+
+#[test]
+/// An unknown `--format` value exits non-zero with a helpful message.
+fn graph_unknown_format_errors() {
+    let path = write_tmp("ts_bnf_graph_badfmt.bnf", GRAPH_BNF);
+    let out = tool()
+        .args(["graph", "--format", "tikz"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("unknown format 'tikz'"));
+}
+
+#[test]
+/// `--format svg` without Graphviz on PATH exits non-zero with an install hint.
+fn graph_svg_without_dot_on_path_errors() {
+    let path = write_tmp("ts_bnf_graph_nodot.bnf", GRAPH_BNF);
+    let out = tool()
+        .env("PATH", "")
+        .args(["graph", "--format", "svg"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("`dot` not found on PATH"));
+}
+
+#[test]
+/// `--format svg` renders via Graphviz, both to stdout and to a file with `-o`.
+fn graph_svg_renders_via_graphviz() {
+    if std::process::Command::new("dot")
+        .arg("-V")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: graphviz `dot` not installed");
+        return;
+    }
+    let path = write_tmp("ts_bnf_graph_svg.bnf", GRAPH_BNF);
+
+    let out = tool()
+        .args(["graph", "--format", "svg"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("<svg"));
+
+    let out_path = std::env::temp_dir().join("ts_bnf_graph_out.svg");
+    let out = tool()
+        .args(["graph", "--format", "svg", "-o"])
+        .arg(&out_path)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(fs::read_to_string(&out_path).unwrap().contains("<svg"));
+}
+
+#[test]
+/// DOT output can be written to a file with `-o`.
+fn graph_dot_output_to_file() {
+    let path = write_tmp("ts_bnf_graph_out.bnf", GRAPH_BNF);
+    let out_path = std::env::temp_dir().join("ts_bnf_graph_out.dot");
+    let out = tool()
+        .args(["graph", "-o"])
+        .arg(&out_path)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let content = fs::read_to_string(&out_path).unwrap();
+    assert!(content.contains("digraph grammar {"));
+}

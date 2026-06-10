@@ -10,6 +10,8 @@ mod error;
 pub mod format;
 /// Cross-reference and structural validation checks on a [`Grammar`].
 mod grammar;
+/// Rule-dependency graph builder and DOT/Mermaid/Graphviz emitters.
+pub mod graph;
 /// Skeleton `highlights.scm` generator with naming-convention heuristics.
 pub mod highlights;
 /// Core grammar node types and their Display representations.
