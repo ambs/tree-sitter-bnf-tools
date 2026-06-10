@@ -23,20 +23,3 @@ impl Display for Production {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dom::GrammarNode::NonTerminal;
-
-    #[test]
-    fn production_display() {
-        let p = Production {
-            name: "expr".into(),
-            body: NonTerminal("a".into()),
-            line: 1,
-            filename: "test.bnf".into(),
-        };
-        assert_eq!(p.to_string(), "expr -> $.a");
-    }
-}

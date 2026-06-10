@@ -647,10 +647,16 @@ mod tests {
             "inc_cycle_a.bnf",
             "%include \"inc_cycle_b.bnf\"\nrule_a -> 'x' ;",
         );
-        assert!(
-            matches!(parse_path(&a), Err(ParseError::IncludeCycle(_))),
-            "expected IncludeCycle error"
-        );
+        match parse_path(&a) {
+            Err(e @ ParseError::IncludeCycle(_)) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.starts_with("circular %include detected: ") && msg.contains("inc_cycle"),
+                    "unexpected message: {msg}"
+                );
+            }
+            _ => panic!("expected IncludeCycle error"),
+        }
     }
 
     // ── missing file ──────────────────────────────────────────────────────────
@@ -662,10 +668,17 @@ mod tests {
             "inc_missing_a.bnf",
             "%include \"no_such_file_xyzzy.bnf\"\nroot -> 'x' ;",
         );
-        assert!(
-            matches!(parse_path(&a), Err(ParseError::IncludeNotFound(_))),
-            "expected IncludeNotFound error"
-        );
+        match parse_path(&a) {
+            Err(e @ ParseError::IncludeNotFound(_)) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.starts_with("included file not found: ")
+                        && msg.contains("no_such_file_xyzzy.bnf"),
+                    "unexpected message: {msg}"
+                );
+            }
+            _ => panic!("expected IncludeNotFound error"),
+        }
     }
 
     // ── stdin guard ───────────────────────────────────────────────────────────
@@ -673,13 +686,13 @@ mod tests {
     #[test]
     /// parse_source (no backing file) returns IncludeFromStdin on %include.
     fn include_from_stdin_returns_error() {
-        assert!(
-            matches!(
-                parse_source("%include \"foo.bnf\"\nroot -> 'x' ;"),
-                Err(ParseError::IncludeFromStdin)
+        match parse_source("%include \"foo.bnf\"\nroot -> 'x' ;") {
+            Err(e @ ParseError::IncludeFromStdin) => assert_eq!(
+                e.to_string(),
+                "%include cannot be used when reading from stdin"
             ),
-            "expected IncludeFromStdin error"
-        );
+            _ => panic!("expected IncludeFromStdin error"),
+        }
     }
 
     // ── duplicate rule warning ────────────────────────────────────────────────

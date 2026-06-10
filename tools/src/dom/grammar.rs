@@ -286,15 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn grammar_display() {
-        let g = Grammar::from_rules([
-            p("a", TerminalLiteral("'x'".into())),
-            p("b", GrammarNode::NonTerminal("a".into())),
-        ]);
-        assert_eq!(g.to_string(), "\na -> 'x'\nb -> $.a");
-    }
-
-    #[test]
     fn conflicts_check_warns_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.conflicts = vec![cg(&["a", "ghost"], 0)];

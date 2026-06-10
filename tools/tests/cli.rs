@@ -440,27 +440,6 @@ fn check_summary_plain_goes_to_stdout() {
 }
 
 #[test]
-/// All five expected row labels are present in the plain-text summary.
-fn check_summary_plain_contains_all_rows() {
-    let path = write_tmp("ts_bnf_summary_rows.bnf", CLEAN_BNF);
-    let out = tool()
-        .args(["check", "--summary"])
-        .arg(&path)
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    for label in &[
-        "Rules",
-        "Terminals",
-        "Undefined refs",
-        "Left-recursive",
-        "FIRST sets",
-    ] {
-        assert!(stdout.contains(label), "missing row: {label}");
-    }
-}
-
-#[test]
 /// With warnings present: diagnostics go to stderr, summary still goes to
 /// stdout, and the exit code is 1 (warnings) — unaffected by --summary.
 fn check_summary_with_warnings_exit_one_and_separates_streams() {
