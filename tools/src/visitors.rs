@@ -647,16 +647,16 @@ mod tests {
             "inc_cycle_a.bnf",
             "%include \"inc_cycle_b.bnf\"\nrule_a -> 'x' ;",
         );
-        match parse_path(&a) {
-            Err(e @ ParseError::IncludeCycle(_)) => {
-                let msg = e.to_string();
-                assert!(
-                    msg.starts_with("circular %include detected: ") && msg.contains("inc_cycle"),
-                    "unexpected message: {msg}"
-                );
-            }
-            _ => panic!("expected IncludeCycle error"),
-        }
+        let err = parse_path(&a).map(|_| ()).unwrap_err();
+        assert!(
+            matches!(err, ParseError::IncludeCycle(_)),
+            "expected IncludeCycle, got: {err}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with("circular %include detected: ") && msg.contains("inc_cycle"),
+            "unexpected message: {msg}"
+        );
     }
 
     // ── missing file ──────────────────────────────────────────────────────────
@@ -668,17 +668,16 @@ mod tests {
             "inc_missing_a.bnf",
             "%include \"no_such_file_xyzzy.bnf\"\nroot -> 'x' ;",
         );
-        match parse_path(&a) {
-            Err(e @ ParseError::IncludeNotFound(_)) => {
-                let msg = e.to_string();
-                assert!(
-                    msg.starts_with("included file not found: ")
-                        && msg.contains("no_such_file_xyzzy.bnf"),
-                    "unexpected message: {msg}"
-                );
-            }
-            _ => panic!("expected IncludeNotFound error"),
-        }
+        let err = parse_path(&a).map(|_| ()).unwrap_err();
+        assert!(
+            matches!(err, ParseError::IncludeNotFound(_)),
+            "expected IncludeNotFound, got: {err}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with("included file not found: ") && msg.contains("no_such_file_xyzzy.bnf"),
+            "unexpected message: {msg}"
+        );
     }
 
     // ── stdin guard ───────────────────────────────────────────────────────────
@@ -686,13 +685,17 @@ mod tests {
     #[test]
     /// parse_source (no backing file) returns IncludeFromStdin on %include.
     fn include_from_stdin_returns_error() {
-        match parse_source("%include \"foo.bnf\"\nroot -> 'x' ;") {
-            Err(e @ ParseError::IncludeFromStdin) => assert_eq!(
-                e.to_string(),
-                "%include cannot be used when reading from stdin"
-            ),
-            _ => panic!("expected IncludeFromStdin error"),
-        }
+        let err = parse_source("%include \"foo.bnf\"\nroot -> 'x' ;")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(err, ParseError::IncludeFromStdin),
+            "expected IncludeFromStdin, got: {err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "%include cannot be used when reading from stdin"
+        );
     }
 
     // ── duplicate rule warning ────────────────────────────────────────────────

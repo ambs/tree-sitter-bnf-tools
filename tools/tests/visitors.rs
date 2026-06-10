@@ -263,7 +263,9 @@ fn conflicts_directive() {
 /// interleave with rules, and naming an undefined rule does not abort parsing.
 #[test]
 fn name_list_directives() {
-    let directives: [(&str, fn(&Grammar) -> &Vec<DirectiveItem>); 3] = [
+    /// Accessor for the grammar field a name-list directive populates.
+    type Field = fn(&Grammar) -> &Vec<DirectiveItem>;
+    let directives: [(&str, Field); 3] = [
         ("inline", |g| &g.inline),
         ("supertypes", |g| &g.supertypes),
         ("extras", |g| &g.extras),
