@@ -41,7 +41,7 @@ pub fn format_grammar(grammar: &Grammar) -> String {
 /// Collects all directives from `grammar` as formatted strings in canonical order.
 fn collect_directives(grammar: &Grammar) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(axiom) = &grammar.axiom {
+    if let Some(axiom) = grammar.axiom_directive() {
         out.push(format!("%axiom {}", axiom.name));
     }
     if !grammar.extras.is_empty() {
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn grammar_axiom_emitted_first() {
         let mut g = Grammar::from_rules([p("r", nt("a"))]);
-        g.axiom = Some(di("r", 1));
+        g.declare_axiom(di("r", 1));
         g.extras = vec![di("/\\s/", 1)];
         let out = format_grammar(&g);
         assert!(out.find("%axiom").unwrap() < out.find("%extras").unwrap());
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn grammar_canonical_directive_order() {
         let mut g = Grammar::from_rules([p("r", nt("a"))]);
-        g.axiom = Some(di("r", 1));
+        g.declare_axiom(di("r", 1));
         g.extras = vec![di("/\\s/", 1)];
         g.conflicts = vec![cg(&["a", "b"], 1)];
         g.inline = vec![di("foo", 1)];

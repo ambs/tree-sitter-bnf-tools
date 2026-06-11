@@ -32,7 +32,7 @@ pub fn rename_grammar(grammar: &mut Grammar, old: &str, new: &str) -> Result<(),
 /// Renames `old` to `new` in every directive list that holds plain rule names
 /// (`%axiom`, `%inline`, `%supertypes`, `%extras`, `%conflicts`).
 fn rename_directives(grammar: &mut Grammar, old: &str, new: &str) {
-    if let Some(ref mut item) = grammar.axiom {
+    if let Some(item) = grammar.axiom_directive_mut() {
         if item.name == old {
             item.name = new.to_owned();
         }
@@ -243,9 +243,9 @@ mod tests {
     fn renames_axiom_directive() {
         use crate::dom::test_utils::di;
         let mut g = Grammar::from_rules([p("expr", nt("x"))]);
-        g.axiom = Some(di("expr", 1));
+        g.declare_axiom(di("expr", 1));
         rename_grammar(&mut g, "expr", "expression").unwrap();
-        assert_eq!(g.axiom.unwrap().name, "expression");
+        assert_eq!(g.axiom_directive().unwrap().name, "expression");
     }
 
     /// A `NonTerminal` reference to the renamed rule inside a `Sequence` body is updated.
