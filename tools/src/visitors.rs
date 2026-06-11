@@ -540,15 +540,14 @@ fn visit_alias_group(
     let name_child = alias_node.child(0).expect("aliasName has a child");
     // The alias name is a display label, not a rule reference, so a
     // nonTerminal name must not be recorded in `rhs_nonterminals`.
-    let name = match name_child.kind() {
-        "nonTerminal" => {
-            let text = name_child
-                .utf8_text(ctx.source.as_bytes())
-                .expect("valid UTF-8");
-            NonTerminal(text.to_string())
-        }
-        "literal" => visit_literal(&name_child, ctx),
-        kind => return Err(ParseError::UnknownNodeKind(kind.to_string())),
+    // The grammar guarantees the child is a nonTerminal or a literal.
+    let name = if name_child.kind() == "nonTerminal" {
+        let text = name_child
+            .utf8_text(ctx.source.as_bytes())
+            .expect("valid UTF-8");
+        NonTerminal(text.to_string())
+    } else {
+        visit_literal(&name_child, ctx)
     };
     Ok(Alias(Box::new(body), Box::new(name)))
 }
