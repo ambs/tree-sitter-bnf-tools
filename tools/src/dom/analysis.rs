@@ -8,7 +8,7 @@
 //! | Function | Returns | Purpose |
 //! |---|---|---|
 //! | [`first_sets`] | Leading terminals per rule | LL(1) feasibility checks |
-//! | [`left_recursive_rules`] | Left-recursive rule names | Detect rules tree-sitter cannot handle |
+//! | [`left_recursive_rules`] | Left-recursive rule names | Surface a structural grammar property |
 //!
 //! # FIRST sets
 //!
@@ -223,8 +223,12 @@ fn collect_leading_nts<'g>(
 ///   another rule that transitively starts with it (e.g. `A ::= B …` and
 ///   `B ::= A …`).
 ///
-/// Tree-sitter cannot handle either form; both cause cryptic parse failures at
-/// grammar-generation time.
+/// Left recursion is a grammar *property*, not a defect: tree-sitter is GLR
+/// and supports both forms — left recursion is the documented idiomatic style
+/// for binary/postfix expression rules. What actually breaks
+/// `tree-sitter generate` is *unresolved ambiguity*, whose ahead-of-time
+/// detection is tracked separately (issue #31, A-01). The counts derived from
+/// this analysis are surfaced informationally in `check --summary`.
 ///
 /// # Examples
 ///
