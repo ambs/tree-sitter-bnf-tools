@@ -67,6 +67,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `convert`: the axiom rule is emitted first in `grammar.js`'s `rules:`
     block so tree-sitter treats it as the start symbol.
 
+### Changed
+
+#### Documentation
+- README simplified into an overview with links into the documentation; the
+  per-subcommand reference moved into the tutorial chapters.
+- The tutorial was split into eight chapters under `docs/tutorial/`, with a
+  documentation index at `docs/index.md` (also the GitHub Pages home).
+- The railroad and graph examples in README and tutorial now use a small
+  arithmetic grammar, shown alongside the diagrams. The diagrams for the BNF
+  dialect's own grammar are published as `grammar/railroad.svg` and
+  `grammar/graph.pdf`.
+- The documentation is now published as a website at
+  <https://ambs.github.io/tree-sitter-bnf-tools/>.
+
 ### Fixed
 
 #### `ts-bnf-tool`

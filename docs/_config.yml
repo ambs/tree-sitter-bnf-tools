@@ -1,0 +1,7 @@
+# GitHub Pages configuration — the site is served from the docs/ folder.
+title: tree-sitter-bnf-tools
+description: >-
+  A tree-sitter grammar for BNF, plus a CLI tool that converts BNF grammars
+  into tree-sitter grammar.js notation.
+theme: jekyll-theme-cayman
+markdown: kramdown

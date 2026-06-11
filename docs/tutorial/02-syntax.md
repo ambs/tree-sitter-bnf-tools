@@ -1,0 +1,244 @@
+# Syntax walkthrough
+
+Every construct of the BNF dialect, one at a time, with the tree-sitter
+JavaScript it generates.
+
+## Rules and alternatives
+
+A rule is written as:
+
+```
+name -> body ;
+```
+
+The body is a sequence of symbols separated by `|` for alternatives. The
+semicolon is required at the end of every rule.
+
+```bnf
+color -> 'red' | 'green' | 'blue' ;
+```
+
+generates:
+
+```js
+color: $ => choice('red', 'green', 'blue'),
+```
+
+## Terminals: literals and patterns
+
+A **literal** is a quoted string — single or double quotes both work:
+
+```bnf
+arrow -> '->' ;
+kw_if -> "if" ;
+```
+
+A **pattern** is a regex delimited by slashes:
+
+```bnf
+ident  -> /[A-Za-z_][A-Za-z0-9_]*/ ;
+number -> /[0-9]+/ ;
+```
+
+Patterns follow JavaScript regex syntax (tree-sitter uses a JS regex engine).
+
+## Sequences and grouping
+
+Juxtaposition means sequence. Parentheses group without creating a named rule:
+
+```bnf
+pair    -> '(' expr ',' expr ')' ;
+sep_seq -> item (',' item)* ;
+```
+
+## Quantifiers
+
+| Syntax | Meaning | Maps to |
+|--------|---------|---------|
+| `x*`   | zero or more | `repeat(x)` |
+| `x+`   | one or more  | `repeat1(x)` |
+| `x?`   | optional     | `optional(x)` |
+
+Quantifiers bind to the immediately preceding symbol or group:
+
+```bnf
+args -> '(' (expr (',' expr)*)? ')' ;
+```
+
+## Token expressions: `<< >>` and `<<! >>`
+
+By default, tree-sitter allows whitespace and extras between any two tokens.
+`<< >>` forces the enclosed expression to be treated as a single atomic lexer
+token — no whitespace is allowed inside:
+
+```bnf
+identifier -> << /[A-Za-z_]/ /[A-Za-z0-9_]*/ >> ;
+```
+
+generates:
+
+```js
+identifier: $ => token(seq(/[A-Za-z_]/, /[A-Za-z0-9_]*/)),
+```
+
+`<<! >>` goes further: it also requires that no whitespace precedes the token.
+This is useful for suffixes that must be attached to the preceding token:
+
+```bnf
+negative -> '-' <<! /[0-9]+/ >> ;
+```
+
+generates:
+
+```js
+negative: $ => seq('-', token.immediate(/[0-9]+/)),
+```
+
+Use `<< >>` when you want a multi-part terminal (e.g. a number followed by a
+unit). Use `<<! >>` when the token must be glued to whatever comes before it
+(e.g. a postfix operator, a type suffix like `u32`).
+
+## Field labels
+
+A field label annotates a symbol with a named field in the AST, using
+tree-sitter's `field()`:
+
+```bnf
+assign -> target: ident '=' value: expr ;
+```
+
+generates:
+
+```js
+assign: $ => seq(field('target', $.ident), '=', field('value', $.expr)),
+```
+
+The colon must be attached to the label name (no space before it). A space
+after the colon is optional. Field labels compose with quantifiers:
+
+```bnf
+call -> func: ident '(' args: expr* ')' ;
+```
+
+generates `field('args', repeat($.expr))`.
+
+## Alias groups
+
+An alias group relabels a sequence in the generated AST using `alias()`. The
+`=>` separator divides the body from the target name:
+
+```bnf
+param_list -> '(' (name type => parameter)* ')' ;
+```
+
+generates:
+
+```js
+param_list: $ => seq('(', repeat(alias(seq($.name, $.type), $.parameter)), ')'),
+```
+
+The target name is either a bare identifier (a named node) or a quoted string
+(an anonymous node):
+
+```bnf
+true_kw -> ('t' 'r' 'u' 'e' => 'true') ;
+```
+
+### How aliases behave
+
+The alias name is a **display label** in the resulting syntax tree, not a
+rule reference: the body does all the parsing, and the resulting node is
+merely renamed. The name does not need to exist as a rule — and if a rule
+with the same name *does* exist, the alias neither invokes nor references
+it. Consequently, `check` does not count alias names as rule references: an
+undefined alias label is not an `undefined rule reference`, and a rule
+mentioned *only* as an alias label is still reported as never referenced
+(it can never produce a node).
+
+What the parse tree looks like, for each alias form:
+
+- **Bare identifier → named node.** Given
+
+  ```bnf
+  member -> object: identifier '.' ( identifier => property_name ) ;
+  ```
+
+  parsing `foo.bar` yields
+
+  ```
+  (member
+    object: (identifier)    ; "foo"
+    (property_name))        ; "bar" — parsed by identifier, displayed as property_name
+  ```
+
+- **Quoted string → anonymous node.** Given
+
+  ```bnf
+  true_kw -> ( 't' 'r' 'u' 'e' => 'true' ) ;
+  ```
+
+  parsing `true` yields an *anonymous* node, exactly as if the rule body had
+  been the plain string `'true'`: it does not appear as a named node in the
+  tree and is only visible to queries via the `"true"` anonymous-node
+  syntax.
+
+## Precedence annotations
+
+Precedence annotations wrap an alternative in a `prec()` call, resolving
+ambiguities in the grammar:
+
+```bnf
+expr -> expr '+' expr  %prec.left 1
+      | expr '*' expr  %prec.left 2
+      | expr '^' expr  %prec.right 3
+      | '-' expr       %prec 4
+      ;
+```
+
+generates:
+
+```js
+expr: $ => choice(
+  prec.left(1, seq($.expr, '+', $.expr)),
+  prec.left(2, seq($.expr, '*', $.expr)),
+  prec.right(3, seq($.expr, '^', $.expr)),
+  prec(4, seq('-', $.expr)),
+),
+```
+
+The four annotation kinds:
+
+| Annotation | Level | Maps to |
+|---|---|---|
+| `%prec N` | required | `prec(N, ...)` |
+| `%prec.left` or `%prec.left N` | optional | `prec.left([N,] ...)` |
+| `%prec.right` or `%prec.right N` | optional | `prec.right([N,] ...)` |
+| `%prec.dynamic N` | required | `prec.dynamic(N, ...)` |
+
+To annotate a sub-expression rather than a whole alternative, wrap it in
+parentheses with `%prec` inside:
+
+```bnf
+rule -> (a | b %prec 1) c ;
+```
+
+## What is not supported
+
+The following constructs from other BNF/EBNF variants are **not** recognised:
+
+| Construct | Example | Why it fails |
+|-----------|---------|--------------|
+| `::=` / `:` / `=` rule separator | `expr ::= term` | Only `->` is accepted |
+| Angle-bracket non-terminals | `<expr>` | Only bare identifiers are accepted |
+| `[optional]` bracket notation | `['+'?]` | Use `?` instead: `'+'?` |
+| `{repetition}` curly-brace notation | `{term}` | Use `*` instead: `term*` |
+| Empty (epsilon) alternatives | `a -> b \|` | Trailing `\|` without a body is a parse error |
+| ABNF character codes | `%x41` | Not implemented |
+| Case-insensitive literals | `%i"text"` | Not implemented |
+
+If your grammar uses any of the unsupported constructs, convert them to the
+supported equivalents before running `ts-bnf-tool`.
+
+---
+
+Previous: [Getting started](01-getting-started.md) · Next: [Grammar-level directives](03-directives.md)
