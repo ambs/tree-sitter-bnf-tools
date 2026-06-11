@@ -223,6 +223,44 @@ The target name is either a bare identifier (a named node) or a quoted string
 true_kw -> ('t' 'r' 'u' 'e' => 'true') ;
 ```
 
+#### How aliases behave
+
+The alias name is a **display label** in the resulting syntax tree, not a
+rule reference: the body does all the parsing, and the resulting node is
+merely renamed. The name does not need to exist as a rule — and if a rule
+with the same name *does* exist, the alias neither invokes nor references
+it. Consequently, `check` does not count alias names as rule references: an
+undefined alias label is not an `undefined rule reference`, and a rule
+mentioned *only* as an alias label is still reported as never referenced
+(it can never produce a node).
+
+What the parse tree looks like, for each alias form:
+
+- **Bare identifier → named node.** Given
+
+  ```bnf
+  member -> object: identifier '.' ( identifier => property_name ) ;
+  ```
+
+  parsing `foo.bar` yields
+
+  ```
+  (member
+    object: (identifier)    ; "foo"
+    (property_name))        ; "bar" — parsed by identifier, displayed as property_name
+  ```
+
+- **Quoted string → anonymous node.** Given
+
+  ```bnf
+  true_kw -> ( 't' 'r' 'u' 'e' => 'true' ) ;
+  ```
+
+  parsing `true` yields an *anonymous* node, exactly as if the rule body had
+  been the plain string `'true'`: it does not appear as a named node in the
+  tree and is only visible to queries via the `"true"` anonymous-node
+  syntax.
+
 ### Precedence annotations
 
 Precedence annotations wrap an alternative in a `prec()` call, resolving

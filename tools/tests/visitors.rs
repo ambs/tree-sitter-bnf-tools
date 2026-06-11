@@ -161,6 +161,31 @@ fn alias_group_with_kleene() {
     );
 }
 
+/// An alias name is a display label, not a rule reference (#187):
+/// it must not be recorded as an rhs non-terminal, so an undefined
+/// alias label must not trigger an "undefined rule reference" warning.
+#[test]
+fn alias_name_is_not_recorded_as_rule_reference() {
+    let grammar = parse_grammar("root -> ( expr => label ) ; expr -> 'x' ;");
+    assert!(!grammar.rhs_nonterminals.contains("label"));
+    assert!(!grammar
+        .check()
+        .iter()
+        .any(|d| d.message.contains("undefined rule reference")));
+}
+
+/// A rule mentioned only as an alias label is never actually referenced,
+/// so the unreachable-rule warning must still fire (#187).
+#[test]
+fn rule_used_only_as_alias_name_is_unreferenced() {
+    let grammar = parse_grammar("root -> ( 'x' => helper ) ; helper -> 'y' ;");
+    assert!(grammar
+        .check()
+        .iter()
+        .any(|d| d.severity == Severity::Warning
+            && d.message.contains("rule 'helper' is never referenced")));
+}
+
 #[test]
 fn prec_plain_on_alternative() {
     assert_eq!(parse("a -> b c %prec 2 ;"), "a -> prec(2, seq($.b, $.c))");

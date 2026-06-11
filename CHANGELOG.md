@@ -67,6 +67,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `convert`: the axiom rule is emitted first in `grammar.js`'s `rules:`
     block so tree-sitter treats it as the start symbol.
 
+### Fixed
+
+#### `ts-bnf-tool`
+- `check` no longer treats alias display names (`(body => name)`) as rule
+  references, matching tree-sitter alias semantics. An undefined alias label
+  no longer emits a spurious `undefined rule reference` warning, and a rule
+  mentioned *only* as an alias label is now correctly reported as never
+  referenced.
+
 ## [0.2.0] - 2026-06-02
 
 ### Changed
