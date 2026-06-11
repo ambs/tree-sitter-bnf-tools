@@ -369,15 +369,9 @@ fn duplicate_rule_second_definition_wins() {
 }
 
 #[test]
-fn axiom_directive_sets_axiom_field() {
-    let g = parse_grammar("%axiom root\nroot -> 'x' ;\n");
-    assert_eq!(g.axiom.as_ref().map(|a| a.name.as_str()), Some("root"));
-}
-
-#[test]
-fn axiom_directive_line_is_recorded() {
-    let g = parse_grammar("%axiom root\nroot -> 'x' ;\n");
-    assert_eq!(g.axiom.as_ref().map(|a| a.line), Some(1));
+fn axiom_directive_sets_root_rule() {
+    let g = parse_grammar("%axiom root\nother -> root ;\nroot -> 'x' ;\n");
+    assert_eq!(g.root_rule(), Some("root"));
 }
 
 #[test]

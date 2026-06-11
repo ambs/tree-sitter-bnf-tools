@@ -100,13 +100,9 @@ fn visit_grammar_inner(
             }
             "axiomDirective" => {
                 let item = visit_axiom_directive(&child, ctx);
-                if grammar.axiom.is_some() {
-                    grammar.parse_diagnostics.push(Diagnostic::error(format!(
-                        "%axiom declared more than once ({})",
-                        loc(&item.filename, item.line)
-                    )));
+                if let Some(diag) = grammar.declare_axiom(item) {
+                    grammar.parse_diagnostics.push(diag);
                 }
-                grammar.axiom = Some(item);
             }
             "includeDirective" => {
                 visit_include_directive(&mut grammar, &child, ctx, seen)?;
@@ -747,6 +743,15 @@ mod tests {
         );
     }
 
+    // ── axiom directive bookkeeping ───────────────────────────────────────────
+
+    #[test]
+    /// The %axiom directive records its 1-based source line for diagnostics.
+    fn axiom_directive_line_is_recorded() {
+        let (g, _) = parse_source("%axiom root\nroot -> 'x' ;\n").unwrap();
+        assert_eq!(g.axiom_directive().map(|a| a.line), Some(1));
+    }
+
     // ── axiom from included file ──────────────────────────────────────────────
 
     #[test]
@@ -757,7 +762,7 @@ mod tests {
         let a = write_tmp("inc_ax_a.bnf", "%include \"inc_ax_b.bnf\"\na -> b ;");
         let (grammar, _) = parse_path(&a).unwrap();
         assert_eq!(
-            grammar.axiom.as_ref().map(|ax| ax.name.as_str()),
+            grammar.axiom_directive().map(|ax| ax.name.as_str()),
             Some("b"),
             "axiom from included file must be adopted when parent has none"
         );

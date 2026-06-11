@@ -92,8 +92,7 @@ fn build_raw_edges(grammar: &Grammar) -> Vec<(String, String)> {
 /// Builds a [`GraphData`] from the grammar, optionally restricting to rules
 /// reachable from `start_rule`.
 ///
-/// The start symbol is the rule named by `%axiom` when declared (and defined),
-/// otherwise the first production in declaration order; `start_rule` overrides both.
+/// The start symbol is [`Grammar::root_rule`]; `start_rule` overrides it.
 ///
 /// Returns an error string if `start_rule` is given but does not exist in the grammar.
 /// Returns the graph data together with a list of undefined-reference warnings.
@@ -108,14 +107,7 @@ pub fn build_graph(
             return Err(format!("error: rule '{sr}' not found in grammar"))
         }
         Some(sr) => sr.to_string(),
-        None => grammar
-            .axiom
-            .as_ref()
-            .map(|item| item.name.as_str())
-            .filter(|name| defined.contains(*name))
-            .or_else(|| grammar.productions.keys().next().map(String::as_str))
-            .unwrap_or("")
-            .to_string(),
+        None => grammar.root_rule().unwrap_or("").to_string(),
     };
 
     let mut edges = build_raw_edges(grammar);
@@ -334,19 +326,9 @@ mod tests {
     /// `%axiom` overrides declaration order: the named rule is the start symbol.
     fn start_symbol_honors_axiom() {
         let mut g = two_rule_grammar();
-        g.axiom = Some(di("a", 1));
+        g.declare_axiom(di("a", 1));
         let (data, _) = build_graph(&g, None).unwrap();
         assert_eq!(data.start, "a");
-    }
-
-    #[test]
-    /// `%axiom` naming an undefined rule is ignored: the start symbol falls
-    /// back to the first production (same graceful fallback as scaffold).
-    fn start_symbol_axiom_undefined_falls_back() {
-        let mut g = two_rule_grammar();
-        g.axiom = Some(di("ghost", 1));
-        let (data, _) = build_graph(&g, None).unwrap();
-        assert_eq!(data.start, "root");
     }
 
     #[test]

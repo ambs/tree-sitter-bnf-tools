@@ -83,21 +83,15 @@ impl Display for Scaffold<'_> {
         }
         writeln!(f, "  rules: {{")?;
         // tree-sitter treats the first entry in `rules:` as the start symbol,
-        // so when %axiom names a rule that isn't first in source order we must
-        // emit it first here and skip it in the regular loop below.
-        if let Some(axiom) = &self.grammar.axiom {
-            if let Some(prod) = self.grammar.productions.get(&axiom.name) {
-                writeln!(f, "    // {}:{}", prod.filename, prod.line)?;
-                writeln!(f, "    {}: $ => {},", prod.name, prod.body)?;
-            }
+        // so the root rule must be emitted first even when %axiom names a rule
+        // that isn't first in source order; it is skipped in the loop below.
+        let root = self.grammar.root_rule();
+        if let Some(prod) = root.map(|name| &self.grammar.productions[name]) {
+            writeln!(f, "    // {}:{}", prod.filename, prod.line)?;
+            writeln!(f, "    {}: $ => {},", prod.name, prod.body)?;
         }
         for production in self.grammar.productions.values() {
-            if self
-                .grammar
-                .axiom
-                .as_ref()
-                .is_some_and(|a| a.name == production.name)
-            {
+            if root == Some(production.name.as_str()) {
                 continue;
             }
             writeln!(f, "    // {}:{}", production.filename, production.line)?;
@@ -265,7 +259,7 @@ mod tests {
             p("a", TerminalLiteral("'x'".into())),
             p("b", TerminalLiteral("'y'".into())),
         ]);
-        g.axiom = Some(di("b", 1));
+        g.declare_axiom(di("b", 1));
         let out = s(&g, "g").to_string();
         assert!(out.find("b: $ =>").unwrap() < out.find("a: $ =>").unwrap());
     }
@@ -276,7 +270,7 @@ mod tests {
             p("a", TerminalLiteral("'x'".into())),
             p("b", TerminalLiteral("'y'".into())),
         ]);
-        g.axiom = Some(di("b", 1));
+        g.declare_axiom(di("b", 1));
         let out = s(&g, "g").to_string();
         assert_eq!(out.matches("b: $ =>").count(), 1);
     }
