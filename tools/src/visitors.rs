@@ -538,7 +538,17 @@ fn visit_alias_group(
         .child_by_field_name("alias")
         .expect("aliasGroup has alias field");
     let name_child = alias_node.child(0).expect("aliasName has a child");
-    let name = visit(grammar, &name_child, ctx)?;
+    // The alias name is a display label, not a rule reference, so a
+    // nonTerminal name must not be recorded in `rhs_nonterminals`.
+    // The grammar guarantees the child is a nonTerminal or a literal.
+    let name = if name_child.kind() == "nonTerminal" {
+        let text = name_child
+            .utf8_text(ctx.source.as_bytes())
+            .expect("valid UTF-8");
+        NonTerminal(text.to_string())
+    } else {
+        visit_literal(&name_child, ctx)
+    };
     Ok(Alias(Box::new(body), Box::new(name)))
 }
 

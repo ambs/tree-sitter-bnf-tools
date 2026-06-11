@@ -4,6 +4,7 @@ Before working on issue `#<n>`, create `plans/<n>.md` (gitignored, never
 committed) with: a short task description, the plan, and a todo list whose
 items have unique ids `<n>.<k>`, e.g. `- [ ] 187.1 Fix visit_alias_group`.
 
+- The plan file is created with **every item unticked** — never pre-tick.
 - Tick each item immediately when done (not in batch), so interrupted work
   can resume from the file.
 - Besides implementation steps, always include items for: tests, `README.md`,

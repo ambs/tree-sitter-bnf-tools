@@ -64,7 +64,9 @@ symbol wrap the whole quantified expression: `items: expr*` →
 `field('items', repeat($.expr))`.
 
 Alias groups (`(body => name)`) map to `alias()`. The name is a bare identifier
-for a named node or a quoted string for an anonymous node.
+for a named node or a quoted string for an anonymous node. The name is a
+display label for the node produced by the body, not a rule reference: it need
+not exist as a rule, and `check` does not count it as a reference.
 
 Precedence annotations (`%prec`, `%prec.left`, `%prec.right`, `%prec.dynamic`)
 wrap an alternative or sub-expression in the corresponding `prec.*()` call. The
