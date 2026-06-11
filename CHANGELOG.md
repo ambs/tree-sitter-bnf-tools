@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+#### `ts-bnf-tool`
+- `check` no longer reports left recursion as an error — tree-sitter (GLR)
+  supports it. The counts remain in `check --summary`. (#197)
+
 ## [0.3.0] - 2026-06-11
 
 ### Added

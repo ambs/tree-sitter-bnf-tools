@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use super::analysis::{
     count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats,
-    left_recursive_rules,
 };
 use super::diagnostic::Diagnostic;
 use super::directive::{loc, ConflictGroup, DirectiveItem};
@@ -100,28 +99,6 @@ impl Grammar {
             .iter()
             .filter(|name| !known.contains(name.as_str()))
             .map(|name| Diagnostic::warning(format!("undefined rule reference '{name}'")))
-            .collect()
-    }
-
-    /// Returns an error for every left-recursive rule (direct or mutual).
-    ///
-    /// Left-recursion is an error, not a warning, because tree-sitter cannot generate a
-    /// parser for a left-recursive grammar regardless of any other options.
-    fn left_recursive_check(&self) -> Vec<Diagnostic> {
-        left_recursive_rules(self)
-            .into_iter()
-            .map(|(rule, is_direct)| {
-                let kind = if is_direct { "directly" } else { "mutually" };
-                let (line, filename) = self
-                    .productions
-                    .get(rule)
-                    .map(|p| (p.line, p.filename.as_str()))
-                    .unwrap_or((0, ""));
-                Diagnostic::error(format!(
-                    "rule '{rule}' is {kind} left-recursive ({})",
-                    loc(filename, line)
-                ))
-            })
             .collect()
     }
 
@@ -257,7 +234,6 @@ impl Grammar {
         diagnostics.extend(self.extras_check(&known));
         diagnostics.extend(self.undefined_refs_check(&known));
         diagnostics.extend(self.unreachable_rules_check());
-        diagnostics.extend(self.left_recursive_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
     }
@@ -393,7 +369,8 @@ mod tests {
     }
 
     #[test]
-    fn check_detects_direct_left_recursion() {
+    /// Direct left recursion is a valid tree-sitter idiom; `check` must not flag it (#197).
+    fn check_accepts_direct_left_recursion() {
         use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
         let g = Grammar::from_rules([p(
             "expr",
@@ -406,18 +383,14 @@ mod tests {
                 TerminalLiteral("'n'".into()),
             ]),
         )]);
-        let diagnostics = g.check();
-        assert!(diagnostics.iter().any(|d| {
-            d.severity == Severity::Error
-                && d.message.contains("expr")
-                && d.message.contains("directly left-recursive")
-        }));
+        assert!(g.check().is_empty());
     }
 
     #[test]
-    fn check_detects_mutual_left_recursion() {
+    /// Mutual left recursion is a valid tree-sitter idiom; `check` must not flag it (#197).
+    fn check_accepts_mutual_left_recursion() {
         use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
-        let g = Grammar::from_rules([
+        let mut g = Grammar::from_rules([
             p(
                 "a",
                 Choice(vec![
@@ -433,17 +406,9 @@ mod tests {
                 ]),
             ),
         ]);
-        let diagnostics = g.check();
-        assert!(diagnostics.iter().any(|d| {
-            d.severity == Severity::Error
-                && d.message.contains("'a'")
-                && d.message.contains("mutually left-recursive")
-        }));
-        assert!(diagnostics.iter().any(|d| {
-            d.severity == Severity::Error
-                && d.message.contains("'b'")
-                && d.message.contains("mutually left-recursive")
-        }));
+        g.rhs_nonterminals.insert("a".into());
+        g.rhs_nonterminals.insert("b".into());
+        assert!(g.check().is_empty());
     }
 
     #[test]

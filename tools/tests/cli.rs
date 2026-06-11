@@ -23,8 +23,16 @@ const WARN_BNF: &str = indoc! {"
     unused -> 'b' ;
 "};
 
-/// A left-recursive grammar that produces an error.
+/// A grammar with a duplicate `%axiom` that produces an error.
 const ERROR_BNF: &str = indoc! {"
+    %axiom expr
+    %axiom term
+    expr -> term ;
+    term -> /[0-9]+/ ;
+"};
+
+/// A left-recursive grammar — valid for tree-sitter, must pass `check` (#197).
+const LEFT_RECURSIVE_BNF: &str = indoc! {"
     expr -> expr '+' term | term ;
     term -> /[0-9]+/ ;
 "};
@@ -97,6 +105,46 @@ fn check_plain_text_goes_to_stderr_not_stdout() {
         !out.stderr.is_empty(),
         "plain-text diagnostics must appear on stderr"
     );
+}
+
+#[test]
+/// Left recursion is idiomatic tree-sitter style; `check` must exit 0 (#197).
+fn check_left_recursive_grammar_exits_zero() {
+    let path = write_tmp("ts_bnf_check_left_rec.bnf", LEFT_RECURSIVE_BNF);
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "left-recursive grammar must pass check: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+/// `convert` must accept a left-recursive grammar without `--no-check` (#197).
+fn convert_left_recursive_grammar_succeeds_without_no_check() {
+    let path = write_tmp("ts_bnf_convert_left_rec.bnf", LEFT_RECURSIVE_BNF);
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "left-recursive grammar must convert without --no-check: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+/// `check --summary` still reports left-recursion counts as a property (#197).
+fn check_summary_reports_left_recursion_counts() {
+    let path = write_tmp("ts_bnf_summary_left_rec.bnf", LEFT_RECURSIVE_BNF);
+    let out = tool()
+        .args(["check", "--json", "--summary"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "expected exit 0");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(parsed["summary"]["left_recursive_direct"], 1);
+    assert_eq!(parsed["summary"]["left_recursive_mutual"], 0);
 }
 
 // ── firsts --json ─────────────────────────────────────────────────────────────

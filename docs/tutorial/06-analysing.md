@@ -23,8 +23,6 @@ Checks performed:
 | Undefined `%supertypes` rules | warning | `warning: %supertypes references undefined rule 'foo'` |
 | Undefined `%extras` rules | warning | `warning: %extras references undefined rule 'foo'` |
 | Unreferenced rule | warning | `warning: rule 'foo' is never referenced (line 4)` |
-| Direct left-recursion | **error** | `error: rule 'expr' is directly left-recursive (line 1)` |
-| Mutual left-recursion | **error** | `error: rule 'a' is mutually left-recursive (line 1)` |
 
 Pass `--json` to get diagnostics as a JSON object on stdout instead of plain
 text on stderr. Exit codes are not affected:
@@ -39,41 +37,25 @@ ts-bnf-tool check --json json.bnf
 
 ### Left-recursion
 
-Left-recursion is reported as an **error** (exit code 2) because tree-sitter
-cannot generate a parser for left-recursive grammars and the resulting
-error messages are cryptic.
-
-A directly left-recursive rule references itself as the first symbol of one of
-its alternatives:
+Left-recursive rules are **not** flagged by `check`. Tree-sitter is a GLR
+parser generator: left recursion is fully supported and is the idiomatic
+style for binary and postfix expression rules.
 
 ```bnf
-# BAD — directly left-recursive
+# OK — directly left-recursive, idiomatic for binary operators
 expr -> expr '+' term | term ;
 ```
 
-```
-error: rule 'expr' is directly left-recursive (line 2)
-```
+Left recursion is still a grammar property worth knowing about — for
+instance, a left-recursive rule may need a `%prec` annotation or a
+`%conflicts` entry to resolve ambiguity. The `check --summary` block
+reports how many rules are directly or mutually left-recursive (see
+[Summarising grammar shape](#summarising-grammar-shape) below).
 
-Fix it by rewriting the grammar to use right-recursion or a repetition operator:
-
-```bnf
-# OK — right-recursive (or use repeat)
-expr -> term ('+' term)* ;
-```
-
-Mutual left-recursion arises when two or more rules form a cycle:
-
-```bnf
-# BAD — mutually left-recursive
-a -> b 'x' | 'a' ;
-b -> a 'y' | 'b' ;
-```
-
-```
-error: rule 'a' is mutually left-recursive (line 1)
-error: rule 'b' is mutually left-recursive (line 2)
-```
+What actually makes `tree-sitter generate` fail is *unresolved ambiguity*
+— for example `expr -> expr '+' expr | 'n'` with no precedence annotation.
+Ahead-of-time detection of such conflicts is planned separately
+([#31](https://github.com/ambs/tree-sitter-bnf-tools/issues/31)).
 
 ### Unreferenced rules
 
@@ -116,7 +98,7 @@ Each row measures a different aspect of the grammar:
 | **Rules** | Total named productions. *leaf* = rules whose body contains no rule references (only terminals). *unreachable* = rules never reached from the root, which `check` also flags as warnings. |
 | **Terminals** | Unique terminal values across all rule bodies, split into string literals and regex patterns. See the note on uniqueness below. |
 | **Undefined refs** | Rule names used in bodies but never defined — `check` flags these as warnings too. |
-| **Left-recursive** | Rules involved in left-recursion, split into *direct* (`a → a …`) and *mutual* (`a → b …`, `b → a …`). `check` flags these as errors. |
+| **Left-recursive** | Rules involved in left-recursion, split into *direct* (`a → a …`) and *mutual* (`a → b …`, `b → a …`). Informational only — left recursion is idiomatic tree-sitter style, not a defect. |
 | **FIRST sets** | Size statistics (min / max / average) of the FIRST set of each rule — the set of terminals that can open a derivation. A large max or high average suggests the grammar may have ambiguous alternatives. |
 
 > **Terminal uniqueness** is measured by raw source text, not by what the lexer
