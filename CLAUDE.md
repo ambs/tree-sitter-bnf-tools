@@ -1,3 +1,16 @@
+# Fixing an issue
+
+Before working on issue `#<n>`, create `plans/<n>.md` (gitignored, never
+committed) with: a short task description, the plan, and a todo list whose
+items have unique ids `<n>.<k>`, e.g. `- [ ] 187.1 Fix visit_alias_group`.
+
+- Tick each item immediately when done (not in batch), so interrupted work
+  can resume from the file.
+- Besides implementation steps, always include items for: tests, `README.md`,
+  `CHANGELOG.md` (see Changelog below), and docs/tutorial. If one doesn't
+  apply, don't omit it — tick it with `N/A — <reason>`.
+- Keep finished plan files as a local archive.
+
 # Pull Requests
 
 ## Branch naming
