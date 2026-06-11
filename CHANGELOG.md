@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-11
+
 ### Added
 
 #### `tree-sitter-bnf`
@@ -89,6 +91,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no longer emits a spurious `undefined rule reference` warning, and a rule
   mentioned *only* as an alias label is now correctly reported as never
   referenced.
+- `railroad`: rule-name labels in generated SVG were cropped due to
+  `text-anchor:middle` from the railroad crate's stylesheet. Labels now
+  carry an explicit `text-anchor:start` override so names are fully visible.
 
 ## [0.2.0] - 2026-06-02
 
@@ -197,6 +202,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Line comments (`#`)
   - Warning on undefined rule references in directive and rule bodies
 
-[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ambs/tree-sitter-bnf-tools/releases/tag/v0.1.0
