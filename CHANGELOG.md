@@ -16,6 +16,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Precedence levels accept negative integers: `%prec -1` is now valid syntax.
   The sign is carried verbatim through `convert` (`prec(-1, …)`) and
   `format`. (#196)
+- Literal escape semantics are now specified, in the tutorial and in
+  `grammar/bnf.bnf`: a literal's content is emitted verbatim into `grammar.js`
+  and read as a JavaScript string, so JS escape sequences (`\n`, `\0`, `\xNN`,
+  `\\`, escaped quotes, …) apply by passthrough. Escapes are deliberately not
+  validated by `check`, so escapes JS adds in the future work without tool
+  changes. (#201)
 
 ### Changed
 

@@ -53,7 +53,7 @@ The dialect supports the full tree-sitter feature set:
 |-----------|--------|---------|
 | Rule | `name -> body ;` | [Syntax](docs/tutorial/02-syntax.md) |
 | Comment | `# text` | [Syntax](docs/tutorial/02-syntax.md) |
-| Literal / pattern terminal | `'text'`, `/regex/`, `/regex/i` | [Terminals](docs/tutorial/02-syntax.md#terminals-literals-and-patterns) |
+| Literal / pattern terminal | `'text'`, `'\n'`, `/regex/`, `/regex/i` | [Terminals](docs/tutorial/02-syntax.md#terminals-literals-and-patterns) |
 | Alternative | `a \| b` | [Rules](docs/tutorial/02-syntax.md#rules-and-alternatives) |
 | Quantifiers | `*` `+` `?` | [Quantifiers](docs/tutorial/02-syntax.md#quantifiers) |
 | Grouping | `( )` | [Sequences](docs/tutorial/02-syntax.md#sequences-and-grouping) |
