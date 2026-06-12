@@ -95,3 +95,37 @@ expr -> other;
       (symbolSeq
         (symbol
           content: (nonTerminal))))))
+
+================================================================================
+Literal with escape sequences
+================================================================================
+
+expr -> '\n' '\0' '\x41' '\\' '\'';
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))
+        (symbol
+          content: (literal))
+        (symbol
+          content: (literal))
+        (symbol
+          content: (literal))
+        (symbol
+          content: (literal))))))
+
+================================================================================
+Raw newline inside a literal is an error
+:error
+================================================================================
+
+expr -> 'a
+b';
+
+--------------------------------------------------------------------------------

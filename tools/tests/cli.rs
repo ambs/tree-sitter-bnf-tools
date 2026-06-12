@@ -928,6 +928,26 @@ fn unknown_escape_passes_through_unvalidated() {
     );
 }
 
+// ── raw line breaks in literals (#208) ────────────────────────────────────────
+
+#[test]
+/// A literal containing a raw LF is a syntax error — line breaks must be
+/// written as the `\n` escape (#208).
+fn raw_lf_in_literal_is_syntax_error() {
+    let path = write_tmp("ts_bnf_raw_lf_literal.bnf", "a -> 'x\ny' ;\n");
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "raw LF must be a syntax error");
+}
+
+#[test]
+/// A literal containing a raw CR is a syntax error — CR is a JS
+/// LineTerminator just like LF (#208).
+fn raw_cr_in_literal_is_syntax_error() {
+    let path = write_tmp("ts_bnf_raw_cr_literal.bnf", "a -> 'x\ry' ;\n");
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "raw CR must be a syntax error");
+}
+
 // ── graph ─────────────────────────────────────────────────────────────────────
 
 const GRAPH_BNF: &str = indoc! {"
