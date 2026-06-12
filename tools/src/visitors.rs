@@ -1,6 +1,8 @@
 use crate::dom::directive::{loc, ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
+use crate::dom::ParseError::SyntaxError;
 use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
+use crate::util::syntax_error_diagnostics;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tree_sitter::Node;
@@ -28,6 +30,10 @@ pub fn parse_source(src: &str) -> Result<(Grammar, Vec<Diagnostic>), ParseError>
         filename: "",
         path: None,
     };
+    if tree.root_node().has_error() {
+        let diagnostics = syntax_error_diagnostics(&tree.root_node(), &ctx);
+        return Err(SyntaxError(diagnostics));
+    }
     visit_grammar(&tree.root_node(), &ctx)
 }
 
@@ -161,9 +167,6 @@ fn visit_include_directive(
         .set_language(&tree_sitter_bnf::LANGUAGE.into())
         .map_err(|_| ParseError::ParseFailed)?;
     let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
-    if tree.root_node().has_error() {
-        return Err(ParseError::SyntaxError);
-    }
 
     let filename_owned = resolved.to_string_lossy().into_owned();
     let included_ctx = SourceFile {
@@ -171,6 +174,12 @@ fn visit_include_directive(
         filename: &filename_owned,
         path: canonical.clone(),
     };
+
+    if tree.root_node().has_error() {
+        let diagnostics = syntax_error_diagnostics(&tree.root_node(), &included_ctx);
+        return Err(ParseError::SyntaxError(diagnostics));
+    }
+
     let (included, _) = visit_grammar_inner(&tree.root_node(), &included_ctx, seen)?;
 
     // Backtrack: remove from the stack so diamond includes are not misreported as cycles.
@@ -594,14 +603,16 @@ mod tests {
             .set_language(&tree_sitter_bnf::LANGUAGE.into())
             .map_err(|_| ParseError::ParseFailed)?;
         let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
-        if tree.root_node().has_error() {
-            return Err(ParseError::SyntaxError);
-        }
         let ctx = SourceFile {
             source: &source,
             filename: path.to_str().unwrap_or(""),
             path: path.canonicalize().ok(),
         };
+        if tree.root_node().has_error() {
+            let diagnostics = syntax_error_diagnostics(&tree.root_node(), &ctx);
+            return Err(ParseError::SyntaxError(diagnostics));
+        }
+
         visit_grammar(&tree.root_node(), &ctx)
     }
 
@@ -771,7 +782,8 @@ mod tests {
     // ── syntax error in included file ─────────────────────────────────────────
 
     #[test]
-    /// An included file with a syntax error returns ParseError::SyntaxError.
+    /// An included file with a syntax error returns ParseError::SyntaxError
+    /// with diagnostics located in the included file, not the includer.
     fn include_syntax_error_in_included_file() {
         // "-> 'x' ;" has no left-hand side and is not valid BNF syntax.
         write_tmp("inc_synerr_b.bnf", "-> 'x' ;");
@@ -779,10 +791,34 @@ mod tests {
             "inc_synerr_a.bnf",
             "%include \"inc_synerr_b.bnf\"\nroot -> 'y' ;",
         );
-        assert!(
-            matches!(parse_path(&a), Err(ParseError::SyntaxError)),
-            "expected SyntaxError when included file has invalid syntax"
-        );
+        let err = parse_path(&a).map(|_| ()).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError(_)));
+        // Display joins the diagnostic messages; locations must point into
+        // the included file, not the includer.
+        let msg = err.to_string();
+        assert!(msg.contains("inc_synerr_b.bnf"));
+        assert!(!msg.contains("inc_synerr_a.bnf"));
+    }
+
+    #[test]
+    /// A syntax error in the top-level file itself is located in that file.
+    fn syntax_error_in_top_level_file() {
+        let path = write_tmp("synerr_top.bnf", "root => 'a' ;");
+        let err = parse_path(&path).map(|_| ()).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("synerr_top.bnf"));
+        assert!(msg.contains(":1:"));
+    }
+
+    #[test]
+    /// parse_source detects syntax errors, locating them without a filename.
+    fn parse_source_syntax_error_reports_bare_location() {
+        let err = parse_source("root => 'a' ;").map(|_| ()).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError(_)));
+        assert!(err
+            .to_string()
+            .contains("syntax error at line 1:1 near 'root => 'a' ;'"));
     }
 
     // ── merge directives ──────────────────────────────────────────────────────

@@ -32,3 +32,8 @@ pub(crate) fn loc(filename: &str, line: usize) -> String {
         format!("{filename}:{line}")
     }
 }
+
+/// Formats a source location like [`loc`], with a column appended: `"filename:line:col"`.
+pub(crate) fn loc_col(filename: &str, line: usize, col: usize) -> String {
+    format!("{}:{col}", loc(filename, line))
+}

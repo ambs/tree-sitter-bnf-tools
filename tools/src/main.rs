@@ -14,6 +14,7 @@ use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity};
+use ts_bnf_tool::util::syntax_error_diagnostics;
 use ts_bnf_tool::visitors::{visit_grammar, SourceFile};
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -304,19 +305,23 @@ fn parse_file(
         .parse(&source_code, None)
         .ok_or(ParseError::ParseFailed)?;
     let root_node = tree.root_node();
-    if root_node.has_error() {
-        return Err(ParseError::SyntaxError.into());
-    }
+
     let path = if filename == "-" {
         None
     } else {
         std::path::Path::new(filename).canonicalize().ok()
     };
+
     let ctx = SourceFile {
         source: &source_code,
         filename,
         path,
     };
+
+    if root_node.has_error() {
+        let diagnostics = syntax_error_diagnostics(&root_node, &ctx);
+        return Err(ParseError::SyntaxError(diagnostics).into());
+    }
     let (grammar, diagnostics) = visit_grammar(&root_node, &ctx)?;
     if run_checks {
         Ok((grammar, diagnostics))
@@ -332,7 +337,10 @@ fn display_terminal<'a>(t: &'a FirstTerminal<'a>) -> &'a str {
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+/// Parses the command line and dispatches to the selected subcommand.
+///
+/// Any error is propagated to [`main`], which prints its [`Display`] form.
+fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -569,11 +577,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             json,
             summary,
         } => {
-            let (grammar, diagnostics) = parse_file(&filename, true)?;
+            let (grammar, diagnostics) = match parse_file(&filename, true) {
+                Ok((g, d)) => (Some(g), d),
+                Err(e) => match e.downcast::<ParseError>() {
+                    Ok(pe) => match *pe {
+                        ParseError::SyntaxError(diags) => (None, diags),
+                        other => return Err(Box::new(other)),
+                    },
+                    Err(other) => return Err(other),
+                },
+            };
             // bool::then is lazy — the closure (and first_sets inside it) only
             // runs when --summary was passed. Without it, summarise() would
             // always execute regardless of the flag.
-            let grammar_summary = summary.then(|| grammar.summarise());
+            let grammar_summary = grammar.filter(|_| summary).map(|g| g.summarise());
             if json {
                 // Always emit an object so the shape is stable regardless of
                 // whether --summary is also passed. The "summary" key is
@@ -608,6 +625,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+/// Entry point: runs the CLI and reports any error on stderr with a nonzero exit code.
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
