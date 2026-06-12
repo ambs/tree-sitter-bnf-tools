@@ -41,6 +41,15 @@ number -> /[0-9]+/ ;
 ```
 
 Patterns follow JavaScript regex syntax (tree-sitter uses a JS regex engine).
+A pattern may carry JS regex flags after the closing slash — tree-sitter
+honours `i` (case-insensitive):
+
+```bnf
+kw_select -> /select/i ;
+```
+
+The flag suffix is passed through to `grammar.js` verbatim; flag validity is
+checked by `tree-sitter generate`.
 
 ## Sequences and grouping
 

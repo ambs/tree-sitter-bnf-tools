@@ -332,6 +332,11 @@ mod tests {
     }
 
     #[test]
+    fn terminal_pattern_with_flags_passthrough() {
+        assert_eq!(format_node_nested(&pat("/select/i")), "/select/i");
+    }
+
+    #[test]
     fn optional_simple_no_parens() {
         assert_eq!(format_node_nested(&Optional(Box::new(nt("a")))), "a?");
     }

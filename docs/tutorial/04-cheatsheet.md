@@ -11,6 +11,7 @@
 | `(body)` | inline group | No new rule created |
 | `'text'` | `'text'` | Literal string |
 | `/regex/` | `/regex/` | Pattern |
+| `/regex/i` | `/regex/i` | Pattern with JS regex flags |
 | `<< body >>` | `token(body)` | Atomic lexer token |
 | `<<! body >>` | `token.immediate(body)` | Immediate token (no leading whitespace) |
 | `label: sym` | `field('label', sym)` | Named AST field |

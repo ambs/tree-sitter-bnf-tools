@@ -807,6 +807,39 @@ fn include_format_outputs_merged_grammar() {
     );
 }
 
+// ── pattern flags (#198) ──────────────────────────────────────────────────────
+
+/// A grammar whose pattern carries a JS regex flag suffix.
+const FLAGGED_PATTERN_BNF: &str = indoc! {"
+    root -> /select/i ;
+"};
+
+#[test]
+/// `/select/i` passes `check` clean, `convert` emits the flagged literal
+/// verbatim, and `format` round-trips it (#198).
+fn pattern_flags_check_convert_format() {
+    let path = write_tmp("ts_bnf_pattern_flags.bnf", FLAGGED_PATTERN_BNF);
+
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "flagged pattern must check clean");
+
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "flagged pattern must convert");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("/select/i"),
+        "convert output must carry the flag suffix: {stdout}"
+    );
+
+    let out = tool().args(["format"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "flagged pattern must format");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("root -> /select/i;"),
+        "format output must round-trip the flag suffix: {stdout}"
+    );
+}
+
 // ── graph ─────────────────────────────────────────────────────────────────────
 
 const GRAPH_BNF: &str = indoc! {"
