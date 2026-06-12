@@ -13,6 +13,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   syntax. The suffix is carried verbatim through `convert` and `format`, and
   `tree-sitter generate` serializes it as the `flags` field in `grammar.json`
   (flag validity is checked there, not by `check`). (#198)
+- Precedence levels accept negative integers: `%prec -1` is now valid syntax.
+  The sign is carried verbatim through `convert` (`prec(-1, …)`) and
+  `format`. (#196)
 
 ### Removed
 

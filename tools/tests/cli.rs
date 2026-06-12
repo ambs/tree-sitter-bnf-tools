@@ -840,6 +840,40 @@ fn pattern_flags_check_convert_format() {
     );
 }
 
+// ── negative precedence levels (#196) ─────────────────────────────────────────
+
+/// A grammar with a negative precedence level on an alternative.
+const NEGATIVE_PREC_BNF: &str = indoc! {"
+    a -> b 'x' %prec -1 ;
+    b -> 'b' ;
+"};
+
+#[test]
+/// `%prec -1` passes `check` clean, `convert` emits `prec(-1, …)`, and
+/// `format` round-trips the sign (#196).
+fn negative_prec_check_convert_format() {
+    let path = write_tmp("ts_bnf_negative_prec.bnf", NEGATIVE_PREC_BNF);
+
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "negative prec level must check clean");
+
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "negative prec level must convert");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("prec(-1, seq($.b, 'x'))"),
+        "convert output must carry the negative level: {stdout}"
+    );
+
+    let out = tool().args(["format"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "negative prec level must format");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("%prec -1"),
+        "format output must round-trip the sign: {stdout}"
+    );
+}
+
 // ── graph ─────────────────────────────────────────────────────────────────────
 
 const GRAPH_BNF: &str = indoc! {"

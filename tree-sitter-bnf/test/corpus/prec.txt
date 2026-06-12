@@ -20,6 +20,27 @@ expr -> a b %prec 2 ;
           level: (integer))))))
 
 ================================================================================
+prec suffix with negative value
+================================================================================
+
+expr -> a b %prec -5;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          level: (integer))))))
+
+================================================================================
 prec.left suffix with level
 ================================================================================
 

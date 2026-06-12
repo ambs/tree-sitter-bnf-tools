@@ -202,6 +202,14 @@ fn prec_plain_on_alternative() {
 }
 
 #[test]
+fn prec_negative_level_on_alternative() {
+    assert_eq!(
+        parse("a -> b 'x' %prec -1 ;"),
+        "a -> prec(-1, seq($.b, 'x'))"
+    );
+}
+
+#[test]
 fn prec_left_on_alternative() {
     assert_eq!(
         parse("expr -> expr '+' expr %prec.left 1 ;"),

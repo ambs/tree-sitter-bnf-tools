@@ -40,7 +40,7 @@ pub enum GrammarNode {
     /// `alias(body, name)` — renames a node in the syntax tree.
     Alias(Box<GrammarNode>, Box<GrammarNode>),
     /// `prec[.left|.right|.dynamic](level, …)` — precedence annotation.
-    Prec(PrecKind, Option<u32>, Box<GrammarNode>),
+    Prec(PrecKind, Option<i32>, Box<GrammarNode>),
 }
 
 impl GrammarNode {
@@ -254,6 +254,13 @@ mod tests {
         assert!(
             Prec(PrecKind::Left, Some(1), Box::new(NonTerminal("a".into()))).contains_nonterminal()
         );
+    }
+
+    #[test]
+    /// A negative precedence level is emitted verbatim in the prec(…) call.
+    fn prec_negative_level_displays_verbatim() {
+        let node = Prec(PrecKind::Plain, Some(-1), Box::new(NonTerminal("a".into())));
+        assert_eq!(node.to_string(), "prec(-1, $.a)");
     }
 
     #[test]

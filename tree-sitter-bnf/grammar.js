@@ -91,7 +91,7 @@ module.exports = grammar({
     precAnnotation: ($) =>
       seq("%", field("kind", $.precKind), optional(field("level", $.integer))),
     precKind: ($) => choice("prec.dynamic", "prec.left", "prec.right", "prec"),
-    integer: ($) => /[0-9]+/,
+    integer: ($) => /-?[0-9]+/,
     _terminal: ($) => choice($.pattern, $.literal),
     pattern: ($) => /\/([^/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/,
     literal: ($) => token(choice(/'([^'\\]|\\.)*'/, /"([^"\\]|\\.)*"/)),

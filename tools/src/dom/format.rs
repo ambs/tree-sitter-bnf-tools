@@ -181,7 +181,7 @@ fn format_sequence_items(node: &GrammarNode) -> String {
 }
 
 /// Builds the `%prec[.left|.right|.dynamic] [level]` annotation string.
-fn prec_annotation(kind: &PrecKind, level: Option<u32>) -> String {
+fn prec_annotation(kind: &PrecKind, level: Option<i32>) -> String {
     let kw = match kind {
         PrecKind::Plain => "prec",
         PrecKind::Left => "prec.left",
@@ -420,6 +420,14 @@ mod tests {
         assert_eq!(
             format_node_top(&Prec(PrecKind::Right, None, Box::new(nt("a")))),
             "a %prec.right"
+        );
+    }
+
+    #[test]
+    fn prec_negative_level() {
+        assert_eq!(
+            format_node_top(&Prec(PrecKind::Plain, Some(-1), Box::new(nt("a")))),
+            "a %prec -1"
         );
     }
 
