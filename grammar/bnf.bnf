@@ -85,7 +85,7 @@ questionMark        -> '?' ;
 
 precAnnotation      -> '%' precKind integer? ;
 precKind            -> 'prec.dynamic' | 'prec.left' | 'prec.right' | 'prec' ;
-integer             -> /[0-9]+/ ;
+integer             -> /-?[0-9]+/ ;
 
 # ── Terminals ─────────────────────────────────────────────────────────────────
 

@@ -224,6 +224,10 @@ The four annotation kinds:
 | `%prec.right` or `%prec.right N` | optional | `prec.right([N,] ...)` |
 | `%prec.dynamic N` | required | `prec.dynamic(N, ...)` |
 
+The level `N` is a signed integer: negative levels such as `%prec -1` are
+allowed and map to `prec(-1, ...)`. Tree-sitter grammars commonly use
+negative precedence to disfavour an interpretation.
+
 To annotate a sub-expression rather than a whole alternative, wrap it in
 parentheses with `%prec` inside:
 

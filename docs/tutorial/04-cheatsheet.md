@@ -17,7 +17,7 @@
 | `label: sym` | `field('label', sym)` | Named AST field |
 | `(body => name)` | `alias(body, $.name)` | Named alias |
 | `(body => 'str')` | `alias(body, 'str')` | Anonymous alias |
-| `body %prec N` | `prec(N, body)` | Precedence |
+| `body %prec N` | `prec(N, body)` | Precedence (`N` may be negative) |
 | `body %prec.left N` | `prec.left(N, body)` | Left-associative precedence |
 | `body %prec.right N` | `prec.right(N, body)` | Right-associative precedence |
 | `body %prec.dynamic N` | `prec.dynamic(N, body)` | Dynamic precedence |

@@ -390,7 +390,7 @@ fn visit_symbol(
 fn parse_prec_annotation(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
-) -> Result<(PrecKind, Option<u32>), ParseError> {
+) -> Result<(PrecKind, Option<i32>), ParseError> {
     let kind_node = node
         .child_by_field_name("kind")
         .expect("precAnnotation has kind field");
@@ -407,7 +407,7 @@ fn parse_prec_annotation(
     let level = if let Some(n) = node.child_by_field_name("level") {
         let text = n.utf8_text(ctx.source.as_bytes()).expect("valid UTF-8");
         Some(
-            text.parse::<u32>()
+            text.parse::<i32>()
                 .map_err(|_| ParseError::MalformedProduction)?,
         )
     } else {
