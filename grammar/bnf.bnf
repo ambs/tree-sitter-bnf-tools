@@ -100,8 +100,9 @@ pattern             -> /\/([^\/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/ ;
 # literal, so escape sequences have JS semantics by passthrough: \n, \t, \0,
 # \\, \xNN, \u{...} and any escape JS may add later.  Escapes are not
 # validated by the tool; JS decides what they mean.  Control characters must
-# be written as escapes — raw control bytes break the parse or the emitted JS.
-literal             -> << /'([^'\\]|\\.)*'/ | /"([^"\\]|\\.)*"/ >> ;
+# be written as escapes — raw line breaks (CR or LF, both JS LineTerminators)
+# and NUL bytes are syntax errors.
+literal             -> << /'([^'\\\r\n]|\\.)*'/ | /"([^"\\\r\n]|\\.)*"/ >> ;
 
 # Bare identifier.
 nonTerminal         -> /[A-Za-z_][A-Za-z0-9_]*/ ;

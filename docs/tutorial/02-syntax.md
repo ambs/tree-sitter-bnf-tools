@@ -55,10 +55,14 @@ passed through unchanged, and JavaScript decides what it means. This keeps
 the dialect automatically in step with any escape JS supports — but it also
 means a typo such as `'\q'` is not caught here; JS silently reads it as `q`.
 
-Control characters must be written as escapes. Raw control bytes inside the
-quotes either fail to parse (a literal NUL byte) or survive the parse only to
-produce invalid JavaScript in the emitted `grammar.js` (a raw newline splits
-the JS string across two lines).
+Control characters must be written as escapes. Raw line breaks (LF or CR —
+both line terminators in JS, where a string literal cannot span lines) and
+raw NUL bytes inside the quotes are syntax errors:
+
+```bnf
+broken -> 'a
+b' ;          # syntax error — write 'a\nb'
+```
 
 A **pattern** is a regex delimited by slashes:
 

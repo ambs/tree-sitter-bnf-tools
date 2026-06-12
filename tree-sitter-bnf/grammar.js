@@ -94,7 +94,7 @@ module.exports = grammar({
     integer: ($) => /-?[0-9]+/,
     _terminal: ($) => choice($.pattern, $.literal),
     pattern: ($) => /\/([^/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/,
-    literal: ($) => token(choice(/'([^'\\]|\\.)*'/, /"([^"\\]|\\.)*"/)),
+    literal: ($) => token(choice(/'([^'\\\r\n]|\\.)*'/, /"([^"\\\r\n]|\\.)*"/)),
     nonTerminal: ($) => /[A-Za-z_][A-Za-z0-9_]*/,
     comment: ($) => token(seq("#", /.*/)),
   },
