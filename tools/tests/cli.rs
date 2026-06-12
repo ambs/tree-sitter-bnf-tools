@@ -874,6 +874,60 @@ fn negative_prec_check_convert_format() {
     );
 }
 
+// ── literal escape passthrough (#201) ─────────────────────────────────────────
+
+/// A grammar exercising the documented JS escape sequences inside literals:
+/// `\n`, `\0`, `\xNN`, `\\`, and an escaped quote of each delimiter kind.
+const ESCAPED_LITERALS_BNF: &str = indoc! {r#"
+    root -> '\n' '\0' '\x41' '\\' '\'' "\"" ;
+"#};
+
+#[test]
+/// Escaped literals pass `check` clean, `convert` copies each lexeme verbatim
+/// into the JS output (normalising double quotes to single), and `format`
+/// round-trips them (#201).
+fn escaped_literals_check_convert_format() {
+    let path = write_tmp("ts_bnf_escaped_literals.bnf", ESCAPED_LITERALS_BNF);
+
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "escaped literals must check clean");
+
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "escaped literals must convert");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains(r#"seq('\n', '\0', '\x41', '\\', '\'', '"')"#),
+        "convert output must carry the escapes verbatim: {stdout}"
+    );
+
+    let out = tool().args(["format"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "escaped literals must format");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains(r#"root -> '\n' '\0' '\x41' '\\' '\'' '"';"#),
+        "format output must round-trip the escapes: {stdout}"
+    );
+}
+
+#[test]
+/// An escape the tool has never heard of (`'\q'`) is not rejected: the pair
+/// passes through to the JS output untouched, leaving JS to interpret it.
+/// This pins the no-validation decision of #201.
+fn unknown_escape_passes_through_unvalidated() {
+    let path = write_tmp("ts_bnf_unknown_escape.bnf", "root -> '\\q' ;\n");
+
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "unknown escape must check clean");
+
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "unknown escape must convert");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains(r"'\q'"),
+        "convert output must carry the unknown escape verbatim: {stdout}"
+    );
+}
+
 // ── graph ─────────────────────────────────────────────────────────────────────
 
 const GRAPH_BNF: &str = indoc! {"

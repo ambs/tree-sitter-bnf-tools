@@ -33,6 +33,33 @@ arrow -> '->' ;
 kw_if -> "if" ;
 ```
 
+### Escape sequences in literals
+
+A literal's content is copied verbatim into `grammar.js`, where it is read as
+a **JavaScript string literal** — so escape sequences have JavaScript
+semantics. `\n`, `\t`, `\0`, `\\`, `\xNN` and `\u{…}` all mean what they mean
+in JS. A quote of the same kind as the delimiter is escaped with a backslash;
+the other kind needs no escape:
+
+```bnf
+newline           -> '\n' ;
+line_continuation -> '\\' '\n' ;
+nul               -> '\0' ;
+letter_a          -> '\x41' ;
+single_quote      -> '\'' ;
+double_quote      -> "\"" ;
+```
+
+`ts-bnf-tool` does not validate escapes: whatever follows the backslash is
+passed through unchanged, and JavaScript decides what it means. This keeps
+the dialect automatically in step with any escape JS supports — but it also
+means a typo such as `'\q'` is not caught here; JS silently reads it as `q`.
+
+Control characters must be written as escapes. Raw control bytes inside the
+quotes either fail to parse (a literal NUL byte) or survive the parse only to
+produce invalid JavaScript in the emitted `grammar.js` (a raw newline splits
+the JS string across two lines).
+
 A **pattern** is a regex delimited by slashes:
 
 ```bnf
