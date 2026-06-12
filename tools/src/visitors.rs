@@ -791,20 +791,34 @@ mod tests {
             "inc_synerr_a.bnf",
             "%include \"inc_synerr_b.bnf\"\nroot -> 'y' ;",
         );
-        let Err(ParseError::SyntaxError(diags)) = parse_path(&a) else {
-            panic!("expected SyntaxError when included file has invalid syntax");
-        };
-        assert!(!diags.is_empty());
-        assert!(
-            diags[0].message.contains("inc_synerr_b.bnf"),
-            "diagnostic must point into the included file: {}",
-            diags[0].message
-        );
-        assert!(
-            !diags[0].message.contains("inc_synerr_a.bnf"),
-            "diagnostic must not point at the includer: {}",
-            diags[0].message
-        );
+        let err = parse_path(&a).map(|_| ()).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError(_)));
+        // Display joins the diagnostic messages; locations must point into
+        // the included file, not the includer.
+        let msg = err.to_string();
+        assert!(msg.contains("inc_synerr_b.bnf"));
+        assert!(!msg.contains("inc_synerr_a.bnf"));
+    }
+
+    #[test]
+    /// A syntax error in the top-level file itself is located in that file.
+    fn syntax_error_in_top_level_file() {
+        let path = write_tmp("synerr_top.bnf", "root => 'a' ;");
+        let err = parse_path(&path).map(|_| ()).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("synerr_top.bnf"));
+        assert!(msg.contains(":1:"));
+    }
+
+    #[test]
+    /// parse_source detects syntax errors, locating them without a filename.
+    fn parse_source_syntax_error_reports_bare_location() {
+        let err = parse_source("root => 'a' ;").map(|_| ()).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError(_)));
+        assert!(err
+            .to_string()
+            .contains("syntax error at line 1:1 near 'root => 'a' ;'"));
     }
 
     // ── merge directives ──────────────────────────────────────────────────────
