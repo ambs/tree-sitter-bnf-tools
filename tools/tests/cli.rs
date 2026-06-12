@@ -1122,3 +1122,87 @@ fn graph_dot_output_to_file() {
     let content = fs::read_to_string(&out_path).unwrap();
     assert!(content.contains("digraph grammar {"));
 }
+
+// ── syntax errors (#200) ──────────────────────────────────────────────────────
+
+/// A grammar with a single tree-sitter syntax error (`=>` is not a valid arrow).
+const SYNTAX_ERROR_BNF: &str = indoc! {"
+    root => 'a' ;
+"};
+
+/// A grammar with two independent syntax errors on separate lines.
+const TWO_SYNTAX_ERRORS_BNF: &str = indoc! {"
+    root -> ;
+    foo --> bar ;
+"};
+
+#[test]
+/// `check` reports syntax errors on stderr with file:line:col and a snippet, exiting 2.
+fn check_syntax_error_reports_location_and_snippet() {
+    let path = write_tmp("ts_bnf_check_synerr.bnf", SYNTAX_ERROR_BNF);
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "expected exit 2");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let expected = format!(
+        "error: syntax error at {}:1:1 near 'root => 'a' ;'",
+        path.display()
+    );
+    assert!(
+        stderr.contains(&expected),
+        "stderr missing located message: {stderr}"
+    );
+}
+
+#[test]
+/// `check --json` diagnostics carry the location inside the message.
+fn check_json_syntax_error_carries_location() {
+    let path = write_tmp("ts_bnf_check_synerr_json.bnf", SYNTAX_ERROR_BNF);
+    let out = tool()
+        .args(["check", "--json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "expected exit 2");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let arr = parsed["diagnostics"].as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["severity"], "error");
+    let message = arr[0]["message"].as_str().unwrap();
+    assert!(
+        message.contains(":1:1 near 'root => 'a' ;'"),
+        "message missing location: {message}"
+    );
+}
+
+#[test]
+/// Multiple syntax errors in one file are each reported with their own location.
+fn check_reports_multiple_syntax_errors() {
+    let path = write_tmp("ts_bnf_check_synerr_multi.bnf", TWO_SYNTAX_ERRORS_BNF);
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "expected exit 2");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(
+        stderr.matches("syntax error at").count(),
+        2,
+        "expected two located diagnostics: {stderr}"
+    );
+    assert!(
+        stderr.contains(":1:8: missing 'pattern'"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains(":2:5 near '-'"), "stderr: {stderr}");
+}
+
+#[test]
+/// `convert` aborts on syntax errors with a located message on stderr, exiting 1.
+fn convert_syntax_error_aborts_with_located_message() {
+    let path = write_tmp("ts_bnf_convert_synerr.bnf", SYNTAX_ERROR_BNF);
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "expected exit 1");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: syntax error at") && stderr.contains(":1:1 near"),
+        "stderr missing located message: {stderr}"
+    );
+}

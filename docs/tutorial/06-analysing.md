@@ -35,6 +35,27 @@ ts-bnf-tool check --json json.bnf
 {"diagnostics":[{"severity":"warning","message":"rule 'unused' is never referenced (line 3)"}]}
 ```
 
+### Syntax errors
+
+If the file does not parse at all, `check` reports each syntax error with its
+file, line, column and a snippet of the offending source, then exits 2:
+
+```bnf
+root => 'a' ;
+value -> 'b'
+```
+
+```
+error: syntax error at broken.bnf:1:6 near '=> 'a' ;'
+error: syntax error at broken.bnf:2:13: missing ';'
+```
+
+At most 10 syntax errors are listed; any excess is summarised in a final
+`… and N more syntax errors` line. With `--json`, syntax errors appear as
+regular entries in the `"diagnostics"` array. Every other subcommand
+(`convert`, `format`, `graph`, …) aborts with the same located messages on
+stderr and exits 1.
+
 ### Left-recursion
 
 Left-recursive rules are **not** flagged by `check`. Tree-sitter is a GLR

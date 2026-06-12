@@ -1,6 +1,8 @@
 use crate::dom::directive::{loc, ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
+use crate::dom::ParseError::SyntaxError;
 use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
+use crate::util::syntax_error_diagnostics;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tree_sitter::Node;
@@ -28,6 +30,10 @@ pub fn parse_source(src: &str) -> Result<(Grammar, Vec<Diagnostic>), ParseError>
         filename: "",
         path: None,
     };
+    if tree.root_node().has_error() {
+        let diagnostics = syntax_error_diagnostics(&tree.root_node(), &ctx);
+        return Err(SyntaxError(diagnostics));
+    }
     visit_grammar(&tree.root_node(), &ctx)
 }
 
@@ -161,9 +167,6 @@ fn visit_include_directive(
         .set_language(&tree_sitter_bnf::LANGUAGE.into())
         .map_err(|_| ParseError::ParseFailed)?;
     let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
-    if tree.root_node().has_error() {
-        return Err(ParseError::SyntaxError);
-    }
 
     let filename_owned = resolved.to_string_lossy().into_owned();
     let included_ctx = SourceFile {
@@ -171,6 +174,12 @@ fn visit_include_directive(
         filename: &filename_owned,
         path: canonical.clone(),
     };
+
+    if tree.root_node().has_error() {
+        let diagnostics = syntax_error_diagnostics(&tree.root_node(), &included_ctx);
+        return Err(ParseError::SyntaxError(diagnostics));
+    }
+
     let (included, _) = visit_grammar_inner(&tree.root_node(), &included_ctx, seen)?;
 
     // Backtrack: remove from the stack so diamond includes are not misreported as cycles.
@@ -594,14 +603,16 @@ mod tests {
             .set_language(&tree_sitter_bnf::LANGUAGE.into())
             .map_err(|_| ParseError::ParseFailed)?;
         let tree = parser.parse(&source, None).ok_or(ParseError::ParseFailed)?;
-        if tree.root_node().has_error() {
-            return Err(ParseError::SyntaxError);
-        }
         let ctx = SourceFile {
             source: &source,
             filename: path.to_str().unwrap_or(""),
             path: path.canonicalize().ok(),
         };
+        if tree.root_node().has_error() {
+            let diagnostics = syntax_error_diagnostics(&tree.root_node(), &ctx);
+            return Err(ParseError::SyntaxError(diagnostics));
+        }
+
         visit_grammar(&tree.root_node(), &ctx)
     }
 
@@ -771,7 +782,8 @@ mod tests {
     // ── syntax error in included file ─────────────────────────────────────────
 
     #[test]
-    /// An included file with a syntax error returns ParseError::SyntaxError.
+    /// An included file with a syntax error returns ParseError::SyntaxError
+    /// with diagnostics located in the included file, not the includer.
     fn include_syntax_error_in_included_file() {
         // "-> 'x' ;" has no left-hand side and is not valid BNF syntax.
         write_tmp("inc_synerr_b.bnf", "-> 'x' ;");
@@ -779,9 +791,19 @@ mod tests {
             "inc_synerr_a.bnf",
             "%include \"inc_synerr_b.bnf\"\nroot -> 'y' ;",
         );
+        let Err(ParseError::SyntaxError(diags)) = parse_path(&a) else {
+            panic!("expected SyntaxError when included file has invalid syntax");
+        };
+        assert!(!diags.is_empty());
         assert!(
-            matches!(parse_path(&a), Err(ParseError::SyntaxError)),
-            "expected SyntaxError when included file has invalid syntax"
+            diags[0].message.contains("inc_synerr_b.bnf"),
+            "diagnostic must point into the included file: {}",
+            diags[0].message
+        );
+        assert!(
+            !diags[0].message.contains("inc_synerr_a.bnf"),
+            "diagnostic must not point at the includer: {}",
+            diags[0].message
         );
     }
 

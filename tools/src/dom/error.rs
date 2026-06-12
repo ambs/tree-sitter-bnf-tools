@@ -1,6 +1,8 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
+use crate::dom::Diagnostic;
+
 /// Errors that can occur while converting a tree-sitter BNF parse tree into the DOM.
 #[derive(Debug)]
 pub enum ParseError {
@@ -15,8 +17,9 @@ pub enum ParseError {
     UnknownNodeKind(String),
     /// The left-hand side of a production rule was not a non-terminal.
     MalformedProduction,
-    /// The source text contains tree-sitter syntax errors.
-    SyntaxError,
+    /// The source text contains tree-sitter syntax errors; carries one located
+    /// diagnostic per error
+    SyntaxError(Vec<Diagnostic>),
     /// The tree-sitter parser returned no tree for the input.
     ParseFailed,
     /// `%include` was used but the source has no associated file path (e.g. stdin).
@@ -37,7 +40,14 @@ impl Display for ParseError {
             ParseError::MalformedProduction => {
                 write!(f, "non-terminal expected on left-hand side of production")
             }
-            ParseError::SyntaxError => write!(f, "input contains syntax errors"),
+            ParseError::SyntaxError(diags) => {
+                let msgs = diags
+                    .iter()
+                    .map(|d| d.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                write!(f, "{}", msgs)
+            }
             ParseError::ParseFailed => write!(f, "parser returned no tree"),
             ParseError::IncludeFromStdin => {
                 write!(f, "%include cannot be used when reading from stdin")

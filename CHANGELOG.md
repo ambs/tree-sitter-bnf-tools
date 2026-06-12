@@ -17,6 +17,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The sign is carried verbatim through `convert` (`prec(-1, …)`) and
   `format`. (#196)
 
+### Changed
+
+#### `ts-bnf-tool`
+- Syntax errors now report file, line, column and a source snippet for every
+  error in the input (capped at 10), instead of a bare `Error: SyntaxError`.
+  `check` routes them through the regular diagnostics output (plain and
+  `--json`) and exits 2 — breaking for scripts that relied on exit 1 — while
+  the other subcommands abort with the located messages on stderr. (#200)
+
 ### Removed
 
 #### `ts-bnf-tool`
