@@ -25,13 +25,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-#### `tree-sitter-bnf`
-- Literals can no longer span lines: a raw LF or CR inside the quotes is now
-  a syntax error instead of being copied into `grammar.js`, where it produced
-  an invalid multi-line JS string. Write line breaks as escapes (`'\n'`,
-  `'\r'`). Breaking only for grammars that relied on the accidental
-  acceptance. (#208)
-
 #### `ts-bnf-tool`
 - Syntax errors now report file, line, column and a source snippet for every
   error in the input (capped at 10), instead of a bare `Error: SyntaxError`.
