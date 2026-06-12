@@ -93,7 +93,7 @@ _terminal           -> pattern | literal ;
 
 # Matches /…/ — a regex delimited by slashes, allowing character classes and
 # escape sequences inside.
-pattern             -> /\/([^\/\[\\]|\[[^\]]*\]|\\.)+\// ;
+pattern             -> /\/([^\/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/ ;
 
 # Single- or double-quoted string, forced into a single lexer token.
 literal             -> << /'([^'\\]|\\.)*'/ | /"([^"\\]|\\.)*"/ >> ;

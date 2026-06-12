@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### `tree-sitter-bnf`
+- Patterns accept an optional JS regex flag suffix: `/select/i` is now valid
+  syntax. The suffix is carried verbatim through `convert` and `format`, and
+  `tree-sitter generate` serializes it as the `flags` field in `grammar.json`
+  (flag validity is checked there, not by `check`). (#198)
+
 ### Removed
 
 #### `ts-bnf-tool`

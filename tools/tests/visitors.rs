@@ -38,6 +38,16 @@ fn pattern_terminal() {
 }
 
 #[test]
+fn pattern_terminal_with_flags() {
+    assert_eq!(parse("a -> /select/i;"), "a -> /select/i");
+}
+
+#[test]
+fn pattern_followed_by_nonterminal() {
+    assert_eq!(parse("a -> /x/ b;"), "a -> seq(/x/, $.b)");
+}
+
+#[test]
 fn nonterminal_ref() {
     assert_eq!(parse("a -> b;"), "a -> $.b");
 }
