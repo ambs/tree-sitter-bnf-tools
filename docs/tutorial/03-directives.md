@@ -6,6 +6,27 @@ to the same-named fields in `grammar.js`, except `%axiom` (which controls rule
 order) and `%include` (which merges files). A warning is printed to stderr for
 any referenced rule name that has no definition.
 
+## `%word`
+
+Declares the rule that tree-sitter should treat as the language's identifier
+token. This enables keyword extraction (reserved words are matched as keywords
+rather than identifiers) and improves error recovery:
+
+```bnf
+%word identifier
+
+identifier -> /[a-zA-Z_][a-zA-Z0-9_]*/ ;
+```
+
+generates:
+
+```js
+word: $ => $.identifier,
+```
+
+`%word` names a single rule. Declaring it more than once is an **error**, as is
+naming a rule that is not defined anywhere in the file.
+
 ## `%extras`
 
 Declares tokens that may appear anywhere in the input — typically whitespace

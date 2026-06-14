@@ -102,23 +102,6 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns an error if `%axiom` names an undefined rule.
-    fn axiom_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
-        match self.axiom_directive() {
-            Some(DirectiveItem {
-                name,
-                line,
-                filename,
-            }) if !known.contains(name.as_str()) => {
-                vec![Diagnostic::error(format!(
-                    "%axiom references undefined rule '{name}' ({})",
-                    loc(filename, *line)
-                ))]
-            }
-            _ => vec![],
-        }
-    }
-
     /// Returns a warning for every rule that is never referenced by any other rule or directive.
     ///
     /// When `%axiom` is set, only that rule is exempt as the entry point.
@@ -176,6 +159,7 @@ impl Grammar {
     /// rejected with an error diagnostic rather than silently overriding the root.
     pub(crate) fn merge_from(&mut self, mut other: Grammar) {
         let other_axiom = other.take_axiom();
+        let other_word = other.take_word();
         for (name, prod) in other.productions {
             if self.productions.contains_key(&name) {
                 self.parse_diagnostics.push(Diagnostic::warning(format!(
@@ -188,6 +172,11 @@ impl Grammar {
         }
         if let Some(axiom) = other_axiom {
             if let Some(diag) = self.declare_axiom(axiom) {
+                self.parse_diagnostics.push(diag);
+            }
+        }
+        if let Some(word) = other_word {
+            if let Some(diag) = self.declare_word(word) {
                 self.parse_diagnostics.push(diag);
             }
         }
@@ -227,7 +216,12 @@ impl Grammar {
         let known = self.known_rules();
         let mut diagnostics = Vec::new();
         diagnostics.extend(self.parse_diagnostics.iter().cloned());
-        diagnostics.extend(self.axiom_check(&known));
+        diagnostics.extend(check_directive_ref(
+            self.axiom_directive(),
+            "%axiom",
+            &known,
+        ));
+        diagnostics.extend(check_directive_ref(self.word.as_ref(), "%word", &known));
         diagnostics.extend(self.conflicts_check(&known));
         diagnostics.extend(self.inline_check(&known));
         diagnostics.extend(self.supertypes_check(&known));
@@ -236,6 +230,27 @@ impl Grammar {
         diagnostics.extend(self.unreachable_rules_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
+    }
+}
+
+/// Returns an error if a directive refers an undefined rule.
+fn check_directive_ref(
+    directive: Option<&DirectiveItem>,
+    name: &str,
+    known: &HashSet<&str>,
+) -> Vec<Diagnostic> {
+    match directive {
+        Some(DirectiveItem {
+            name: rule,
+            line,
+            filename,
+        }) if !known.contains(rule.as_str()) => {
+            vec![Diagnostic::error(format!(
+                "{name} references undefined rule '{rule}' ({})",
+                loc(filename, *line)
+            ))]
+        }
+        _ => vec![],
     }
 }
 
@@ -454,7 +469,11 @@ mod tests {
         let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         g.declare_axiom(di("ghost", 3));
         assert_eq!(
-            strs(&g.axiom_check(&g.known_rules())),
+            strs(&check_directive_ref(
+                g.axiom_directive(),
+                "%axiom",
+                &g.known_rules()
+            )),
             vec!["error: %axiom references undefined rule 'ghost' (line 3)"]
         );
     }
@@ -463,13 +482,13 @@ mod tests {
     fn axiom_check_no_error_when_rule_defined() {
         let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         g.declare_axiom(di("root", 1));
-        assert!(g.axiom_check(&g.known_rules()).is_empty());
+        assert!(check_directive_ref(g.axiom_directive(), "%axiom", &g.known_rules()).is_empty());
     }
 
     #[test]
     fn axiom_check_no_error_when_absent() {
         let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
-        assert!(g.axiom_check(&g.known_rules()).is_empty());
+        assert!(check_directive_ref(g.axiom_directive(), "%axiom", &g.known_rules()).is_empty());
     }
 
     #[test]
@@ -631,6 +650,35 @@ mod tests {
         let s = g.summarise();
         assert_eq!(s.left_recursive_direct, 1);
         assert_eq!(s.left_recursive_mutual, 0);
+    }
+
+    // ── word_check ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn word_check_errors_on_undefined_rule() {
+        let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
+        g.declare_word(di("ghost", 3));
+        assert_eq!(
+            strs(&check_directive_ref(
+                g.word.as_ref(),
+                "%word",
+                &g.known_rules()
+            )),
+            vec!["error: %word references undefined rule 'ghost' (line 3)"]
+        );
+    }
+
+    #[test]
+    fn word_check_no_error_when_rule_defined() {
+        let mut g = Grammar::from_rules([p("ident", TerminalLiteral("'x'".into()))]);
+        g.declare_word(di("ident", 1));
+        assert!(check_directive_ref(g.word.as_ref(), "%word", &g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn word_check_no_error_when_absent() {
+        let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
+        assert!(check_directive_ref(g.word.as_ref(), "%word", &g.known_rules()).is_empty());
     }
 
     #[test]

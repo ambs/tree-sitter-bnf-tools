@@ -12,7 +12,7 @@ const LINE_WIDTH: usize = 80;
 
 /// Formats `grammar` as canonical BNF and returns the result as a `String`.
 ///
-/// Directive order: `%axiom`, `%extras`, `%conflicts`, `%inline`, `%supertypes` (all before rules).
+/// Directive order: `%axiom`, `%word`, `%extras`, `%conflicts`, `%inline`, `%supertypes` (all before rules).
 /// Rules follow in their original declaration order, each separated by a blank line.
 pub fn format_grammar(grammar: &Grammar) -> String {
     let mut out = String::new();
@@ -43,6 +43,9 @@ fn collect_directives(grammar: &Grammar) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(axiom) = grammar.axiom_directive() {
         out.push(format!("%axiom {}", axiom.name));
+    }
+    if let Some(word) = &grammar.word {
+        out.push(format!("%word {}", word.name));
     }
     if !grammar.extras.is_empty() {
         out.push(format_directive("extras", &grammar.extras));
@@ -499,6 +502,30 @@ mod tests {
                 b -> y;
             "}
         );
+    }
+
+    #[test]
+    fn grammar_word_emitted_after_axiom_before_extras() {
+        let mut g = Grammar::from_rules([p("ident", nt("x"))]);
+        g.declare_axiom(di("ident", 1));
+        g.declare_word(di("ident", 1));
+        g.extras = vec![di("/\\s/", 1)];
+        let out = format_grammar(&g);
+        assert!(out.contains("%word ident\n"), "%word must appear");
+        assert!(
+            out.find("%axiom").unwrap() < out.find("%word").unwrap(),
+            "%axiom must precede %word"
+        );
+        assert!(
+            out.find("%word").unwrap() < out.find("%extras").unwrap(),
+            "%word must precede %extras"
+        );
+    }
+
+    #[test]
+    fn grammar_no_word_directive_when_absent() {
+        let g = Grammar::from_rules([p("r", nt("a"))]);
+        assert!(!format_grammar(&g).contains("%word"));
     }
 }
 

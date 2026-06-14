@@ -22,6 +22,7 @@
 grammar             -> (rule | _directive)+ ;
 
 _directive          -> axiomDirective
+                     | wordDirective
                      | conflictsDirective
                      | includeDirective
                      | inlineDirective
@@ -32,6 +33,8 @@ _directive          -> axiomDirective
 # ── Grammar-level directives ─────────────────────────────────────────────────
 
 axiomDirective      -> '%axiom' nonTerminal ;
+
+wordDirective       -> '%word' nonTerminal ;
 
 includeDirective    -> '%include' literal ;
 
