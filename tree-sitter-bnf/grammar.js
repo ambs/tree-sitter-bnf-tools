@@ -21,6 +21,7 @@ module.exports = grammar({
     _directive: ($) =>
       choice(
         $.axiomDirective,
+        $.wordDirective,
         $.conflictsDirective,
         $.inlineDirective,
         $.supertypesDirective,
@@ -29,6 +30,7 @@ module.exports = grammar({
       ),
     includeDirective: ($) => seq("%include", $.literal),
     axiomDirective: ($) => seq("%axiom", $.nonTerminal),
+    wordDirective: ($) => seq("%word", $.nonTerminal),
     inlineDirective: ($) =>
       seq("%inline", $.nonTerminal, repeat(seq(",", $.nonTerminal))),
     supertypesDirective: ($) =>

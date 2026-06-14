@@ -8,7 +8,7 @@ items have unique ids `<n>.<k>`, e.g. `- [ ] 187.1 Fix visit_alias_group`.
 - Tick each item immediately when done (not in batch), so interrupted work
   can resume from the file.
 - Besides implementation steps, always include items for: tests, `README.md`,
-  `CHANGELOG.md` (see Changelog below), and docs/tutorial. If one doesn't
+  `CHANGELOG.md` (see Changelog below), and docs/. If one doesn't
   apply, don't omit it — tick it with `N/A — <reason>`.
 - Keep finished plan files as a local archive.
 

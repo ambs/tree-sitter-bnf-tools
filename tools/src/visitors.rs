@@ -104,8 +104,14 @@ fn visit_grammar_inner(
             "extrasDirective" => {
                 grammar.extras.extend(visit_extras_directive(&child, ctx));
             }
+            "wordDirective" => {
+                let item = visit_simple_directive(&child, ctx);
+                if let Some(diag) = grammar.declare_word(item) {
+                    grammar.parse_diagnostics.push(diag);
+                }
+            }
             "axiomDirective" => {
-                let item = visit_axiom_directive(&child, ctx);
+                let item = visit_simple_directive(&child, ctx);
                 if let Some(diag) = grammar.declare_axiom(item) {
                     grammar.parse_diagnostics.push(diag);
                 }
@@ -228,12 +234,12 @@ fn visit_supertypes_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<Dire
     collect_directive_items(node, ctx)
 }
 
-/// Converts an `axiomDirective` node into a single [`DirectiveItem`] for the named root rule.
-fn visit_axiom_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> DirectiveItem {
+/// Converts an `axiomDirective` node into a single [`DirectiveItem`] for the '%axiom' or '%word'
+fn visit_simple_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> DirectiveItem {
     let line = node.start_position().row + 1;
     let name = node
         .named_child(0)
-        .expect("axiomDirective has a nonTerminal child")
+        .expect("adirective has a nonTerminal child")
         .utf8_text(ctx.source.as_bytes())
         .expect("valid UTF-8")
         .to_string();
@@ -885,6 +891,52 @@ mod tests {
                 |cg| cg.rules.contains(&"a".to_string()) && cg.rules.contains(&"b".to_string())
             ),
             "expected %conflicts from included file in merged grammar"
+        );
+    }
+
+    // ── %word directive ───────────────────────────────────────────────────────
+
+    #[test]
+    /// Parsing `%word identifier` sets `grammar.word` to `Some("identifier")`.
+    fn word_directive_is_recorded() {
+        let (g, diags) = parse_source("%word identifier\nidentifier -> /a/ ;\n").unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.word.as_ref().map(|w| w.name.as_str()), Some("identifier"));
+    }
+
+    #[test]
+    /// The `%word` directive records its 1-based source line.
+    fn word_directive_line_is_recorded() {
+        let (g, _) = parse_source("%word ident\nident -> /a/ ;\n").unwrap();
+        assert_eq!(g.word.as_ref().map(|w| w.line), Some(1));
+    }
+
+    #[test]
+    /// A duplicate `%word` produces an error diagnostic and the first wins.
+    fn duplicate_word_directive_emits_error() {
+        let src = "%word foo\n%word bar\nfoo -> /a/ ;\nbar -> /b/ ;\n";
+        let (g, diags) = parse_source(src).unwrap();
+        assert!(
+            diags.iter().any(|d| d.severity == Severity::Error
+                && d.message.contains("%word declared more than once")),
+            "expected duplicate-%word error, got {diags:?}"
+        );
+        assert_eq!(g.word.as_ref().map(|w| w.name.as_str()), Some("foo"));
+    }
+
+    #[test]
+    /// A `%word` from an included file is adopted when the parent has none.
+    fn include_adopts_word_from_included_file() {
+        write_tmp("inc_word_b.bnf", "%word ident\nident -> /a/ ;");
+        let a = write_tmp(
+            "inc_word_a.bnf",
+            "%include \"inc_word_b.bnf\"\nroot -> ident ;",
+        );
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert_eq!(
+            grammar.word.as_ref().map(|w| w.name.as_str()),
+            Some("ident"),
+            "word from included file must be adopted when parent has none"
         );
     }
 }

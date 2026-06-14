@@ -37,6 +37,11 @@ fn rename_directives(grammar: &mut Grammar, old: &str, new: &str) {
             item.name = new.to_owned();
         }
     }
+    if let Some(word) = &mut grammar.word {
+        if word.name == old {
+            word.name = new.to_owned();
+        }
+    }
     for item in grammar
         .inline
         .iter_mut()
@@ -282,6 +287,26 @@ mod tests {
         } else {
             panic!("expected Choice");
         }
+    }
+
+    /// The `%word` directive is updated when it references the renamed rule.
+    #[test]
+    fn renames_word_directive() {
+        use crate::dom::test_utils::di;
+        let mut g = Grammar::from_rules([p("ident", nt("x"))]);
+        g.declare_word(di("ident", 1));
+        rename_grammar(&mut g, "ident", "identifier").unwrap();
+        assert_eq!(g.word.as_ref().unwrap().name, "identifier");
+    }
+
+    /// The `%word` directive is not changed when it names a different rule.
+    #[test]
+    fn word_directive_unchanged_when_other_rule_renamed() {
+        use crate::dom::test_utils::di;
+        let mut g = Grammar::from_rules([p("ident", nt("x")), p("other", nt("x"))]);
+        g.declare_word(di("ident", 1));
+        rename_grammar(&mut g, "other", "another").unwrap();
+        assert_eq!(g.word.as_ref().unwrap().name, "ident");
     }
 
     /// A `NonTerminal` reference to the renamed rule in another rule's body is updated.

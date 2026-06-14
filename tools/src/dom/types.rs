@@ -18,6 +18,8 @@ pub struct Grammar {
     /// start-symbol resolution; the raw directive is reachable in-crate via
     /// [`axiom_directive`](Self::axiom_directive) for line-number diagnostics.
     axiom: Option<DirectiveItem>,
+    /// Word directive for keyword extraction.
+    pub word: Option<DirectiveItem>,
     /// Conflict groups declared with `%conflicts`.
     pub conflicts: Vec<ConflictGroup>,
     /// Rule names declared with `%inline`.
@@ -44,6 +46,7 @@ impl Grammar {
         Self {
             productions: IndexMap::new(),
             axiom: None,
+            word: None,
             conflicts: Vec::new(),
             inline: Vec::new(),
             supertypes: Vec::new(),
@@ -96,6 +99,21 @@ impl Grammar {
         None
     }
 
+    /// Records the '%word' directive, enforcing first-declaration-wins.
+    ///
+    /// Returns an error diagnostic when a word is already reclared; the
+    /// existing declaration is kept and the incoming one is discarded.
+    pub(crate) fn declare_word(&mut self, item: DirectiveItem) -> Option<Diagnostic> {
+        if self.word.is_some() {
+            return Some(Diagnostic::error(format!(
+                "%word declared more than once ({})",
+                loc(&item.filename, item.line)
+            )));
+        }
+        self.word = Some(item);
+        None
+    }
+
     /// Returns the raw `%axiom` directive, for line-number diagnostics and
     /// directive emission; start-symbol resolution belongs to [`root_rule`](Self::root_rule).
     pub(crate) fn axiom_directive(&self) -> Option<&DirectiveItem> {
@@ -110,6 +128,11 @@ impl Grammar {
     /// Removes and returns the `%axiom` directive, for `%include` merging.
     pub(crate) fn take_axiom(&mut self) -> Option<DirectiveItem> {
         self.axiom.take()
+    }
+
+    /// Removes and returns the `%word` directive, for `%include` merging.
+    pub(crate) fn take_word(&mut self) -> Option<DirectiveItem> {
+        self.word.take()
     }
 }
 
@@ -167,5 +190,31 @@ mod tests {
         let diag = g.declare_axiom(di("b", 2)).expect("duplicate must error");
         assert!(diag.message.contains("%axiom declared more than once"));
         assert_eq!(g.root_rule(), Some("a"));
+    }
+
+    #[test]
+    fn declare_word_first_declaration_wins() {
+        let mut g = ab();
+        assert!(g.declare_word(di("a", 1)).is_none());
+        let diag = g.declare_word(di("b", 2)).expect("duplicate must error");
+        assert!(diag.message.contains("%word declared more than once"));
+        assert_eq!(g.word.as_ref().map(|w| w.name.as_str()), Some("a"));
+    }
+
+    #[test]
+    fn declare_word_duplicate_returns_error() {
+        let mut g = ab();
+        g.declare_word(di("a", 1));
+        let diag = g.declare_word(di("a", 2)).expect("duplicate must error");
+        assert!(diag.message.contains("%word declared more than once"));
+    }
+
+    #[test]
+    fn take_word_removes_and_returns_directive() {
+        let mut g = ab();
+        g.declare_word(di("a", 1));
+        let taken = g.take_word();
+        assert_eq!(taken.map(|w| w.name), Some("a".to_owned()));
+        assert!(g.word.is_none());
     }
 }

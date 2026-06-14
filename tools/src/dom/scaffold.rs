@@ -28,6 +28,10 @@ impl Display for Scaffold<'_> {
         writeln!(f, "module.exports = grammar({{")?;
         writeln!(f, "  name: \"{}\",", self.name)?;
         writeln!(f)?;
+        if let Some(word) = &self.grammar.word {
+            writeln!(f, "  word: $ => $.{},", word.name)?;
+            writeln!(f)?;
+        }
         if !self.grammar.extras.is_empty() {
             let items = self
                 .grammar
@@ -310,5 +314,27 @@ mod tests {
         }
         .to_string();
         assert!(out.contains("from <stdin>"));
+    }
+
+    #[test]
+    fn scaffold_word_directive_emitted_before_extras() {
+        let mut g = Grammar::from_rules([p("ident", TerminalLiteral("'x'".into()))]);
+        g.declare_word(di("ident", 1));
+        g.extras = vec![di("/\\s/", 0)];
+        let out = s(&g, "g").to_string();
+        assert!(
+            out.contains("  word: $ => $.ident,"),
+            "word key must appear"
+        );
+        assert!(
+            out.find("word:").unwrap() < out.find("extras:").unwrap(),
+            "word must come before extras"
+        );
+    }
+
+    #[test]
+    fn scaffold_word_directive_omitted_when_absent() {
+        let g = Grammar::from_rules([p("ident", TerminalLiteral("'x'".into()))]);
+        assert!(!s(&g, "g").to_string().contains("word:"));
     }
 }

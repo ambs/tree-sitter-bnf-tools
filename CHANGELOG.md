@@ -9,6 +9,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### `tree-sitter-bnf`
+- `%word ruleName` directive: declares the identifier token for keyword
+  extraction and better error recovery. Maps to tree-sitter's `word:` grammar
+  field. Duplicate declarations are an error; naming an undefined rule is an
+  error. (#173)
 - Patterns accept an optional JS regex flag suffix: `/select/i` is now valid
   syntax. The suffix is carried verbatim through `convert` and `format`, and
   `tree-sitter generate` serializes it as the `flags` field in `grammar.json`
