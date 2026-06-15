@@ -58,13 +58,19 @@ cat json.bnf | ts-bnf-tool convert --name json - > grammar.js
 
 ## Step 4 — generate a ready-to-use tree-sitter project
 
-`--generate` writes `grammar.js` and a skeleton `queries/highlights.scm` to a
-directory, then runs `tree-sitter generate` to produce the C parser:
+`--generate` writes `grammar.js`, a skeleton `queries/highlights.scm`, and a
+minimal `tree-sitter.json` to a directory, then runs `tree-sitter generate` to
+produce the C parser:
 
 ```sh
 ts-bnf-tool convert --generate json.bnf
-# creates ./json/grammar.js, ./json/queries/highlights.scm, and ./json/src/parser.c
+# creates ./json/grammar.js, ./json/tree-sitter.json,
+#         ./json/queries/highlights.scm, and ./json/src/parser.c
 ```
+
+The `tree-sitter.json` satisfies tree-sitter ≥ 0.25's requirement for ABI 15
+generation. If a `tree-sitter.json` already exists in the output directory it is
+left untouched.
 
 Override the output directory and grammar name:
 

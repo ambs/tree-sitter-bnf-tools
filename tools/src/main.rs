@@ -9,12 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::{Parser, Subcommand};
+use indoc::formatdoc;
 
 use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity};
-use ts_bnf_tool::util::syntax_error_diagnostics;
+use ts_bnf_tool::util::{syntax_error_diagnostics, to_camelcase};
 use ts_bnf_tool::visitors::{visit_grammar, SourceFile};
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -194,6 +195,7 @@ fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(),
         }
         .to_string(),
     )?;
+    write_tree_sitter_json(&dir, scaffold.name)?;
     let status = Command::new("tree-sitter")
         .arg("generate")
         .current_dir(&dir)
@@ -202,6 +204,38 @@ fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(),
     if !status.success() {
         return Err(CommandError("tree-sitter generate failed".into()).into());
     }
+    Ok(())
+}
+
+/// Writes a minimal `tree-sitter.json` to `dir` if one does not already exist.
+///
+/// Satisfies tree-sitter ≥ 0.25's requirement for ABI 15 generation.
+/// An existing file is never overwritten.
+fn write_tree_sitter_json(dir: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+    let path = dir.join("tree-sitter.json");
+    if path.exists() {
+        return Ok(());
+    }
+    let camel = to_camelcase(name);
+    fs::write(
+        &path,
+        formatdoc! {r#"
+            {{
+              "grammars": [
+                {{
+                  "name": "{name}",
+                  "camelcase": "{camel}",
+                  "scope": "source.{name}",
+                  "file-types": []
+                }}
+              ],
+              "metadata": {{
+                "version": "0.1.0",
+                "license": "MIT"
+              }}
+            }}
+        "#},
+    )?;
     Ok(())
 }
 

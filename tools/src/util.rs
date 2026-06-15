@@ -74,6 +74,19 @@ fn normalize_stripped(s: &str) -> String {
     result
 }
 
+/// Converts a snake_case grammar name to UpperCamelCase for the `camelcase` field in `tree-sitter.json`.
+pub fn to_camelcase(name: &str) -> String {
+    name.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect()
+}
+
 /// Returns the first line of `text`, char-truncated to 30 characters with a trailing '…'.
 fn snippet(text: &str) -> String {
     let mut chars = text.lines().next().unwrap_or("").chars();
@@ -148,6 +161,33 @@ mod tests {
     use indoc::indoc;
 
     use super::*;
+
+    // ── to_camelcase ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn camelcase_single_word() {
+        assert_eq!(to_camelcase("json"), "Json");
+    }
+
+    #[test]
+    fn camelcase_snake_case() {
+        assert_eq!(to_camelcase("my_lang"), "MyLang");
+    }
+
+    #[test]
+    fn camelcase_multiple_parts() {
+        assert_eq!(to_camelcase("tree_sitter_cpp"), "TreeSitterCpp");
+    }
+
+    #[test]
+    fn camelcase_already_capitalized() {
+        assert_eq!(to_camelcase("Json"), "Json");
+    }
+
+    #[test]
+    fn camelcase_empty_string() {
+        assert_eq!(to_camelcase(""), "");
+    }
 
     #[test]
     fn no_comments_unchanged() {

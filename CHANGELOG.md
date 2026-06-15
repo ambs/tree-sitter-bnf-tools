@@ -27,6 +27,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validated by `check`, so escapes JS adds in the future work without tool
   changes. (#201)
 
+#### `ts-bnf-tool`
+- `convert --generate` now writes a minimal `tree-sitter.json` to the output
+  directory (if one does not already exist). This satisfies tree-sitter ≥ 0.25's
+  requirement for ABI 15 generation, eliminating the fallback-to-ABI-14 warning.
+  An existing `tree-sitter.json` is never overwritten. (#199)
+
 ### Changed
 
 #### `ts-bnf-tool`
