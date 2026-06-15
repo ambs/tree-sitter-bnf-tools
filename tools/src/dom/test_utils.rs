@@ -1,4 +1,4 @@
-use super::directive::{ConflictGroup, DirectiveItem};
+use super::directive::{ConflictGroup, DirectiveItem, PrecedenceGroup, PrecedenceItem};
 use super::{GrammarNode, Production};
 
 /// Creates a [`Production`] with realistic defaults (`line: 1`, `filename: "test.bnf"`) for use in tests.
@@ -39,6 +39,15 @@ pub fn nt(name: &str) -> GrammarNode {
 pub fn cg(rules: &[&str], line: usize) -> ConflictGroup {
     ConflictGroup {
         rules: rules.iter().map(|s| s.to_string()).collect(),
+        line,
+        filename: String::new(),
+    }
+}
+
+/// Creates a [`PrecedenceGroup`] with the given items and source line (no filename).
+pub fn pg(items: &[PrecedenceItem], line: usize) -> PrecedenceGroup {
+    PrecedenceGroup {
+        items: items.to_vec(),
         line,
         filename: String::new(),
     }

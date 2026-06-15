@@ -21,6 +21,26 @@ pub struct ConflictGroup {
     pub filename: String,
 }
 
+/// An item inside a `%precedences` group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrecedenceItem {
+    /// a rule-name reference
+    Name(String),
+    /// a quoted string literal
+    Literal(String),
+}
+
+/// A precedences group declared with `%precedences`, together with its 1-based source line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrecedenceGroup {
+    /// The groups of rules with same precedences
+    pub items: Vec<PrecedenceItem>,
+    /// 1-based line number of the `%precedences` directive in the source file.
+    pub line: usize,
+    /// Source filename where this directive appears (empty string if unknown).
+    pub filename: String,
+}
+
 /// Formats a source location for use in diagnostic messages.
 ///
 /// Returns `"filename:line"` when `filename` is non-empty, or `"line N"` otherwise.

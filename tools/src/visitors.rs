@@ -1,7 +1,9 @@
-use crate::dom::directive::{loc, ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::ParseError::SyntaxError;
-use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
+use crate::dom::directive::{ConflictGroup, DirectiveItem, loc};
+use crate::dom::{
+    Diagnostic, Grammar, ParseError, PrecKind, PrecedenceGroup, PrecedenceItem, Production,
+};
 use crate::util::syntax_error_diagnostics;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -92,6 +94,11 @@ fn visit_grammar_inner(
                 grammar
                     .conflicts
                     .extend(visit_conflicts_directive(&child, ctx)?);
+            }
+            "precedencesDirective" => {
+                grammar
+                    .precedences
+                    .extend(visit_precedences_directive(&child, ctx)?);
             }
             "inlineDirective" => {
                 grammar.inline.extend(visit_inline_directive(&child, ctx));
@@ -247,6 +254,46 @@ fn visit_simple_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> DirectiveIte
         name,
         line,
         filename: ctx.filename.to_string(),
+    }
+}
+
+/// Converts a `precedencesDirective` node into a list of [`PrecedenceGroup`]s.
+/// Converts a `precedencesDirective` node into a list of [`PrecedenceGroup`]s.
+fn visit_precedences_directive(
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+) -> Result<Vec<PrecedenceGroup>, ParseError> {
+    let line = node.start_position().row + 1;
+    let mut groups = Vec::new();
+    for i in 0..node.named_child_count() as u32 {
+        let child = node.named_child(i).expect("named child index in bounds");
+        if child.kind() == "precedenceGroup" {
+            let items = (0..child.named_child_count() as u32)
+                .map(|j| {
+                    let item_node = child.named_child(j).expect("named child index in bounds");
+                    visit_precedence_item(&item_node, ctx)
+                })
+                .collect();
+            groups.push(PrecedenceGroup {
+                items,
+                line,
+                filename: ctx.filename.to_string(),
+            });
+        }
+    }
+    Ok(groups)
+}
+
+/// Converts a `precedenceItem` node into a [`PrecedenceItem`].
+fn visit_precedence_item(node: &Node<'_>, ctx: &SourceFile<'_>) -> PrecedenceItem {
+    let text = node
+        .utf8_text(ctx.source.as_bytes())
+        .expect("valid UTF-8")
+        .to_string();
+    let inner = node.named_child(0).expect("precedenceItem has one child");
+    match inner.kind() {
+        "literal" => PrecedenceItem::Literal(text),
+        _ => PrecedenceItem::Name(text),
     }
 }
 
@@ -591,6 +638,7 @@ fn visit(
 mod tests {
     use super::*;
     use crate::dom::{ParseError, Severity};
+    use indoc::indoc;
     use std::fs;
 
     /// Writes `content` to `$TMPDIR/name` and returns the path.
@@ -822,9 +870,10 @@ mod tests {
     fn parse_source_syntax_error_reports_bare_location() {
         let err = parse_source("root => 'a' ;").map(|_| ()).unwrap_err();
         assert!(matches!(err, ParseError::SyntaxError(_)));
-        assert!(err
-            .to_string()
-            .contains("syntax error at line 1:1 near 'root => 'a' ;'"));
+        assert!(
+            err.to_string()
+                .contains("syntax error at line 1:1 near 'root => 'a' ;'")
+        );
     }
 
     // ── merge directives ──────────────────────────────────────────────────────
@@ -892,6 +941,88 @@ mod tests {
             ),
             "expected %conflicts from included file in merged grammar"
         );
+    }
+
+    // ── %precedences directive ────────────────────────────────────────────────
+
+    #[test]
+    /// Name and Literal items in a `%precedences` group are assigned the correct variant.
+    fn precedences_directive_name_and_literal() {
+        let (g, diags) = parse_source(indoc! {"
+            %precedences [foo, 'bar'], [baz]
+            root -> foo baz ;
+            foo -> /a/ ;
+            baz -> /b/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.precedences.len(), 2);
+        assert_eq!(
+            g.precedences[0].items,
+            vec![
+                PrecedenceItem::Name("foo".into()),
+                PrecedenceItem::Literal("'bar'".into()),
+            ]
+        );
+        assert_eq!(
+            g.precedences[1].items,
+            vec![PrecedenceItem::Name("baz".into())]
+        );
+    }
+
+    #[test]
+    /// A single `%precedences` line with a single group is parsed correctly.
+    fn precedences_directive_single_group() {
+        let (g, diags) = parse_source(indoc! {"
+            %precedences [a, b]
+            root -> a b ;
+            a -> /x/ ;
+            b -> /y/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.precedences.len(), 1);
+        assert_eq!(
+            g.precedences[0].items,
+            vec![
+                PrecedenceItem::Name("a".into()),
+                PrecedenceItem::Name("b".into()),
+            ]
+        );
+    }
+
+    #[test]
+    /// Multiple `%precedences` lines are merged additively into grammar.precedences.
+    fn precedences_directive_multiple_lines_are_additive() {
+        let (g, diags) = parse_source(indoc! {"
+            %precedences [a, b]
+            %precedences [c]
+            root -> a b c ;
+            a -> /x/ ;
+            b -> /y/ ;
+            c -> /z/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.precedences.len(), 2);
+        assert_eq!(
+            g.precedences[0].items,
+            vec![
+                PrecedenceItem::Name("a".into()),
+                PrecedenceItem::Name("b".into()),
+            ]
+        );
+        assert_eq!(
+            g.precedences[1].items,
+            vec![PrecedenceItem::Name("c".into())]
+        );
+    }
+
+    #[test]
+    /// The source line of a `%precedences` directive is recorded (1-based).
+    fn precedences_directive_line_is_recorded() {
+        let (g, _) = parse_source("%precedences [a]\na -> /x/ ;").unwrap();
+        assert_eq!(g.precedences[0].line, 1);
     }
 
     // ── %word directive ───────────────────────────────────────────────────────

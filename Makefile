@@ -32,7 +32,7 @@ grammar: $(RAILROAD) $(GRAPH_PDF) ## Regenerate grammar/railroad.svg and grammar
 
 grammar-check: grammar ## Fail if grammar/railroad.svg or grammar/graph.pdf are out of date
 	@git diff --exit-code $(RAILROAD) $(GRAPH_PDF) || \
-		(echo "grammar-check: generated files are stale — run 'make grammar' and commit the results" >&2; exit 1)
+		(echo "grammar-check: generated files are stale — commit $(RAILROAD) and $(GRAPH_PDF)" >&2; exit 1)
 
 ts-version-check: ## Check that tree-sitter-cli >= TS_MIN is installed
 	@TS_VER=$$($(TS) --version 2>/dev/null | sed 's/tree-sitter //'); \
