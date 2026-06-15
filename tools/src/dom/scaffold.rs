@@ -1,6 +1,8 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
+use crate::dom::PrecedenceItem;
+
 use super::types::Grammar;
 
 /// A wrapper that renders a [`Grammar`] as a complete `grammar.js` file.
@@ -30,6 +32,23 @@ impl Display for Scaffold<'_> {
         writeln!(f)?;
         if let Some(word) = &self.grammar.word {
             writeln!(f, "  word: $ => $.{},", word.name)?;
+            writeln!(f)?;
+        }
+        if !self.grammar.precedences.is_empty() {
+            writeln!(f, "  precedences: $ => [")?;
+            for g in &self.grammar.precedences {
+                let group_items = g
+                    .items
+                    .iter()
+                    .map(|i| match i {
+                        PrecedenceItem::Literal(x) => x.clone(),
+                        PrecedenceItem::Name(n) => format!("$.{}", n.as_str()),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(f, "    [{group_items}],")?;
+            }
+            writeln!(f, "  ],")?;
             writeln!(f)?;
         }
         if !self.grammar.extras.is_empty() {
@@ -109,8 +128,8 @@ impl Display for Scaffold<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{cg, di, p, p_named};
     use crate::dom::GrammarNode::TerminalLiteral;
+    use crate::dom::test_utils::{cg, di, p, p_named};
     use crate::dom::{Grammar, GrammarNode};
 
     fn s<'a>(grammar: &'a Grammar, name: &'a str) -> Scaffold<'a> {
@@ -238,6 +257,48 @@ mod tests {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = s(&g, "g").to_string();
         assert!(!out.contains("extras"));
+    }
+
+    // ── precedences ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn scaffold_no_precedences_omits_key() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        let out = s(&g, "g").to_string();
+        assert!(!out.contains("precedences"));
+    }
+
+    #[test]
+    fn scaffold_with_precedence_groups_name_and_literal() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![
+            pg(
+                &[
+                    PrecedenceItem::Name("expr".into()),
+                    PrecedenceItem::Literal("'call'".into()),
+                ],
+                0,
+            ),
+            pg(&[PrecedenceItem::Name("term".into())], 0),
+        ];
+        let out = s(&g, "g").to_string();
+        assert!(out.contains("  precedences: $ => ["));
+        assert!(out.contains("    [$.expr, 'call'],"));
+        assert!(out.contains("    [$.term],"));
+        assert!(out.contains("  ],"));
+    }
+
+    #[test]
+    fn scaffold_precedences_before_extras() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::{di, pg};
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![pg(&[PrecedenceItem::Name("a".into())], 0)];
+        g.extras = vec![di("/\\s/", 0)];
+        let out = s(&g, "g").to_string();
+        assert!(out.find("precedences").unwrap() < out.find("extras").unwrap());
     }
 
     #[test]

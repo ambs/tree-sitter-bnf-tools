@@ -1,3 +1,5 @@
+use crate::dom::{PrecedenceGroup, PrecedenceItem};
+
 /// Pretty-printer that re-emits a [`Grammar`] as canonical BNF text.
 ///
 /// **Known limitation**: comments are not stored in the DOM and will be stripped
@@ -12,7 +14,7 @@ const LINE_WIDTH: usize = 80;
 
 /// Formats `grammar` as canonical BNF and returns the result as a `String`.
 ///
-/// Directive order: `%axiom`, `%word`, `%extras`, `%conflicts`, `%inline`, `%supertypes` (all before rules).
+/// Directive order: `%axiom`, `%word`, `%extras`, `%conflicts`, `%precedences`, `%inline`, `%supertypes` (all before rules).
 /// Rules follow in their original declaration order, each separated by a blank line.
 pub fn format_grammar(grammar: &Grammar) -> String {
     let mut out = String::new();
@@ -53,6 +55,9 @@ fn collect_directives(grammar: &Grammar) -> Vec<String> {
     if !grammar.conflicts.is_empty() {
         out.push(format_conflicts(&grammar.conflicts));
     }
+    if !grammar.precedences.is_empty() {
+        out.push(format_precedences(&grammar.precedences));
+    }
     if !grammar.inline.is_empty() {
         out.push(format_directive("inline", &grammar.inline));
     }
@@ -75,6 +80,29 @@ fn format_conflicts(groups: &[ConflictGroup]) -> String {
         .map(|g| format!("[{}]", g.rules.join(", ")))
         .collect();
     format!("%conflicts {}", groups_str.join(", "))
+}
+
+/// Formats a `%precedences` directive as `%precedences [a, b], [c, d]`.
+fn format_precedences(groups: &[PrecedenceGroup]) -> String {
+    let groups_str: Vec<String> = groups
+        .iter()
+        .map(|g| {
+            format!(
+                "[{}]",
+                g.items
+                    .iter()
+                    .map(|i| {
+                        match i {
+                            PrecedenceItem::Literal(l) => l.clone(),
+                            PrecedenceItem::Name(n) => n.clone(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect();
+    format!("%precedences {}", groups_str.join(", "))
 }
 
 /// Formats a `GrammarNode` in top-level (alternative) context.
@@ -200,11 +228,11 @@ fn prec_annotation(kind: &PrecKind, level: Option<i32>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{cg, di, p};
     use crate::dom::GrammarNode::{
         self, Alias, Choice, Field, NonTerminal, OneOrMore, Optional, Prec, Sequence,
         TerminalLiteral, TerminalPattern, Token, TokenImmediate, ZeroOrMore,
     };
+    use crate::dom::test_utils::{cg, di, p};
     use crate::dom::{Grammar, PrecKind};
     use indoc::indoc;
 
@@ -265,6 +293,83 @@ mod tests {
             format_conflicts(&[cg(&["a", "b"], 1), cg(&["c", "d", "e"], 1)]),
             "%conflicts [a, b], [c, d, e]"
         );
+    }
+
+    // ── format_precedences ───────────────────────────────────────────────────
+
+    #[test]
+    fn precedences_single_group_names_only() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        assert_eq!(
+            format_precedences(&[pg(
+                &[
+                    PrecedenceItem::Name("a".into()),
+                    PrecedenceItem::Name("b".into())
+                ],
+                1
+            )]),
+            "%precedences [a, b]"
+        );
+    }
+
+    #[test]
+    fn precedences_single_group_with_literal() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        assert_eq!(
+            format_precedences(&[pg(
+                &[
+                    PrecedenceItem::Name("a".into()),
+                    PrecedenceItem::Literal("'call'".into())
+                ],
+                1
+            )]),
+            "%precedences [a, 'call']"
+        );
+    }
+
+    #[test]
+    fn precedences_multiple_groups() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        assert_eq!(
+            format_precedences(&[
+                pg(
+                    &[
+                        PrecedenceItem::Name("a".into()),
+                        PrecedenceItem::Name("b".into())
+                    ],
+                    1
+                ),
+                pg(
+                    &[
+                        PrecedenceItem::Name("c".into()),
+                        PrecedenceItem::Literal("'call'".into())
+                    ],
+                    1
+                ),
+            ]),
+            "%precedences [a, b], [c, 'call']"
+        );
+    }
+
+    #[test]
+    fn precedences_absent_when_empty() {
+        let g = Grammar::from_rules([p("a", nt("b")), p("b", lit("'x'"))]);
+        let out = format_grammar(&g);
+        assert!(!out.contains("precedences"));
+    }
+
+    #[test]
+    fn precedences_after_conflicts_in_canonical_order() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("a", lit("'x'")), p("b", lit("'y'"))]);
+        g.conflicts = vec![cg(&["a", "b"], 1)];
+        g.precedences = vec![pg(&[PrecedenceItem::Name("a".into())], 1)];
+        let out = format_grammar(&g);
+        assert!(out.find("conflicts").unwrap() < out.find("precedences").unwrap());
     }
 
     // ── format_production ────────────────────────────────────────────────────
