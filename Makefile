@@ -3,10 +3,14 @@ TS          ?= tree-sitter
 TS_MIN      := 0.24.4
 GRAMMAR_DIR := tree-sitter-bnf
 PARSER_C    := $(GRAMMAR_DIR)/src/parser.c
+BNF_TOOL    := $(CARGO) run --quiet -p ts-bnf-tool --
+GRAMMAR_BNF := grammar/bnf.bnf
+RAILROAD    := grammar/railroad.svg
+GRAPH_PDF   := grammar/graph.pdf
 
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish
+.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish grammar grammar-check
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -17,6 +21,18 @@ $(PARSER_C): $(GRAMMAR_DIR)/grammar.js
 	cd $(GRAMMAR_DIR) && $(TS) generate
 
 generate: $(PARSER_C) ## Regenerate parser from grammar.js (runs only if grammar.js changed)
+
+$(RAILROAD): $(GRAMMAR_BNF) $(PARSER_C)
+	$(BNF_TOOL) railroad $(GRAMMAR_BNF) -o $(RAILROAD)
+
+$(GRAPH_PDF): $(GRAMMAR_BNF) $(PARSER_C)
+	$(BNF_TOOL) graph --format pdf $(GRAMMAR_BNF) -o $(GRAPH_PDF)
+
+grammar: $(RAILROAD) $(GRAPH_PDF) ## Regenerate grammar/railroad.svg and grammar/graph.pdf from grammar/bnf.bnf
+
+grammar-check: grammar ## Fail if grammar/railroad.svg or grammar/graph.pdf are out of date
+	@git diff --exit-code $(RAILROAD) $(GRAPH_PDF) || \
+		(echo "grammar-check: generated files are stale — run 'make grammar' and commit the results" >&2; exit 1)
 
 ts-version-check: ## Check that tree-sitter-cli >= TS_MIN is installed
 	@TS_VER=$$($(TS) --version 2>/dev/null | sed 's/tree-sitter //'); \
@@ -44,7 +60,7 @@ test: $(PARSER_C) ## Run all Rust tests
 typecheck: $(PARSER_C) ## Fast type-check without linking
 	$(CARGO) check
 
-check: fmt-check lint typecheck test test-grammar ## Run all checks (fmt, lint, typecheck, tests, corpus)
+check: fmt-check lint typecheck test test-grammar grammar-check ## Run all checks (fmt, lint, typecheck, tests, corpus)
 
 lint: $(PARSER_C) ## Run clippy
 	$(CARGO) clippy -- -D warnings
