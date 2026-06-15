@@ -1190,13 +1190,13 @@ integer</text>
 <g class="sequence">
 <path d=" M 10 21 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5 m 10 0 h 5"/>
 <g class="terminal">
-<rect x="35" y="10" height="22" width="84" rx="10" ry="10"/>
-<text x="77" y="26">
-/[0-9]+/</text>
+<rect x="35" y="10" height="22" width="100" rx="10" ry="10"/>
+<text x="85" y="26">
+/-?[0-9]+/</text>
 </g>
-<path d=" M 129 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
+<path d=" M 145 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
 <path d=" M 25 21 h 10"/>
-<path d=" M 119 21 h 10"/>
+<path d=" M 135 21 h 10"/>
 </g>
 </g>
 </g>
@@ -1236,13 +1236,13 @@ literal</text>
 <g class="sequence">
 <path d=" M 10 21 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5 m 10 0 h 5"/>
 <g class="terminal">
-<rect x="35" y="10" height="22" width="292" rx="10" ry="10"/>
-<text x="181" y="26">
-/\/([^\/\[\\]|\[[^\]]*\]|\\.)+\//</text>
+<rect x="35" y="10" height="22" width="340" rx="10" ry="10"/>
+<text x="205" y="26">
+/\/([^\/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/</text>
 </g>
-<path d=" M 337 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
+<path d=" M 385 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
 <path d=" M 25 21 h 10"/>
-<path d=" M 327 21 h 10"/>
+<path d=" M 375 21 h 10"/>
 </g>
 </g>
 </g>
@@ -1252,23 +1252,23 @@ literal</text>
 <g class="sequence">
 <path d=" M 10 21 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5 m 10 0 h 5"/>
 <g class="choice">
-<path d=" M 35 21 h 24 m 156 0 h 24"/>
+<path d=" M 35 21 h 24 m 196 0 h 24"/>
 <g class="terminal">
-<rect x="59" y="10" height="22" width="156" rx="10" ry="10"/>
-<text x="137" y="26">
-/&#x27;([^&#x27;\\]|\\.)*&#x27;/</text>
+<rect x="59" y="10" height="22" width="196" rx="10" ry="10"/>
+<text x="157" y="26">
+/&#x27;([^&#x27;\\\r\n]|\\.)*&#x27;/</text>
 </g>
-<path d=" M 35 21 a 12 12 0 0 1 12 12 v 9 m 180 0 v -9 a 12 12 0 0 1 12 -12"/>
-<path d=" M 47 42 v 0 a 12 12 0 0 0 12 12 m 156 0 h 0 a 12 12 0 0 0 12 -12 v 0"/>
+<path d=" M 35 21 a 12 12 0 0 1 12 12 v 9 m 220 0 v -9 a 12 12 0 0 1 12 -12"/>
+<path d=" M 47 42 v 0 a 12 12 0 0 0 12 12 m 196 0 h 0 a 12 12 0 0 0 12 -12 v 0"/>
 <g class="terminal">
-<rect x="59" y="43" height="22" width="156" rx="10" ry="10"/>
-<text x="137" y="59">
-/&quot;([^&quot;\\]|\\.)*&quot;/</text>
+<rect x="59" y="43" height="22" width="196" rx="10" ry="10"/>
+<text x="157" y="59">
+/&quot;([^&quot;\\\r\n]|\\.)*&quot;/</text>
 </g>
 </g>
-<path d=" M 249 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
+<path d=" M 289 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
 <path d=" M 25 21 h 10"/>
-<path d=" M 239 21 h 10"/>
+<path d=" M 279 21 h 10"/>
 </g>
 </g>
 </g>
