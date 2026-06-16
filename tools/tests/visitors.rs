@@ -178,10 +178,12 @@ fn alias_group_with_kleene() {
 fn alias_name_is_not_recorded_as_rule_reference() {
     let grammar = parse_grammar("root -> ( expr => label ) ; expr -> 'x' ;");
     assert!(!grammar.rhs_nonterminals.contains("label"));
-    assert!(!grammar
-        .check()
-        .iter()
-        .any(|d| d.message.contains("undefined rule reference")));
+    assert!(
+        !grammar
+            .check()
+            .iter()
+            .any(|d| d.message.contains("undefined rule reference"))
+    );
 }
 
 /// A rule mentioned only as an alias label is never actually referenced,
@@ -189,11 +191,13 @@ fn alias_name_is_not_recorded_as_rule_reference() {
 #[test]
 fn rule_used_only_as_alias_name_is_unreferenced() {
     let grammar = parse_grammar("root -> ( 'x' => helper ) ; helper -> 'y' ;");
-    assert!(grammar
-        .check()
-        .iter()
-        .any(|d| d.severity == Severity::Warning
-            && d.message.contains("rule 'helper' is never referenced")));
+    assert!(
+        grammar
+            .check()
+            .iter()
+            .any(|d| d.severity == Severity::Warning
+                && d.message.contains("rule 'helper' is never referenced"))
+    );
 }
 
 #[test]
@@ -403,7 +407,9 @@ fn duplicate_axiom_emits_error() {
 #[test]
 fn axiom_undefined_rule_emits_error() {
     let (_, diags) = parse_source("%axiom ghost\nroot -> 'x' ;\n").unwrap();
-    assert!(diags
-        .iter()
-        .any(|d| { d.severity == Severity::Error && d.message.contains("'ghost'") }));
+    assert!(
+        diags
+            .iter()
+            .any(|d| { d.severity == Severity::Error && d.message.contains("'ghost'") })
+    );
 }

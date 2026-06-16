@@ -504,8 +504,8 @@ pub fn first_set_stats(grammar: &Grammar) -> Option<super::summary::FirstSetStat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::p;
     use crate::dom::GrammarNode::*;
+    use crate::dom::test_utils::p;
     use crate::dom::{Grammar, Production};
 
     fn grammar(prods: Vec<Production>) -> Grammar {

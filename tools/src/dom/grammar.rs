@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 
+use crate::dom::{PrecedenceGroup, PrecedenceItem};
+
 use super::analysis::{
     count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats,
 };
 use super::diagnostic::Diagnostic;
-use super::directive::{loc, ConflictGroup, DirectiveItem};
+use super::directive::{ConflictGroup, DirectiveItem, loc};
 use super::summary::GrammarSummary;
 use super::types::Grammar;
 
@@ -27,6 +29,33 @@ impl Grammar {
                         Some(Diagnostic::warning(format!(
                             "%conflicts references undefined rule '{name}' ({location})"
                         )))
+                    })
+                },
+            )
+            .collect()
+    }
+
+    /// Checks each `%precedences` group and warns for any `Name` item not in `known`.
+    fn precedences_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
+        self.precedences
+            .iter()
+            .flat_map(
+                |PrecedenceGroup {
+                     items,
+                     line,
+                     filename,
+                 }| {
+                    let location = loc(filename, *line);
+                    items.iter().filter_map(move |item| {
+                        if let PrecedenceItem::Name(name) = item
+                            && !known.contains(name.as_str())
+                        {
+                            Some(Diagnostic::warning(format!(
+                                "%precedences references undefined rule '{name}' ({location})"
+                            )))
+                        } else {
+                            None
+                        }
                     })
                 },
             )
@@ -170,17 +199,18 @@ impl Grammar {
             }
             self.productions.insert(name, prod);
         }
-        if let Some(axiom) = other_axiom {
-            if let Some(diag) = self.declare_axiom(axiom) {
-                self.parse_diagnostics.push(diag);
-            }
+        if let Some(axiom) = other_axiom
+            && let Some(diag) = self.declare_axiom(axiom)
+        {
+            self.parse_diagnostics.push(diag);
         }
-        if let Some(word) = other_word {
-            if let Some(diag) = self.declare_word(word) {
-                self.parse_diagnostics.push(diag);
-            }
+        if let Some(word) = other_word
+            && let Some(diag) = self.declare_word(word)
+        {
+            self.parse_diagnostics.push(diag);
         }
         self.conflicts.extend(other.conflicts);
+        self.precedences.extend(other.precedences);
         self.inline.extend(other.inline);
         self.supertypes.extend(other.supertypes);
         self.extras.extend(other.extras);
@@ -226,6 +256,7 @@ impl Grammar {
         diagnostics.extend(self.inline_check(&known));
         diagnostics.extend(self.supertypes_check(&known));
         diagnostics.extend(self.extras_check(&known));
+        diagnostics.extend(self.precedences_check(&known));
         diagnostics.extend(self.undefined_refs_check(&known));
         diagnostics.extend(self.unreachable_rules_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
@@ -257,8 +288,8 @@ fn check_directive_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{cg, di, p};
     use crate::dom::GrammarNode::TerminalLiteral;
+    use crate::dom::test_utils::{cg, di, p};
     use crate::dom::{GrammarNode, Severity};
 
     /// Renders each diagnostic to its full display string for easy comparison.
@@ -318,6 +349,47 @@ mod tests {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.inline = vec![di("a", 0)];
         assert!(g.inline_check(&g.known_rules()).is_empty());
+    }
+
+    // ── precedences_check ────────────────────────────────────────────────────
+
+    #[test]
+    fn precedences_check_warns_on_undefined_name() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![pg(&[PrecedenceItem::Name("ghost".into())], 0)];
+        assert_eq!(
+            strs(&g.precedences_check(&g.known_rules())),
+            vec!["warning: %precedences references undefined rule 'ghost' (line 0)"]
+        );
+    }
+
+    #[test]
+    fn precedences_check_literal_never_warns() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![pg(&[PrecedenceItem::Literal("'call'".into())], 0)];
+        assert!(g.precedences_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn precedences_check_no_warnings_when_all_defined() {
+        use crate::dom::PrecedenceItem;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([
+            p("a", TerminalLiteral("'x'".into())),
+            p("b", TerminalLiteral("'y'".into())),
+        ]);
+        g.precedences = vec![pg(
+            &[
+                PrecedenceItem::Name("a".into()),
+                PrecedenceItem::Name("b".into()),
+            ],
+            0,
+        )];
+        assert!(g.precedences_check(&g.known_rules()).is_empty());
     }
 
     #[test]
@@ -576,9 +648,11 @@ mod tests {
             ]),
         )]);
         let diagnostics = g.check();
-        assert!(!diagnostics
-            .iter()
-            .any(|d| d.message.contains("left-recursive")));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.message.contains("left-recursive"))
+        );
     }
 
     // ── Grammar::summarise ────────────────────────────────────────────────────

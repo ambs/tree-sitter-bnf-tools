@@ -11,12 +11,12 @@ use std::process::Command;
 use clap::{Parser, Subcommand};
 use indoc::formatdoc;
 
-use ts_bnf_tool::dom::analysis::{first_sets, FirstTerminal};
+use ts_bnf_tool::dom::analysis::{FirstTerminal, first_sets};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity};
 use ts_bnf_tool::util::{syntax_error_diagnostics, to_camelcase};
-use ts_bnf_tool::visitors::{visit_grammar, SourceFile};
+use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
 
 /// Top-level CLI for `ts-bnf-tool`.
 #[derive(Parser, Debug)]
@@ -270,11 +270,7 @@ fn run_rename(
 
 /// Returns the source label for the generated-file header: `<stdin>` for `-`, otherwise the filename.
 fn source_label(filename: &str) -> &str {
-    if filename == "-" {
-        "<stdin>"
-    } else {
-        filename
-    }
+    if filename == "-" { "<stdin>" } else { filename }
 }
 
 /// Returns `true` if `name` is a valid JavaScript identifier (excluding `$`).
@@ -558,7 +554,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     return Err(format!(
                         "unknown format '{other}'; expected: dot, mermaid, svg, pdf, png"
                     )
-                    .into())
+                    .into());
                 }
             }
         }

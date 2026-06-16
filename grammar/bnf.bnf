@@ -24,6 +24,7 @@ grammar             -> (rule | _directive)+ ;
 _directive          -> axiomDirective
                      | wordDirective
                      | conflictsDirective
+                     | precedencesDirective
                      | includeDirective
                      | inlineDirective
                      | supertypesDirective
@@ -40,6 +41,10 @@ includeDirective    -> '%include' literal ;
 
 conflictsDirective  -> '%conflicts' conflictGroup (',' conflictGroup)* ;
 conflictGroup       -> '[' nonTerminal (',' nonTerminal)* ']' ;
+
+precedencesDirective -> '%precedences' precedenceGroup (',' precedenceGroup)* ;
+precedenceGroup      -> '[' precedenceItem (',' precedenceItem)* ']' ;
+precedenceItem       -> nonTerminal | literal ;
 
 inlineDirective     -> '%inline' nonTerminal (',' nonTerminal)* ;
 
