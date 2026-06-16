@@ -17,8 +17,9 @@ pub struct Scaffold<'a> {
     pub no_header: bool,
 }
 
-impl Display for Scaffold<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl Scaffold<'_> {
+    /// Emits the generated-file header comment, unless suppressed by `no_header`.
+    fn fmt_header(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.no_header {
             let version = env!("CARGO_PKG_VERSION");
             writeln!(
@@ -27,13 +28,20 @@ impl Display for Scaffold<'_> {
                 self.source
             )?;
         }
-        writeln!(f, "module.exports = grammar({{")?;
-        writeln!(f, "  name: \"{}\",", self.name)?;
-        writeln!(f)?;
+        Ok(())
+    }
+
+    /// Emits the `word:` directive, if the grammar declares one.
+    fn fmt_word(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if let Some(word) = &self.grammar.word {
             writeln!(f, "  word: $ => $.{},", word.name)?;
             writeln!(f)?;
         }
+        Ok(())
+    }
+
+    /// Emits the `precedences:` directive, if the grammar declares any groups.
+    fn fmt_precedences(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.grammar.precedences.is_empty() {
             writeln!(f, "  precedences: $ => [")?;
             for g in &self.grammar.precedences {
@@ -51,6 +59,11 @@ impl Display for Scaffold<'_> {
             writeln!(f, "  ],")?;
             writeln!(f)?;
         }
+        Ok(())
+    }
+
+    /// Emits the `externals:` directive, if the grammar declares any.
+    fn fmt_externals(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.grammar.externals.is_empty() {
             let items = self
                 .grammar
@@ -65,6 +78,11 @@ impl Display for Scaffold<'_> {
             writeln!(f, "  externals: $ => [{items}],")?;
             writeln!(f)?;
         }
+        Ok(())
+    }
+
+    /// Emits the `extras:` directive, if the grammar declares any.
+    fn fmt_extras(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.grammar.extras.is_empty() {
             let items = self
                 .grammar
@@ -82,6 +100,11 @@ impl Display for Scaffold<'_> {
             writeln!(f, "  extras: $ => [{items}],")?;
             writeln!(f)?;
         }
+        Ok(())
+    }
+
+    /// Emits the `inline:` directive, if the grammar declares any.
+    fn fmt_inline(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.grammar.inline.is_empty() {
             let items = self
                 .grammar
@@ -93,6 +116,11 @@ impl Display for Scaffold<'_> {
             writeln!(f, "  inline: $ => [{items}],")?;
             writeln!(f)?;
         }
+        Ok(())
+    }
+
+    /// Emits the `supertypes:` directive, if the grammar declares any.
+    fn fmt_supertypes(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.grammar.supertypes.is_empty() {
             let items = self
                 .grammar
@@ -104,6 +132,11 @@ impl Display for Scaffold<'_> {
             writeln!(f, "  supertypes: $ => [{items}],")?;
             writeln!(f)?;
         }
+        Ok(())
+    }
+
+    /// Emits the `conflicts:` directive, if the grammar declares any groups.
+    fn fmt_conflicts(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.grammar.conflicts.is_empty() {
             writeln!(f, "  conflicts: $ => [")?;
             for group in &self.grammar.conflicts {
@@ -118,6 +151,13 @@ impl Display for Scaffold<'_> {
             writeln!(f, "  ],")?;
             writeln!(f)?;
         }
+        Ok(())
+    }
+
+    /// Emits the `rules:` block, with the root rule (per `%axiom` or source
+    /// order) emitted first since tree-sitter treats the first entry as the
+    /// start symbol.
+    fn fmt_rules(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "  rules: {{")?;
         // tree-sitter treats the first entry in `rules:` as the start symbol,
         // so the root rule must be emitted first even when %axiom names a rule
@@ -134,7 +174,24 @@ impl Display for Scaffold<'_> {
             writeln!(f, "    // {}:{}", production.filename, production.line)?;
             writeln!(f, "    {}: $ => {},", production.name, production.body)?;
         }
-        writeln!(f, "  }}")?;
+        writeln!(f, "  }}")
+    }
+}
+
+impl Display for Scaffold<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.fmt_header(f)?;
+        writeln!(f, "module.exports = grammar({{")?;
+        writeln!(f, "  name: \"{}\",", self.name)?;
+        writeln!(f)?;
+        self.fmt_word(f)?;
+        self.fmt_precedences(f)?;
+        self.fmt_externals(f)?;
+        self.fmt_extras(f)?;
+        self.fmt_inline(f)?;
+        self.fmt_supertypes(f)?;
+        self.fmt_conflicts(f)?;
+        self.fmt_rules(f)?;
         write!(f, "}});")
     }
 }
