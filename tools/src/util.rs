@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
 use crate::{
-    dom::{directive::loc_col, Diagnostic},
+    dom::{Diagnostic, directive::loc_col},
     visitors::SourceFile,
 };
 
@@ -331,9 +331,11 @@ mod tests {
         let diags = syntax_diags(&src, "g.bnf");
         assert_eq!(diags.len(), MAX_SYNTAX_ERRORS + 1);
         assert_eq!(diags.last().unwrap().message, "… and 5 more syntax errors");
-        assert!(diags[MAX_SYNTAX_ERRORS - 1]
-            .message
-            .starts_with("syntax error at g.bnf:10:"));
+        assert!(
+            diags[MAX_SYNTAX_ERRORS - 1]
+                .message
+                .starts_with("syntax error at g.bnf:10:")
+        );
     }
 
     #[test]

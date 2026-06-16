@@ -66,6 +66,30 @@ conflicts: $ => [
 ],
 ```
 
+## `%precedences`
+
+Declares named precedence levels in descending priority order. Each bracketed
+group contains rule names or quoted string literals that share equal precedence;
+groups listed earlier beat groups listed later:
+
+```bnf
+%precedences [_unary_expression, _binary_expression],
+             [call, member, 'unary', 'binary']
+```
+
+generates:
+
+```js
+precedences: ($) => [
+  [$.unary_expression, $._binary_expression],
+  [$.call, $.member, 'unary', 'binary'],
+],
+```
+
+Multiple `%precedences` lines are additive — each adds groups to the list.
+Referencing an undefined rule name is a **warning**; string literal items are
+never checked.
+
 ## `%inline`
 
 Lists rules to substitute at every call site during parser-table generation.
@@ -83,6 +107,26 @@ enriches the type annotations in language bindings:
 ```bnf
 %supertypes expression, statement, declaration
 ```
+
+## `%externals`
+
+Declares tokens produced by an external scanner (a hand-written C lexer)
+rather than the grammar itself. Items may be rule names or quoted string
+literals:
+
+```bnf
+%externals indent, dedent, 'string_content'
+```
+
+generates:
+
+```js
+externals: $ => [$.indent, $.dedent, 'string_content'],
+```
+
+Multiple `%externals` lines are additive — each adds items to the list.
+Declared names are exempt from undefined-reference warnings: they are defined
+by the external scanner, not by any rule in the BNF file.
 
 ## `%axiom`
 

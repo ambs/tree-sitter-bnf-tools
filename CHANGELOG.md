@@ -9,6 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### `tree-sitter-bnf`
+- `%externals name1, name2, 'literal'` directive for external scanner tokens.
+  Maps to tree-sitter's `externals:` grammar field; items may be rule names or
+  quoted string literals. Multiple `%externals` lines are additive. Declared
+  names are exempt from undefined-reference warnings, since they are defined
+  by the external C scanner rather than the BNF. (#172)
+- `%precedences [g1a, g1b], [g2a, g2b]` directive for named precedence levels.
+  Groups are listed in descending priority order; members may be rule names or
+  quoted string literals. Maps to tree-sitter's `precedences:` grammar field.
+  Multiple `%precedences` lines are additive. Referencing an undefined rule name
+  is a warning; string literals are not checked. (#174)
 - `%word ruleName` directive: declares the identifier token for keyword
   extraction and better error recovery. Maps to tree-sitter's `word:` grammar
   field. Duplicate declarations are an error; naming an undefined rule is an

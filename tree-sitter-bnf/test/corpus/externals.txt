@@ -1,0 +1,92 @@
+================================================================================
+Single name item
+================================================================================
+
+%externals tok
+root -> tok ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (externalsDirective
+    (nonTerminalOrLiteral
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Name and literal items
+================================================================================
+
+%externals tok, 'lit'
+root -> tok ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (externalsDirective
+    (nonTerminalOrLiteral
+      (nonTerminal))
+    (nonTerminalOrLiteral
+      (literal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple externals directives
+================================================================================
+
+%externals a
+%externals b
+root -> a ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (externalsDirective
+    (nonTerminalOrLiteral
+      (nonTerminal)))
+  (externalsDirective
+    (nonTerminalOrLiteral
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Directive interleaved with rules
+================================================================================
+
+root -> a ;
+%externals a
+a -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal)))))
+  (externalsDirective
+    (nonTerminalOrLiteral
+      (nonTerminal)))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))

@@ -1,3 +1,10 @@
+# Development
+
+Use the Makefile targets to run tests, formatting, linting, and other checks
+(`make test`, `make fmt`, `make fmt-check`, `make lint`, `make check`, etc.)
+instead of invoking `cargo test`, `cargo fmt`, or `cargo clippy` directly. Run
+`make help` (or read the `Makefile`) to see available targets.
+
 # Fixing an issue
 
 Before working on issue `#<n>`, create `plans/<n>.md` (gitignored, never
