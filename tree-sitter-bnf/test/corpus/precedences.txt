@@ -1,0 +1,133 @@
+================================================================================
+Single group, two items
+================================================================================
+
+%precedences [expr, term]
+expr -> term ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (precedencesDirective
+    (precedenceGroup
+      (nonTerminalOrLiteral
+        (nonTerminal))
+      (nonTerminalOrLiteral
+        (nonTerminal))))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Single group, name and literal items
+================================================================================
+
+%precedences [expr, 'lit']
+expr -> term ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (precedencesDirective
+    (precedenceGroup
+      (nonTerminalOrLiteral
+        (nonTerminal))
+      (nonTerminalOrLiteral
+        (literal))))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple groups on one directive
+================================================================================
+
+%precedences [a, b], [c, d]
+a -> b ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (precedencesDirective
+    (precedenceGroup
+      (nonTerminalOrLiteral
+        (nonTerminal))
+      (nonTerminalOrLiteral
+        (nonTerminal)))
+    (precedenceGroup
+      (nonTerminalOrLiteral
+        (nonTerminal))
+      (nonTerminalOrLiteral
+        (nonTerminal))))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple precedences directives
+================================================================================
+
+%precedences [a, b]
+%precedences [c, d]
+a -> b ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (precedencesDirective
+    (precedenceGroup
+      (nonTerminalOrLiteral
+        (nonTerminal))
+      (nonTerminalOrLiteral
+        (nonTerminal))))
+  (precedencesDirective
+    (precedenceGroup
+      (nonTerminalOrLiteral
+        (nonTerminal))
+      (nonTerminalOrLiteral
+        (nonTerminal))))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Directive interleaved with rules
+================================================================================
+
+a -> b ;
+%precedences [a, b]
+b -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal)))))
+  (precedencesDirective
+    (precedenceGroup
+      (nonTerminalOrLiteral
+        (nonTerminal))
+      (nonTerminalOrLiteral
+        (nonTerminal))))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))

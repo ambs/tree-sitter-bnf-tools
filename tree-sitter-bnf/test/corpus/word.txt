@@ -1,0 +1,66 @@
+================================================================================
+Basic word directive
+================================================================================
+
+%word tok
+root -> tok ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (wordDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Multiple word directives
+================================================================================
+
+%word a
+%word b
+root -> a ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (wordDirective
+    (nonTerminal))
+  (wordDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))))))
+
+================================================================================
+Word directive interleaved with rules
+================================================================================
+
+root -> tok ;
+%word tok
+tok -> 'x' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal)))))
+  (wordDirective
+    (nonTerminal))
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (literal))))))
