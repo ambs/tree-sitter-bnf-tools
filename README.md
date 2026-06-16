@@ -136,10 +136,12 @@ make test       # run Rust tests (generates parser.c if needed)
 make test-grammar  # run tree-sitter corpus tests
 make lint       # clippy
 make fmt        # rustfmt
+make audit      # check dependencies against the RustSec advisory database
 make clean      # remove build artifacts
 ```
 
-Requires: Rust (stable), `tree-sitter-cli` ≥ 0.24.4 (`npm install -g tree-sitter-cli`).
+Requires: Rust (stable), `tree-sitter-cli` ≥ 0.24.4 (`npm install -g tree-sitter-cli`),
+`cargo-audit` (`cargo install cargo-audit`).
 
 ## Contributing
 

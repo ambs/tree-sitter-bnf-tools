@@ -10,7 +10,7 @@ GRAPH_PDF   := grammar/graph.pdf
 
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish grammar grammar-check
+.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish grammar grammar-check audit
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -60,10 +60,17 @@ test: $(PARSER_C) ## Run all Rust tests
 typecheck: $(PARSER_C) ## Fast type-check without linking
 	$(CARGO) check
 
-check: fmt-check lint typecheck test test-grammar grammar-check ## Run all checks (fmt, lint, typecheck, tests, corpus)
+check: fmt-check lint typecheck test test-grammar grammar-check audit ## Run all checks (fmt, lint, typecheck, tests, corpus, audit)
 
 lint: $(PARSER_C) ## Run clippy
 	$(CARGO) clippy -- -D warnings
+
+audit: ## Check dependencies against the RustSec advisory database
+	@if ! $(CARGO) audit --version >/dev/null 2>&1; then \
+		echo "Error: cargo-audit not found. Install with: cargo install cargo-audit" >&2; \
+		exit 1; \
+	fi
+	$(CARGO) audit
 
 fmt: ## Format Rust source
 	$(CARGO) fmt

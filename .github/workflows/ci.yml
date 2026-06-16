@@ -37,9 +37,13 @@ jobs:
       - name: Install tree-sitter-cli
         if: steps.cache-ts-cli.outputs.cache-hit != 'true'
         run: cargo install tree-sitter-cli --version 0.26.9 --locked
+      - uses: taiki-e/install-action@6ed6112eb9893c58dd600eebccdf6e77ab7bfa9c # v2
+        with:
+          tool: cargo-audit
       - run: make fmt-check
       - run: make lint
       - run: make test
+      - run: make audit
       - run: cargo package -p tree-sitter-bnf --no-verify --allow-dirty
       # ts-bnf-tool packaging requires tree-sitter-bnf to be on crates.io first;
       # add `cargo package -p ts-bnf-tool --no-verify --allow-dirty` here after first publish.
