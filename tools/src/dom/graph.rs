@@ -232,12 +232,23 @@ pub fn emit_mermaid(data: &GraphData) -> String {
     lines.join("\n") + "\n"
 }
 
+/// Fixed `SOURCE_DATE_EPOCH` value used to make `dot`'s PDF output reproducible.
+///
+/// Graphviz's cairo-based PDF backend stamps the rendered file's `/Info`
+/// dict with the current time (`/CreationDate`), which makes two renders of
+/// the same input byte-different and breaks `grammar-check`'s byte-diff
+/// against the committed `grammar/graph.pdf`. cairo honors the
+/// reproducible-builds `SOURCE_DATE_EPOCH` convention, so pinning it yields
+/// byte-identical output across runs. The value itself is arbitrary.
+const SOURCE_DATE_EPOCH: &str = "0";
+
 /// Runs `dot -T<format>` on `dot_input` and returns the rendered bytes.
 ///
 /// Returns an error if `dot` is not found on `PATH` or the process exits non-zero.
 pub fn run_graphviz(dot_input: &str, format: &str) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut child = Command::new("dot")
         .arg(format!("-T{format}"))
+        .env("SOURCE_DATE_EPOCH", SOURCE_DATE_EPOCH)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
