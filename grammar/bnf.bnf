@@ -25,10 +25,11 @@ _directive          -> axiomDirective
                      | wordDirective
                      | conflictsDirective
                      | precedencesDirective
-                     | includeDirective
                      | inlineDirective
                      | supertypesDirective
                      | extrasDirective
+                     | includeDirective
+                     | externalsDirective
                      ;
 
 # ── Grammar-level directives ─────────────────────────────────────────────────
@@ -43,10 +44,13 @@ conflictsDirective  -> '%conflicts' conflictGroup (',' conflictGroup)* ;
 conflictGroup       -> '[' nonTerminal (',' nonTerminal)* ']' ;
 
 precedencesDirective -> '%precedences' precedenceGroup (',' precedenceGroup)* ;
-precedenceGroup      -> '[' precedenceItem (',' precedenceItem)* ']' ;
-precedenceItem       -> nonTerminal | literal ;
+precedenceGroup      -> '[' nonTerminalOrLiteral (',' nonTerminalOrLiteral)* ']' ;
+
+nonTerminalOrLiteral -> nonTerminal | literal ;
 
 inlineDirective     -> '%inline' nonTerminal (',' nonTerminal)* ;
+
+externalsDirective  -> '%externals' nonTerminalOrLiteral (',' nonTerminalOrLiteral)* ;
 
 supertypesDirective -> '%supertypes' nonTerminal (',' nonTerminal)* ;
 

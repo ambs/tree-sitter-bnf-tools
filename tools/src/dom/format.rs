@@ -1,4 +1,4 @@
-use crate::dom::{PrecedenceGroup, PrecedenceItem};
+use crate::dom::{NameOrLiteral, PrecedenceGroup};
 
 /// Pretty-printer that re-emits a [`Grammar`] as canonical BNF text.
 ///
@@ -14,7 +14,8 @@ const LINE_WIDTH: usize = 80;
 
 /// Formats `grammar` as canonical BNF and returns the result as a `String`.
 ///
-/// Directive order: `%axiom`, `%word`, `%extras`, `%conflicts`, `%precedences`, `%inline`, `%supertypes` (all before rules).
+/// Directive order: `%axiom`, `%word`, `%extras`, `%conflicts`, `%precedences`, `%inline`, `%supertypes`,
+/// `%externals` (all before rules).
 /// Rules follow in their original declaration order, each separated by a blank line.
 pub fn format_grammar(grammar: &Grammar) -> String {
     let mut out = String::new();
@@ -64,6 +65,9 @@ fn collect_directives(grammar: &Grammar) -> Vec<String> {
     if !grammar.supertypes.is_empty() {
         out.push(format_directive("supertypes", &grammar.supertypes));
     }
+    if !grammar.externals.is_empty() {
+        out.push(format_externals(&grammar.externals));
+    }
     out
 }
 
@@ -82,6 +86,18 @@ fn format_conflicts(groups: &[ConflictGroup]) -> String {
     format!("%conflicts {}", groups_str.join(", "))
 }
 
+/// Formats a `%externals` directive
+fn format_externals(items: &[NameOrLiteral]) -> String {
+    let names: Vec<String> = items
+        .iter()
+        .map(|i| match i {
+            NameOrLiteral::Literal(l) => l.clone(),
+            NameOrLiteral::Name(n) => n.clone(),
+        })
+        .collect();
+    format!("%externals {}", names.join(", "))
+}
+
 /// Formats a `%precedences` directive as `%precedences [a, b], [c, d]`.
 fn format_precedences(groups: &[PrecedenceGroup]) -> String {
     let groups_str: Vec<String> = groups
@@ -93,8 +109,8 @@ fn format_precedences(groups: &[PrecedenceGroup]) -> String {
                     .iter()
                     .map(|i| {
                         match i {
-                            PrecedenceItem::Literal(l) => l.clone(),
-                            PrecedenceItem::Name(n) => n.clone(),
+                            NameOrLiteral::Literal(l) => l.clone(),
+                            NameOrLiteral::Name(n) => n.clone(),
                         }
                     })
                     .collect::<Vec<_>>()
@@ -299,13 +315,13 @@ mod tests {
 
     #[test]
     fn precedences_single_group_names_only() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         assert_eq!(
             format_precedences(&[pg(
                 &[
-                    PrecedenceItem::Name("a".into()),
-                    PrecedenceItem::Name("b".into())
+                    NameOrLiteral::Name("a".into()),
+                    NameOrLiteral::Name("b".into())
                 ],
                 1
             )]),
@@ -315,13 +331,13 @@ mod tests {
 
     #[test]
     fn precedences_single_group_with_literal() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         assert_eq!(
             format_precedences(&[pg(
                 &[
-                    PrecedenceItem::Name("a".into()),
-                    PrecedenceItem::Literal("'call'".into())
+                    NameOrLiteral::Name("a".into()),
+                    NameOrLiteral::Literal("'call'".into())
                 ],
                 1
             )]),
@@ -331,21 +347,21 @@ mod tests {
 
     #[test]
     fn precedences_multiple_groups() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         assert_eq!(
             format_precedences(&[
                 pg(
                     &[
-                        PrecedenceItem::Name("a".into()),
-                        PrecedenceItem::Name("b".into())
+                        NameOrLiteral::Name("a".into()),
+                        NameOrLiteral::Name("b".into())
                     ],
                     1
                 ),
                 pg(
                     &[
-                        PrecedenceItem::Name("c".into()),
-                        PrecedenceItem::Literal("'call'".into())
+                        NameOrLiteral::Name("c".into()),
+                        NameOrLiteral::Literal("'call'".into())
                     ],
                     1
                 ),
@@ -363,13 +379,67 @@ mod tests {
 
     #[test]
     fn precedences_after_conflicts_in_canonical_order() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("a", lit("'x'")), p("b", lit("'y'"))]);
         g.conflicts = vec![cg(&["a", "b"], 1)];
-        g.precedences = vec![pg(&[PrecedenceItem::Name("a".into())], 1)];
+        g.precedences = vec![pg(&[NameOrLiteral::Name("a".into())], 1)];
         let out = format_grammar(&g);
         assert!(out.find("conflicts").unwrap() < out.find("precedences").unwrap());
+    }
+
+    // ── format_externals ──────────────────────────────────────────────────────
+
+    #[test]
+    fn externals_names_only() {
+        assert_eq!(
+            format_externals(&[
+                NameOrLiteral::Name("a".into()),
+                NameOrLiteral::Name("b".into())
+            ]),
+            "%externals a, b"
+        );
+    }
+
+    #[test]
+    fn externals_with_literal() {
+        assert_eq!(
+            format_externals(&[
+                NameOrLiteral::Name("a".into()),
+                NameOrLiteral::Literal("'lit'".into())
+            ]),
+            "%externals a, 'lit'"
+        );
+    }
+
+    #[test]
+    fn externals_absent_when_empty() {
+        let g = Grammar::from_rules([p("a", nt("b")), p("b", lit("'x'"))]);
+        let out = format_grammar(&g);
+        assert!(!out.contains("externals"));
+    }
+
+    #[test]
+    fn externals_after_supertypes_in_canonical_order() {
+        let mut g = Grammar::from_rules([p("a", lit("'x'"))]);
+        g.supertypes = vec![di("a", 1)];
+        g.externals = vec![NameOrLiteral::Name("tok".into())];
+        let out = format_grammar(&g);
+        assert!(out.find("%supertypes").unwrap() < out.find("%externals").unwrap());
+    }
+
+    #[test]
+    /// A grammar with `%externals` formats and re-parses to the same directive (round-trip).
+    fn externals_round_trips_through_parse() {
+        let mut g = Grammar::from_rules([p("root", nt("tok"))]);
+        g.externals = vec![
+            NameOrLiteral::Name("tok".into()),
+            NameOrLiteral::Literal("'lit'".into()),
+        ];
+        let formatted = format_grammar(&g);
+        let (reparsed, diags) = crate::visitors::parse_source(&formatted).unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(reparsed.externals, g.externals);
     }
 
     // ── format_production ────────────────────────────────────────────────────

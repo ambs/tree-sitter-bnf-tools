@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::dom::{PrecedenceGroup, PrecedenceItem};
+use crate::dom::{NameOrLiteral, PrecedenceGroup};
 
 use super::analysis::{
     count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats,
@@ -47,7 +47,7 @@ impl Grammar {
                  }| {
                     let location = loc(filename, *line);
                     items.iter().filter_map(move |item| {
-                        if let PrecedenceItem::Name(name) = item
+                        if let NameOrLiteral::Name(name) = item
                             && !known.contains(name.as_str())
                         {
                             Some(Diagnostic::warning(format!(
@@ -214,6 +214,7 @@ impl Grammar {
         self.inline.extend(other.inline);
         self.supertypes.extend(other.supertypes);
         self.extras.extend(other.extras);
+        self.externals.extend(other.externals);
         self.rhs_nonterminals.extend(other.rhs_nonterminals);
         self.parse_diagnostics.extend(other.parse_diagnostics);
     }
@@ -243,7 +244,12 @@ impl Grammar {
     /// Diagnostics are sorted by message so output is stable across runs regardless
     /// of `HashSet` iteration order in the individual checks.
     pub fn check(&self) -> Vec<Diagnostic> {
-        let known = self.known_rules();
+        let mut known = self.known_rules();
+        known.extend(self.externals.iter().filter_map(|e| match e {
+            NameOrLiteral::Name(n) => Some(n.as_str()),
+            NameOrLiteral::Literal(_) => None,
+        }));
+
         let mut diagnostics = Vec::new();
         diagnostics.extend(self.parse_diagnostics.iter().cloned());
         diagnostics.extend(check_directive_ref(
@@ -355,10 +361,10 @@ mod tests {
 
     #[test]
     fn precedences_check_warns_on_undefined_name() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.precedences = vec![pg(&[PrecedenceItem::Name("ghost".into())], 0)];
+        g.precedences = vec![pg(&[NameOrLiteral::Name("ghost".into())], 0)];
         assert_eq!(
             strs(&g.precedences_check(&g.known_rules())),
             vec!["warning: %precedences references undefined rule 'ghost' (line 0)"]
@@ -367,16 +373,16 @@ mod tests {
 
     #[test]
     fn precedences_check_literal_never_warns() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.precedences = vec![pg(&[PrecedenceItem::Literal("'call'".into())], 0)];
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'call'".into())], 0)];
         assert!(g.precedences_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     fn precedences_check_no_warnings_when_all_defined() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([
             p("a", TerminalLiteral("'x'".into())),
@@ -384,8 +390,8 @@ mod tests {
         ]);
         g.precedences = vec![pg(
             &[
-                PrecedenceItem::Name("a".into()),
-                PrecedenceItem::Name("b".into()),
+                NameOrLiteral::Name("a".into()),
+                NameOrLiteral::Name("b".into()),
             ],
             0,
         )];
@@ -441,6 +447,29 @@ mod tests {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("ghost".into());
         assert_eq!(g.undefined_refs_check(&g.known_rules()).len(), 1);
+    }
+
+    // ── externals in known set ───────────────────────────────────────────────
+
+    #[test]
+    /// A `Name` item declared in `%externals` is treated as known: referencing it in a
+    /// rule body must not trigger an undefined-rule-reference warning from `check()`.
+    fn check_externals_name_not_flagged_as_undefined() {
+        let mut g = Grammar::new();
+        g.externals = vec![NameOrLiteral::Name("token".into())];
+        g.rhs_nonterminals.insert("token".into());
+        assert!(g.check().is_empty());
+    }
+
+    #[test]
+    /// Without a matching `%externals` declaration, the same reference is still flagged.
+    fn check_undefined_ref_without_externals_declaration_still_warns() {
+        let mut g = Grammar::new();
+        g.rhs_nonterminals.insert("token".into());
+        assert_eq!(
+            strs(&g.check()),
+            vec!["warning: undefined rule reference 'token'"]
+        );
     }
 
     #[test]

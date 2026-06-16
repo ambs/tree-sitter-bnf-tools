@@ -1,4 +1,4 @@
-use crate::dom::PrecedenceItem;
+use crate::dom::NameOrLiteral;
 
 use super::nodes::GrammarNode;
 use super::types::Grammar;
@@ -63,7 +63,7 @@ fn rename_directives(grammar: &mut Grammar, old: &str, new: &str) {
     }
     for group in grammar.precedences.iter_mut() {
         for item in group.items.iter_mut() {
-            if let PrecedenceItem::Name(name) = item
+            if let NameOrLiteral::Name(name) = item
                 && name == old
             {
                 *name = new.to_owned();
@@ -338,38 +338,38 @@ mod tests {
     /// A `Name` item in a `%precedences` group is updated when the referenced rule is renamed.
     #[test]
     fn renames_precedences_name_item() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("expr", nt("x")), p("term", nt("y"))]);
         g.precedences = vec![pg(
             &[
-                PrecedenceItem::Name("expr".into()),
-                PrecedenceItem::Name("term".into()),
+                NameOrLiteral::Name("expr".into()),
+                NameOrLiteral::Name("term".into()),
             ],
             1,
         )];
         rename_grammar(&mut g, "expr", "expression").unwrap();
         assert_eq!(
             g.precedences[0].items[0],
-            PrecedenceItem::Name("expression".into())
+            NameOrLiteral::Name("expression".into())
         );
         assert_eq!(
             g.precedences[0].items[1],
-            PrecedenceItem::Name("term".into())
+            NameOrLiteral::Name("term".into())
         );
     }
 
     /// A `Literal` item in a `%precedences` group is never modified by a rename.
     #[test]
     fn renames_precedences_literal_item_untouched() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("expr", nt("x"))]);
-        g.precedences = vec![pg(&[PrecedenceItem::Literal("'expr'".into())], 1)];
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'expr'".into())], 1)];
         rename_grammar(&mut g, "expr", "expression").unwrap();
         assert_eq!(
             g.precedences[0].items[0],
-            PrecedenceItem::Literal("'expr'".into())
+            NameOrLiteral::Literal("'expr'".into())
         );
     }
 }

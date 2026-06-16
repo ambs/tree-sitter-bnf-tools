@@ -108,6 +108,26 @@ enriches the type annotations in language bindings:
 %supertypes expression, statement, declaration
 ```
 
+## `%externals`
+
+Declares tokens produced by an external scanner (a hand-written C lexer)
+rather than the grammar itself. Items may be rule names or quoted string
+literals:
+
+```bnf
+%externals indent, dedent, 'string_content'
+```
+
+generates:
+
+```js
+externals: $ => [$.indent, $.dedent, 'string_content'],
+```
+
+Multiple `%externals` lines are additive — each adds items to the list.
+Declared names are exempt from undefined-reference warnings: they are defined
+by the external scanner, not by any rule in the BNF file.
+
 ## `%axiom`
 
 Declares an explicit root (start) rule. Without `%axiom`, tree-sitter treats

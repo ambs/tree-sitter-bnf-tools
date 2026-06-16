@@ -26,6 +26,7 @@
 | `%inline r` | `inline: $ => [$.r]` | Inline rule |
 | `%supertypes r` | `supertypes: $ => [$.r]` | Supertype declaration |
 | `%extras /x/, r` | `extras: $ => [/x/, $.r]` | Extra tokens |
+| `%externals r, 'lit'` | `externals: $ => [$.r, 'lit']` | External scanner tokens |
 | `%include "f.bnf"` | *(merges the file's rules and directives)* | File inclusion |
 | `# comment` | *(removed)* | Line comment |
 
