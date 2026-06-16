@@ -33,7 +33,7 @@ pub mod test_utils;
 mod types;
 
 pub use diagnostic::{Diagnostic, Severity};
-pub use directive::{ConflictGroup, DirectiveItem};
+pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup};
 pub use error::ParseError;
 pub use format::format_grammar;
 pub use highlights::Highlights;

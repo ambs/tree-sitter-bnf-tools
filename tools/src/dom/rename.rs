@@ -1,3 +1,5 @@
+use crate::dom::NameOrLiteral;
+
 use super::nodes::GrammarNode;
 use super::types::Grammar;
 
@@ -32,15 +34,15 @@ pub fn rename_grammar(grammar: &mut Grammar, old: &str, new: &str) -> Result<(),
 /// Renames `old` to `new` in every directive list that holds plain rule names
 /// (`%axiom`, `%inline`, `%supertypes`, `%extras`, `%conflicts`).
 fn rename_directives(grammar: &mut Grammar, old: &str, new: &str) {
-    if let Some(item) = grammar.axiom_directive_mut() {
-        if item.name == old {
-            item.name = new.to_owned();
-        }
+    if let Some(item) = grammar.axiom_directive_mut()
+        && item.name == old
+    {
+        item.name = new.to_owned();
     }
-    if let Some(word) = &mut grammar.word {
-        if word.name == old {
-            word.name = new.to_owned();
-        }
+    if let Some(word) = &mut grammar.word
+        && word.name == old
+    {
+        word.name = new.to_owned();
     }
     for item in grammar
         .inline
@@ -56,6 +58,15 @@ fn rename_directives(grammar: &mut Grammar, old: &str, new: &str) {
         for rule in group.rules.iter_mut() {
             if rule == old {
                 *rule = new.to_owned();
+            }
+        }
+    }
+    for group in grammar.precedences.iter_mut() {
+        for item in group.items.iter_mut() {
+            if let NameOrLiteral::Name(name) = item
+                && name == old
+            {
+                *name = new.to_owned();
             }
         }
     }
@@ -107,8 +118,8 @@ fn rename_node(node: &mut GrammarNode, old: &str, new: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{nt, p};
     use crate::dom::Grammar;
+    use crate::dom::test_utils::{nt, p};
 
     /// Renaming a rule updates both the `productions` map key and `Production::name`.
     #[test]
@@ -321,6 +332,44 @@ mod tests {
         assert!(
             matches!(&g.productions["root"].body, GrammarNode::NonTerminal(n) if n == "expression"),
             "root's body must reference the new name"
+        );
+    }
+
+    /// A `Name` item in a `%precedences` group is updated when the referenced rule is renamed.
+    #[test]
+    fn renames_precedences_name_item() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("expr", nt("x")), p("term", nt("y"))]);
+        g.precedences = vec![pg(
+            &[
+                NameOrLiteral::Name("expr".into()),
+                NameOrLiteral::Name("term".into()),
+            ],
+            1,
+        )];
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        assert_eq!(
+            g.precedences[0].items[0],
+            NameOrLiteral::Name("expression".into())
+        );
+        assert_eq!(
+            g.precedences[0].items[1],
+            NameOrLiteral::Name("term".into())
+        );
+    }
+
+    /// A `Literal` item in a `%precedences` group is never modified by a rename.
+    #[test]
+    fn renames_precedences_literal_item_untouched() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("expr", nt("x"))]);
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'expr'".into())], 1)];
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        assert_eq!(
+            g.precedences[0].items[0],
+            NameOrLiteral::Literal("'expr'".into())
         );
     }
 }

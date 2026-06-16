@@ -4,8 +4,10 @@ use std::fmt::{Display, Formatter};
 
 use indexmap::IndexMap;
 
+use crate::dom::{NameOrLiteral, PrecedenceGroup};
+
 use super::diagnostic::Diagnostic;
-use super::directive::{loc, ConflictGroup, DirectiveItem};
+use super::directive::{ConflictGroup, DirectiveItem, loc};
 use super::production::Production;
 
 /// The complete grammar: all productions and any declared conflict or inline groups.
@@ -22,12 +24,16 @@ pub struct Grammar {
     pub word: Option<DirectiveItem>,
     /// Conflict groups declared with `%conflicts`.
     pub conflicts: Vec<ConflictGroup>,
+    /// Precedences directive data
+    pub precedences: Vec<PrecedenceGroup>,
     /// Rule names declared with `%inline`.
     pub inline: Vec<DirectiveItem>,
     /// Rule names declared with `%supertypes`.
     pub supertypes: Vec<DirectiveItem>,
     /// Items declared with `%extras` (regex patterns or rule names).
     pub extras: Vec<DirectiveItem>,
+    /// External parsers directive
+    pub externals: Vec<NameOrLiteral>,
     /// All non-terminal names that appear on right-hand sides of rules, accumulated by the visitor.
     pub rhs_nonterminals: HashSet<String>,
     /// Diagnostics accumulated during parsing (before cross-reference checks).
@@ -51,6 +57,8 @@ impl Grammar {
             inline: Vec::new(),
             supertypes: Vec::new(),
             extras: Vec::new(),
+            precedences: Vec::new(),
+            externals: Vec::new(),
             rhs_nonterminals: HashSet::new(),
             parse_diagnostics: Vec::new(),
         }
@@ -148,8 +156,8 @@ impl Display for Grammar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::test_utils::{di, p};
     use crate::dom::GrammarNode::TerminalLiteral;
+    use crate::dom::test_utils::{di, p};
 
     /// Builds a grammar with rules `a` and `b` in that order.
     fn ab() -> Grammar {

@@ -1,7 +1,7 @@
-use crate::dom::directive::{loc, ConflictGroup, DirectiveItem};
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::ParseError::SyntaxError;
-use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, Production};
+use crate::dom::directive::{ConflictGroup, DirectiveItem, NameOrLiteral, loc};
+use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, PrecedenceGroup, Production};
 use crate::util::syntax_error_diagnostics;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -93,6 +93,11 @@ fn visit_grammar_inner(
                     .conflicts
                     .extend(visit_conflicts_directive(&child, ctx)?);
             }
+            "precedencesDirective" => {
+                grammar
+                    .precedences
+                    .extend(visit_precedences_directive(&child, ctx)?);
+            }
             "inlineDirective" => {
                 grammar.inline.extend(visit_inline_directive(&child, ctx));
             }
@@ -103,6 +108,11 @@ fn visit_grammar_inner(
             }
             "extrasDirective" => {
                 grammar.extras.extend(visit_extras_directive(&child, ctx));
+            }
+            "externalsDirective" => {
+                grammar
+                    .externals
+                    .extend(visit_externals_directive(&child, ctx)?);
             }
             "wordDirective" => {
                 let item = visit_simple_directive(&child, ctx);
@@ -247,6 +257,61 @@ fn visit_simple_directive(node: &Node<'_>, ctx: &SourceFile<'_>) -> DirectiveIte
         name,
         line,
         filename: ctx.filename.to_string(),
+    }
+}
+
+/// Converts a `precedencesDirective` node into a list of [`PrecedenceGroup`]s.
+fn visit_precedences_directive(
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+) -> Result<Vec<PrecedenceGroup>, ParseError> {
+    let line = node.start_position().row + 1;
+    let mut groups = Vec::new();
+    for i in 0..node.named_child_count() as u32 {
+        let child = node.named_child(i).expect("named child index in bounds");
+        if child.kind() == "precedenceGroup" {
+            let items = (0..child.named_child_count() as u32)
+                .map(|j| {
+                    let item_node = child.named_child(j).expect("named child index in bounds");
+                    visit_name_or_literal(&item_node, ctx)
+                })
+                .collect();
+            groups.push(PrecedenceGroup {
+                items,
+                line,
+                filename: ctx.filename.to_string(),
+            });
+        }
+    }
+    Ok(groups)
+}
+
+/// Converts a `externalsDirective` node into a list of [`NameOrLiteral`]s.
+fn visit_externals_directive(
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+) -> Result<Vec<NameOrLiteral>, ParseError> {
+    let items = (0..node.named_child_count() as u32)
+        .map(|j| {
+            let item_node = node.named_child(j).expect("named child index in bounds");
+            visit_name_or_literal(&item_node, ctx)
+        })
+        .collect();
+    Ok(items)
+}
+
+/// Converts a `nonTerminalOrLiteral` node into a [`NameOrLiteral`].
+fn visit_name_or_literal(node: &Node<'_>, ctx: &SourceFile<'_>) -> NameOrLiteral {
+    let text = node
+        .utf8_text(ctx.source.as_bytes())
+        .expect("valid UTF-8")
+        .to_string();
+    let inner = node
+        .named_child(0)
+        .expect("nonTerminalOrLiteral has one child");
+    match inner.kind() {
+        "literal" => NameOrLiteral::Literal(text),
+        _ => NameOrLiteral::Name(text),
     }
 }
 
@@ -591,6 +656,7 @@ fn visit(
 mod tests {
     use super::*;
     use crate::dom::{ParseError, Severity};
+    use indoc::indoc;
     use std::fs;
 
     /// Writes `content` to `$TMPDIR/name` and returns the path.
@@ -822,9 +888,10 @@ mod tests {
     fn parse_source_syntax_error_reports_bare_location() {
         let err = parse_source("root => 'a' ;").map(|_| ()).unwrap_err();
         assert!(matches!(err, ParseError::SyntaxError(_)));
-        assert!(err
-            .to_string()
-            .contains("syntax error at line 1:1 near 'root => 'a' ;'"));
+        assert!(
+            err.to_string()
+                .contains("syntax error at line 1:1 near 'root => 'a' ;'")
+        );
     }
 
     // ── merge directives ──────────────────────────────────────────────────────
@@ -891,6 +958,144 @@ mod tests {
                 |cg| cg.rules.contains(&"a".to_string()) && cg.rules.contains(&"b".to_string())
             ),
             "expected %conflicts from included file in merged grammar"
+        );
+    }
+
+    #[test]
+    /// %externals from an included file appears in the merged grammar.
+    fn include_merges_externals_directive() {
+        write_tmp("inc_ext_b.bnf", "%externals tok\nb -> 'y' ;");
+        let a = write_tmp("inc_ext_a.bnf", "%include \"inc_ext_b.bnf\"\nroot -> b ;");
+        let (grammar, _) = parse_path(&a).unwrap();
+        assert!(
+            grammar
+                .externals
+                .contains(&NameOrLiteral::Name("tok".into())),
+            "expected %externals from included file in merged grammar"
+        );
+    }
+
+    // ── %precedences directive ────────────────────────────────────────────────
+
+    #[test]
+    /// Name and Literal items in a `%precedences` group are assigned the correct variant.
+    fn precedences_directive_name_and_literal() {
+        let (g, diags) = parse_source(indoc! {"
+            %precedences [foo, 'bar'], [baz]
+            root -> foo baz ;
+            foo -> /a/ ;
+            baz -> /b/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.precedences.len(), 2);
+        assert_eq!(
+            g.precedences[0].items,
+            vec![
+                NameOrLiteral::Name("foo".into()),
+                NameOrLiteral::Literal("'bar'".into()),
+            ]
+        );
+        assert_eq!(
+            g.precedences[1].items,
+            vec![NameOrLiteral::Name("baz".into())]
+        );
+    }
+
+    #[test]
+    /// A single `%precedences` line with a single group is parsed correctly.
+    fn precedences_directive_single_group() {
+        let (g, diags) = parse_source(indoc! {"
+            %precedences [a, b]
+            root -> a b ;
+            a -> /x/ ;
+            b -> /y/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.precedences.len(), 1);
+        assert_eq!(
+            g.precedences[0].items,
+            vec![
+                NameOrLiteral::Name("a".into()),
+                NameOrLiteral::Name("b".into()),
+            ]
+        );
+    }
+
+    #[test]
+    /// Multiple `%precedences` lines are merged additively into grammar.precedences.
+    fn precedences_directive_multiple_lines_are_additive() {
+        let (g, diags) = parse_source(indoc! {"
+            %precedences [a, b]
+            %precedences [c]
+            root -> a b c ;
+            a -> /x/ ;
+            b -> /y/ ;
+            c -> /z/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.precedences.len(), 2);
+        assert_eq!(
+            g.precedences[0].items,
+            vec![
+                NameOrLiteral::Name("a".into()),
+                NameOrLiteral::Name("b".into()),
+            ]
+        );
+        assert_eq!(
+            g.precedences[1].items,
+            vec![NameOrLiteral::Name("c".into())]
+        );
+    }
+
+    #[test]
+    /// The source line of a `%precedences` directive is recorded (1-based).
+    fn precedences_directive_line_is_recorded() {
+        let (g, _) = parse_source("%precedences [a]\na -> /x/ ;").unwrap();
+        assert_eq!(g.precedences[0].line, 1);
+    }
+
+    // ── %externals directive ────────────────────────────────────────────────
+
+    #[test]
+    /// Name and Literal items in a `%externals` directive are assigned the correct variant.
+    fn externals_directive_name_and_literal() {
+        let (g, diags) = parse_source(indoc! {"
+            %externals foo, 'bar'
+            root -> foo ;
+            foo -> /a/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(
+            g.externals,
+            vec![
+                NameOrLiteral::Name("foo".into()),
+                NameOrLiteral::Literal("'bar'".into()),
+            ]
+        );
+    }
+
+    #[test]
+    /// Multiple `%externals` lines are merged additively into grammar.externals.
+    fn externals_directive_multiple_lines_are_additive() {
+        let (g, diags) = parse_source(indoc! {"
+            %externals a
+            %externals b, c
+            root -> a b c ;
+            a -> /x/ ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(
+            g.externals,
+            vec![
+                NameOrLiteral::Name("a".into()),
+                NameOrLiteral::Name("b".into()),
+                NameOrLiteral::Name("c".into()),
+            ]
         );
     }
 

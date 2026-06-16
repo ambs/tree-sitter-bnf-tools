@@ -104,7 +104,7 @@ pub fn build_graph(
 
     let start: String = match start_rule {
         Some(sr) if !defined.contains(sr) => {
-            return Err(format!("error: rule '{sr}' not found in grammar"))
+            return Err(format!("error: rule '{sr}' not found in grammar"));
         }
         Some(sr) => sr.to_string(),
         None => grammar.root_rule().unwrap_or("").to_string(),
@@ -310,9 +310,10 @@ mod tests {
             ]),
         )]);
         let (data, _) = build_graph(&g, None).unwrap();
-        assert!(data
-            .edges
-            .contains(&("expr".to_string(), "expr".to_string())));
+        assert!(
+            data.edges
+                .contains(&("expr".to_string(), "expr".to_string()))
+        );
     }
 
     #[test]
