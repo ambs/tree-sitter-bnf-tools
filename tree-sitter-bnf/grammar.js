@@ -28,15 +28,18 @@ module.exports = grammar({
         $.supertypesDirective,
         $.extrasDirective,
         $.includeDirective,
+        $.externalsDirective,
       ),
+    externalsDirective: ($) =>
+      seq("%externals", $.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral))),
     includeDirective: ($) => seq("%include", $.literal),
     axiomDirective: ($) => seq("%axiom", $.nonTerminal),
     wordDirective: ($) => seq("%word", $.nonTerminal),
     precedencesDirective: ($) =>
       seq("%precedences", $.precedenceGroup, repeat(seq(",", $.precedenceGroup))),
     precedenceGroup: ($) =>
-      seq("[", $.precedenceItem, repeat(seq(",", $.precedenceItem)), "]"),
-    precedenceItem: ($) => choice($.nonTerminal, $.literal),
+      seq("[", $.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral)), "]"),
+    nonTerminalOrLiteral: ($) => choice($.nonTerminal, $.literal),
     inlineDirective: ($) =>
       seq("%inline", $.nonTerminal, repeat(seq(",", $.nonTerminal))),
     supertypesDirective: ($) =>

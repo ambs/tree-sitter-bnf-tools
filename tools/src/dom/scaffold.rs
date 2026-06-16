@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
-use crate::dom::PrecedenceItem;
+use crate::dom::NameOrLiteral;
 
 use super::types::Grammar;
 
@@ -41,14 +41,28 @@ impl Display for Scaffold<'_> {
                     .items
                     .iter()
                     .map(|i| match i {
-                        PrecedenceItem::Literal(x) => x.clone(),
-                        PrecedenceItem::Name(n) => format!("$.{}", n.as_str()),
+                        NameOrLiteral::Literal(x) => x.clone(),
+                        NameOrLiteral::Name(n) => format!("$.{}", n.as_str()),
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
                 writeln!(f, "    [{group_items}],")?;
             }
             writeln!(f, "  ],")?;
+            writeln!(f)?;
+        }
+        if !self.grammar.externals.is_empty() {
+            let items = self
+                .grammar
+                .externals
+                .iter()
+                .map(|item| match item {
+                    NameOrLiteral::Literal(x) => x.clone(),
+                    NameOrLiteral::Name(n) => format!("$.{}", n.as_str()),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(f, "  externals: $ => [{items}],")?;
             writeln!(f)?;
         }
         if !self.grammar.extras.is_empty() {
@@ -270,18 +284,18 @@ mod tests {
 
     #[test]
     fn scaffold_with_precedence_groups_name_and_literal() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
         g.precedences = vec![
             pg(
                 &[
-                    PrecedenceItem::Name("expr".into()),
-                    PrecedenceItem::Literal("'call'".into()),
+                    NameOrLiteral::Name("expr".into()),
+                    NameOrLiteral::Literal("'call'".into()),
                 ],
                 0,
             ),
-            pg(&[PrecedenceItem::Name("term".into())], 0),
+            pg(&[NameOrLiteral::Name("term".into())], 0),
         ];
         let out = s(&g, "g").to_string();
         assert!(out.contains("  precedences: $ => ["));
@@ -292,13 +306,42 @@ mod tests {
 
     #[test]
     fn scaffold_precedences_before_extras() {
-        use crate::dom::PrecedenceItem;
+        use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::{di, pg};
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        g.precedences = vec![pg(&[PrecedenceItem::Name("a".into())], 0)];
+        g.precedences = vec![pg(&[NameOrLiteral::Name("a".into())], 0)];
         g.extras = vec![di("/\\s/", 0)];
         let out = s(&g, "g").to_string();
         assert!(out.find("precedences").unwrap() < out.find("extras").unwrap());
+    }
+
+    // ── externals ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn scaffold_no_externals_omits_key() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        let out = s(&g, "g").to_string();
+        assert!(!out.contains("externals"));
+    }
+
+    #[test]
+    fn scaffold_with_externals_name_and_literal() {
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.externals = vec![
+            NameOrLiteral::Name("tok".into()),
+            NameOrLiteral::Literal("'lit'".into()),
+        ];
+        let out = s(&g, "g").to_string();
+        assert!(out.contains("  externals: $ => [$.tok, 'lit'],"));
+    }
+
+    #[test]
+    fn scaffold_externals_before_extras() {
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.externals = vec![NameOrLiteral::Name("tok".into())];
+        g.extras = vec![di("/\\s/", 0)];
+        let out = s(&g, "g").to_string();
+        assert!(out.find("externals").unwrap() < out.find("extras").unwrap());
     }
 
     #[test]

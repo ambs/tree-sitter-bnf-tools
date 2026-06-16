@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 
 use indexmap::IndexMap;
 
-use crate::dom::PrecedenceGroup;
+use crate::dom::{NameOrLiteral, PrecedenceGroup};
 
 use super::diagnostic::Diagnostic;
 use super::directive::{ConflictGroup, DirectiveItem, loc};
@@ -32,6 +32,8 @@ pub struct Grammar {
     pub supertypes: Vec<DirectiveItem>,
     /// Items declared with `%extras` (regex patterns or rule names).
     pub extras: Vec<DirectiveItem>,
+    /// External parsers directive
+    pub externals: Vec<NameOrLiteral>,
     /// All non-terminal names that appear on right-hand sides of rules, accumulated by the visitor.
     pub rhs_nonterminals: HashSet<String>,
     /// Diagnostics accumulated during parsing (before cross-reference checks).
@@ -56,6 +58,7 @@ impl Grammar {
             supertypes: Vec::new(),
             extras: Vec::new(),
             precedences: Vec::new(),
+            externals: Vec::new(),
             rhs_nonterminals: HashSet::new(),
             parse_diagnostics: Vec::new(),
         }

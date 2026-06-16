@@ -21,9 +21,9 @@ pub struct ConflictGroup {
     pub filename: String,
 }
 
-/// An item inside a `%precedences` group.
+/// An item that can be a non terminal or a literal, used for instance inside a `%precedences` group.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrecedenceItem {
+pub enum NameOrLiteral {
     /// a rule-name reference
     Name(String),
     /// a quoted string literal
@@ -34,7 +34,7 @@ pub enum PrecedenceItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrecedenceGroup {
     /// The groups of rules with same precedences
-    pub items: Vec<PrecedenceItem>,
+    pub items: Vec<NameOrLiteral>,
     /// 1-based line number of the `%precedences` directive in the source file.
     pub line: usize,
     /// Source filename where this directive appears (empty string if unknown).
