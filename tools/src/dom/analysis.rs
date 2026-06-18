@@ -906,10 +906,7 @@ mod tests {
         let g = grammar(vec![p(
             "a",
             Choice(vec![
-                Sequence(vec![
-                    Reserved("kw".into(), Box::new(nt("a"))),
-                    lit("'x'"),
-                ]),
+                Sequence(vec![Reserved("kw".into(), Box::new(nt("a"))), lit("'x'")]),
                 lit("'y'"),
             ]),
         )]);
