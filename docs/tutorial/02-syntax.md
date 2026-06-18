@@ -283,7 +283,7 @@ member: $ => seq($.obj, '.', reserved('propertyName', $.identifier)),
 ```
 
 `setName` must match a set name declared with `%reserved`; referencing an
-undeclared set name is a **warning**.
+undeclared set name is an **error**.
 
 ## What is not supported
 

@@ -15,17 +15,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `reserved:` grammar field and `reserved('setName', body)` call respectively.
   The first declared set is the implicit global set; multiple `%reserved`
   lines are additive. Referencing an undefined rule name, or annotating with
-  an undeclared set name, is a warning; string literals are not checked. (#175)
+  an undeclared set name, is an error; string literals are not checked. (#175)
 - `%externals name1, name2, 'literal'` directive for external scanner tokens.
   Maps to tree-sitter's `externals:` grammar field; items may be rule names or
   quoted string literals. Multiple `%externals` lines are additive. Declared
-  names are exempt from undefined-reference warnings, since they are defined
+  names are exempt from undefined-reference errors, since they are defined
   by the external C scanner rather than the BNF. (#172)
 - `%precedences [g1a, g1b], [g2a, g2b]` directive for named precedence levels.
   Groups are listed in descending priority order; members may be rule names or
   quoted string literals. Maps to tree-sitter's `precedences:` grammar field.
   Multiple `%precedences` lines are additive. Referencing an undefined rule name
-  is a warning; string literals are not checked. (#174)
+  is an error; string literals are not checked. (#174)
 - `%word ruleName` directive: declares the identifier token for keyword
   extraction and better error recovery. Maps to tree-sitter's `word:` grammar
   field. Duplicate declarations are an error; naming an undefined rule is an
@@ -53,6 +53,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 #### `ts-bnf-tool`
+- `check` now reports undefined-rule-reference issues as errors instead of
+  warnings: undefined references in rule bodies, `%conflicts`, `%precedences`,
+  `%inline`, `%supertypes`, `%extras`, and `%reserved` (both the rule-name and
+  set-name forms). These conditions are unconditionally fatal to
+  `tree-sitter generate`, so `make check`/CI now catches them instead of
+  passing and failing later at generation time — breaking for grammars that
+  previously relied on `check` passing despite one of these warnings. Only
+  the "rule never referenced" check remains a warning, since it is stylistic
+  rather than fatal. (#236)
 - Syntax errors now report file, line, column and a source snippet for every
   error in the input (capped at 10), instead of a bare `Error: SyntaxError`.
   `check` routes them through the regular diagnostics output (plain and
