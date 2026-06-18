@@ -451,4 +451,36 @@ mod tests {
             panic!("expected Reserved");
         }
     }
+
+    /// `rename_node` traverses a `Field` body, the same transparent-annotation
+    /// group as `Prec`/`Reserved`.
+    #[test]
+    fn renames_nonterminal_in_field_body() {
+        use crate::dom::GrammarNode::Field;
+        let body = Field("f".into(), Box::new(nt("expr")));
+        let mut g = Grammar::from_rules([p("root", body), p("expr", nt("x"))]);
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        if let Field(name, inner) = &g.productions["root"].body {
+            assert_eq!(name, "f");
+            assert!(matches!(inner.as_ref(), GrammarNode::NonTerminal(n) if n == "expression"));
+        } else {
+            panic!("expected Field");
+        }
+    }
+
+    /// `rename_node` traverses a `Prec` body, the same transparent-annotation
+    /// group as `Field`/`Reserved`.
+    #[test]
+    fn renames_nonterminal_in_prec_body() {
+        use crate::dom::GrammarNode::Prec;
+        use crate::dom::PrecKind;
+        let body = Prec(PrecKind::Left, Some(1), Box::new(nt("expr")));
+        let mut g = Grammar::from_rules([p("root", body), p("expr", nt("x"))]);
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        if let Prec(_, _, inner) = &g.productions["root"].body {
+            assert!(matches!(inner.as_ref(), GrammarNode::NonTerminal(n) if n == "expression"));
+        } else {
+            panic!("expected Prec");
+        }
+    }
 }

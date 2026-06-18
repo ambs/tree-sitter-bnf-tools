@@ -721,6 +721,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn first_transparent_through_reserved() {
+        let g = grammar(vec![p("a", Reserved("kw".into(), Box::new(lit("'x'"))))]);
+        assert_eq!(
+            first_sets(&g)["a"],
+            HashSet::from([FirstTerminal::Literal("'x'")])
+        );
+    }
+
     // ── count_leaf_rules ──────────────────────────────────────────────────────
 
     #[test]
@@ -828,6 +837,31 @@ mod tests {
         assert_eq!(count_unique_terminals(&g), (1, 0));
     }
 
+    #[test]
+    /// Terminals nested inside reserved(…) are still collected.
+    fn unique_terminals_inside_reserved() {
+        let g = grammar(vec![p("a", Reserved("kw".into(), Box::new(lit("'x'"))))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// Terminals nested inside field(…) are still collected.
+    fn unique_terminals_inside_field() {
+        let g = grammar(vec![p("a", Field("f".into(), Box::new(lit("'x'"))))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// Terminals nested inside prec(…) are still collected.
+    fn unique_terminals_inside_prec() {
+        use crate::dom::PrecKind;
+        let g = grammar(vec![p(
+            "a",
+            Prec(PrecKind::Left, Some(1), Box::new(lit("'x'"))),
+        )]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
     // ── count_left_recursive ──────────────────────────────────────────────────
 
     #[test]
@@ -863,6 +897,53 @@ mod tests {
         let (direct, mutual) = count_left_recursive(&g);
         assert_eq!(direct, 0);
         assert_eq!(mutual, 2);
+    }
+
+    #[test]
+    /// A self-reference wrapped in `reserved(…)` is still recognised as direct
+    /// left recursion — `Reserved` is transparent to leading-non-terminal collection.
+    fn left_recursive_through_reserved() {
+        let g = grammar(vec![p(
+            "a",
+            Choice(vec![
+                Sequence(vec![
+                    Reserved("kw".into(), Box::new(nt("a"))),
+                    lit("'x'"),
+                ]),
+                lit("'y'"),
+            ]),
+        )]);
+        assert_eq!(count_left_recursive(&g), (1, 0));
+    }
+
+    #[test]
+    /// A self-reference wrapped in `field(…)` is still recognised as direct left recursion.
+    fn left_recursive_through_field() {
+        let g = grammar(vec![p(
+            "a",
+            Choice(vec![
+                Sequence(vec![Field("f".into(), Box::new(nt("a"))), lit("'x'")]),
+                lit("'y'"),
+            ]),
+        )]);
+        assert_eq!(count_left_recursive(&g), (1, 0));
+    }
+
+    #[test]
+    /// A self-reference wrapped in `prec(…)` is still recognised as direct left recursion.
+    fn left_recursive_through_prec() {
+        use crate::dom::PrecKind;
+        let g = grammar(vec![p(
+            "a",
+            Choice(vec![
+                Sequence(vec![
+                    Prec(PrecKind::Left, Some(1), Box::new(nt("a"))),
+                    lit("'x'"),
+                ]),
+                lit("'y'"),
+            ]),
+        )]);
+        assert_eq!(count_left_recursive(&g), (1, 0));
     }
 
     // ── first_set_stats ───────────────────────────────────────────────────────
