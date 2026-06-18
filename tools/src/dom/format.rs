@@ -4,7 +4,7 @@ use crate::dom::{NameOrLiteral, PrecedenceGroup};
 ///
 /// **Known limitation**: comments are not stored in the DOM and will be stripped
 /// from the output. See issue #148 for the plan to preserve them.
-use super::directive::{ConflictGroup, DirectiveItem};
+use super::directive::{ConflictGroup, DirectiveItem, ReservedEntry};
 use super::nodes::{GrammarNode, PrecKind};
 use super::production::Production;
 use super::types::Grammar;
@@ -14,8 +14,8 @@ const LINE_WIDTH: usize = 80;
 
 /// Formats `grammar` as canonical BNF and returns the result as a `String`.
 ///
-/// Directive order: `%axiom`, `%word`, `%extras`, `%conflicts`, `%precedences`, `%inline`, `%supertypes`,
-/// `%externals` (all before rules).
+/// Directive order: `%axiom`, `%reserved`, `%word`, `%extras`, `%conflicts`, `%precedences`,
+/// `%inline`, `%supertypes`, `%externals` (all before rules).
 /// Rules follow in their original declaration order, each separated by a blank line.
 pub fn format_grammar(grammar: &Grammar) -> String {
     let mut out = String::new();
@@ -46,6 +46,9 @@ fn collect_directives(grammar: &Grammar) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(axiom) = grammar.axiom_directive() {
         out.push(format!("%axiom {}", axiom.name));
+    }
+    if !grammar.reserved_sets.is_empty() {
+        out.push(format_reserved(&grammar.reserved_sets));
     }
     if let Some(word) = &grammar.word {
         out.push(format!("%word {}", word.name));
@@ -96,6 +99,25 @@ fn format_externals(items: &[NameOrLiteral]) -> String {
         })
         .collect();
     format!("%externals {}", names.join(", "))
+}
+
+/// Formats a `%reserved` directive as `%reserved setName: [a, b], otherSet: []`.
+fn format_reserved(entries: &[ReservedEntry]) -> String {
+    let entries_str: Vec<String> = entries
+        .iter()
+        .map(|e| {
+            let names: Vec<String> = e
+                .rule_names
+                .iter()
+                .map(|i| match i {
+                    NameOrLiteral::Literal(l) => l.clone(),
+                    NameOrLiteral::Name(n) => n.clone(),
+                })
+                .collect();
+            format!("{}: [{}]", e.set_name, names.join(", "))
+        })
+        .collect();
+    format!("%reserved {}", entries_str.join(", "))
 }
 
 /// Formats a `%precedences` directive as `%precedences [a, b], [c, d]`.
@@ -185,6 +207,9 @@ fn format_node_nested(node: &GrammarNode) -> String {
                 prec_annotation(kind, *level)
             )
         }
+        GrammarNode::Reserved(name, inner) => {
+            format!("({} %reserved {})", format_sequence_items(inner), name)
+        }
     }
 }
 
@@ -245,7 +270,7 @@ fn prec_annotation(kind: &PrecKind, level: Option<i32>) -> String {
 mod tests {
     use super::*;
     use crate::dom::GrammarNode::{
-        self, Alias, Choice, Field, NonTerminal, OneOrMore, Optional, Prec, Sequence,
+        self, Alias, Choice, Field, NonTerminal, OneOrMore, Optional, Prec, Reserved, Sequence,
         TerminalLiteral, TerminalPattern, Token, TokenImmediate, ZeroOrMore,
     };
     use crate::dom::test_utils::{cg, di, p};
@@ -607,6 +632,81 @@ mod tests {
             format_node_top(&Prec(PrecKind::Plain, Some(-1), Box::new(nt("a")))),
             "a %prec -1"
         );
+    }
+
+    #[test]
+    fn reserved_group_nested() {
+        assert_eq!(
+            format_node_nested(&Reserved("kw".into(), Box::new(nt("a")))),
+            "(a %reserved kw)"
+        );
+    }
+
+    // ── format_reserved ──────────────────────────────────────────────────────
+
+    #[test]
+    fn reserved_directive_name_and_literal() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        assert_eq!(
+            format_reserved(&[re(
+                "kw",
+                &[
+                    NameOrLiteral::Name("a".into()),
+                    NameOrLiteral::Literal("'call'".into())
+                ],
+                0
+            )]),
+            "%reserved kw: [a, 'call']"
+        );
+    }
+
+    #[test]
+    fn reserved_directive_multiple_entries() {
+        use crate::dom::test_utils::re;
+        assert_eq!(
+            format_reserved(&[re("kw", &[], 0), re("prop", &[], 0)]),
+            "%reserved kw: [], prop: []"
+        );
+    }
+
+    #[test]
+    fn reserved_absent_when_empty() {
+        let g = Grammar::from_rules([p("a", nt("b")), p("b", lit("'x'"))]);
+        let out = format_grammar(&g);
+        assert!(!out.contains("reserved"));
+    }
+
+    #[test]
+    fn reserved_after_axiom_before_word_in_canonical_order() {
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("ident", lit("'x'"))]);
+        g.declare_axiom(di("ident", 1));
+        g.declare_word(di("ident", 1));
+        g.reserved_sets = vec![re("kw", &[], 1)];
+        let out = format_grammar(&g);
+        assert!(out.find("%axiom").unwrap() < out.find("%reserved").unwrap());
+        assert!(out.find("%reserved").unwrap() < out.find("%word").unwrap());
+    }
+
+    #[test]
+    /// A grammar with both a `%reserved` directive and a `Reserved` node in a rule body
+    /// formats and re-parses to the same data (round-trip).
+    fn reserved_round_trips_through_parse() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g =
+            Grammar::from_rules([p("id", Reserved("kw".into(), Box::new(pat("/[a-z]+/"))))]);
+        g.reserved_sets = vec![re("kw", &[NameOrLiteral::Literal("'if'".into())], 1)];
+        let formatted = format_grammar(&g);
+        let (reparsed, diags) = crate::visitors::parse_source(&formatted).unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(reparsed.reserved_sets[0].set_name, "kw");
+        assert_eq!(
+            reparsed.reserved_sets[0].rule_names,
+            g.reserved_sets[0].rule_names
+        );
+        assert!(reparsed.reserved_set_refs.iter().any(|r| r.name == "kw"));
     }
 
     // ── format_grammar ───────────────────────────────────────────────────────

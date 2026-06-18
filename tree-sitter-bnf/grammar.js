@@ -29,6 +29,17 @@ module.exports = grammar({
         $.extrasDirective,
         $.includeDirective,
         $.externalsDirective,
+        $.reservedDirective,
+      ),
+    reservedDirective: ($) =>
+      seq("%reserved", $.reservedEntry, repeat(seq(",", $.reservedEntry))),
+    reservedEntry: ($) =>
+      seq(
+        field("set", $.nonTerminal),
+        ":",
+        "[",
+        optional(seq($.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral)))),
+        "]",
       ),
     externalsDirective: ($) =>
       seq("%externals", $.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral))),
@@ -74,6 +85,15 @@ module.exports = grammar({
         $.tokenExpr,
         $.tokenImmediateExpr,
         $.precGroup,
+        $.reservedGroup,
+      ),
+    reservedGroup: ($) =>
+      seq(
+        "(",
+        field("body", $.ruleBodyInner),
+        "%reserved",
+        field("set", $.nonTerminal),
+        ")",
       ),
     fieldLabel: ($) => /[A-Za-z_][A-Za-z0-9_]*:/,
     _kleeneOp: ($) => choice($.plus, $.asterisk, $.questionMark),

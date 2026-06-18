@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 
 use indexmap::IndexMap;
 
-use crate::dom::{NameOrLiteral, PrecedenceGroup};
+use crate::dom::{NameOrLiteral, PrecedenceGroup, ReservedEntry};
 
 use super::diagnostic::Diagnostic;
 use super::directive::{ConflictGroup, DirectiveItem, loc};
@@ -34,6 +34,11 @@ pub struct Grammar {
     pub extras: Vec<DirectiveItem>,
     /// External parsers directive
     pub externals: Vec<NameOrLiteral>,
+    /// Named reserved-word sets declared with `%reserved`, in declaration order.
+    /// The first entry is the implicit global set.
+    pub reserved_sets: Vec<ReservedEntry>,
+    /// Set names referenced by rule-level `%reserved` annotations, accumulated by the visitor.
+    pub reserved_set_refs: Vec<DirectiveItem>,
     /// All non-terminal names that appear on right-hand sides of rules, accumulated by the visitor.
     pub rhs_nonterminals: HashSet<String>,
     /// Diagnostics accumulated during parsing (before cross-reference checks).
@@ -59,6 +64,8 @@ impl Grammar {
             extras: Vec::new(),
             precedences: Vec::new(),
             externals: Vec::new(),
+            reserved_set_refs: Vec::new(),
+            reserved_sets: Vec::new(),
             rhs_nonterminals: HashSet::new(),
             parse_diagnostics: Vec::new(),
         }

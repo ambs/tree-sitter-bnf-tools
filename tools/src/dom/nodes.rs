@@ -41,6 +41,8 @@ pub enum GrammarNode {
     Alias(Box<GrammarNode>, Box<GrammarNode>),
     /// `prec[.left|.right|.dynamic](level, …)` — precedence annotation.
     Prec(PrecKind, Option<i32>, Box<GrammarNode>),
+    /// `reserved('setName', body)` — opts `body` into a named reserved-word set.
+    Reserved(String, Box<GrammarNode>),
 }
 
 impl GrammarNode {
@@ -73,6 +75,7 @@ impl GrammarNode {
             GrammarNode::Field(_, inner) => inner.collect_names(out),
             GrammarNode::Alias(body, _) => body.collect_names(out),
             GrammarNode::Prec(_, _, inner) => inner.collect_names(out),
+            GrammarNode::Reserved(_, inner) => inner.collect_names(out),
         }
     }
 
@@ -92,6 +95,7 @@ impl GrammarNode {
             GrammarNode::Field(_, inner) => inner.contains_nonterminal(),
             GrammarNode::Alias(body, _) => body.contains_nonterminal(),
             GrammarNode::Prec(_, _, inner) => inner.contains_nonterminal(),
+            GrammarNode::Reserved(_, inner) => inner.contains_nonterminal(),
         }
     }
 }
@@ -161,6 +165,9 @@ impl Display for GrammarNode {
                     None => write!(f, "{}({})", name, inner),
                 }
             }
+            GrammarNode::Reserved(name, inner) => {
+                write!(f, "reserved('{}', {})", name, inner)
+            }
         }
     }
 }
@@ -197,6 +204,14 @@ mod tests {
             Box::new(NonTerminal("display_label".into())),
         );
         assert_eq!(node.nonterminal_names(), vec!["body_rule"]);
+    }
+
+    #[test]
+    /// `nonterminal_names` traverses a `Reserved` body; the set name (a plain
+    /// `String`, not a node) cannot appear in the result.
+    fn nonterminal_names_traverses_reserved_body() {
+        let node = Reserved("kw".into(), Box::new(NonTerminal("a".into())));
+        assert_eq!(node.nonterminal_names(), vec!["a"]);
     }
 
     // ── contains_nonterminal ───────────────────────────────────────────────────
@@ -261,6 +276,19 @@ mod tests {
     fn prec_negative_level_displays_verbatim() {
         let node = Prec(PrecKind::Plain, Some(-1), Box::new(NonTerminal("a".into())));
         assert_eq!(node.to_string(), "prec(-1, $.a)");
+    }
+
+    #[test]
+    /// reserved(…) propagates the check into its inner node.
+    fn reserved_wrapping_nonterminal_contains_nonterminal() {
+        assert!(Reserved("kw".into(), Box::new(NonTerminal("a".into()))).contains_nonterminal());
+    }
+
+    #[test]
+    /// `Display` emits the tree-sitter `reserved('name', body)` call form.
+    fn reserved_node_displays_as_function_call() {
+        let node = Reserved("kw".into(), Box::new(NonTerminal("a".into())));
+        assert_eq!(node.to_string(), "reserved('kw', $.a)");
     }
 
     #[test]

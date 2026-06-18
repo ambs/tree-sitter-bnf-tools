@@ -57,9 +57,10 @@ fn is_nullable(node: &GrammarNode, nullable: &HashSet<&str>) -> bool {
         GrammarNode::OneOrMore(inner)
         | GrammarNode::Token(inner)
         | GrammarNode::TokenImmediate(inner) => is_nullable(inner, nullable),
-        GrammarNode::Field(_, inner) => is_nullable(inner, nullable),
         GrammarNode::Alias(body, _) => is_nullable(body, nullable),
-        GrammarNode::Prec(_, _, inner) => is_nullable(inner, nullable),
+        GrammarNode::Field(_, inner)
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => is_nullable(inner, nullable),
     }
 }
 
@@ -149,9 +150,10 @@ fn collect_first<'g>(
 
         // field, alias, prec are purely structural annotations that do not
         // change which terminal appears first.
-        GrammarNode::Field(_, inner) => collect_first(inner, first, nullable, result),
         GrammarNode::Alias(body, _) => collect_first(body, first, nullable, result),
-        GrammarNode::Prec(_, _, inner) => collect_first(inner, first, nullable, result),
+        GrammarNode::Field(_, inner)
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => collect_first(inner, first, nullable, result),
     }
 }
 
@@ -208,9 +210,10 @@ fn collect_leading_nts<'g>(
         GrammarNode::OneOrMore(inner)
         | GrammarNode::Token(inner)
         | GrammarNode::TokenImmediate(inner) => collect_leading_nts(inner, nullable, result),
-        GrammarNode::Field(_, inner) => collect_leading_nts(inner, nullable, result),
         GrammarNode::Alias(body, _) => collect_leading_nts(body, nullable, result),
-        GrammarNode::Prec(_, _, inner) => collect_leading_nts(inner, nullable, result),
+        GrammarNode::Field(_, inner)
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => collect_leading_nts(inner, nullable, result),
     }
 }
 
@@ -445,9 +448,10 @@ fn collect_terminals<'g>(
         | GrammarNode::OneOrMore(inner)
         | GrammarNode::Token(inner)
         | GrammarNode::TokenImmediate(inner) => collect_terminals(inner, literals, patterns),
-        GrammarNode::Field(_, inner) => collect_terminals(inner, literals, patterns),
         GrammarNode::Alias(body, _) => collect_terminals(body, literals, patterns),
-        GrammarNode::Prec(_, _, inner) => collect_terminals(inner, literals, patterns),
+        GrammarNode::Field(_, inner)
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => collect_terminals(inner, literals, patterns),
     }
 }
 
@@ -520,6 +524,16 @@ mod tests {
     }
     fn nt(s: &str) -> GrammarNode {
         NonTerminal(s.into())
+    }
+
+    // ── is_nullable ───────────────────────────────────────────────────────────
+
+    #[test]
+    /// `Reserved` is a transparent structural annotation for nullability, like `Field`/`Prec`.
+    fn is_nullable_propagates_through_reserved() {
+        let nullable = HashSet::from(["a"]);
+        let node = Reserved("kw".into(), Box::new(nt("a")));
+        assert!(is_nullable(&node, &nullable));
     }
 
     // ── terminals ─────────────────────────────────────────────────────────────
@@ -707,6 +721,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn first_transparent_through_reserved() {
+        let g = grammar(vec![p("a", Reserved("kw".into(), Box::new(lit("'x'"))))]);
+        assert_eq!(
+            first_sets(&g)["a"],
+            HashSet::from([FirstTerminal::Literal("'x'")])
+        );
+    }
+
     // ── count_leaf_rules ──────────────────────────────────────────────────────
 
     #[test]
@@ -814,6 +837,31 @@ mod tests {
         assert_eq!(count_unique_terminals(&g), (1, 0));
     }
 
+    #[test]
+    /// Terminals nested inside reserved(…) are still collected.
+    fn unique_terminals_inside_reserved() {
+        let g = grammar(vec![p("a", Reserved("kw".into(), Box::new(lit("'x'"))))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// Terminals nested inside field(…) are still collected.
+    fn unique_terminals_inside_field() {
+        let g = grammar(vec![p("a", Field("f".into(), Box::new(lit("'x'"))))]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
+    #[test]
+    /// Terminals nested inside prec(…) are still collected.
+    fn unique_terminals_inside_prec() {
+        use crate::dom::PrecKind;
+        let g = grammar(vec![p(
+            "a",
+            Prec(PrecKind::Left, Some(1), Box::new(lit("'x'"))),
+        )]);
+        assert_eq!(count_unique_terminals(&g), (1, 0));
+    }
+
     // ── count_left_recursive ──────────────────────────────────────────────────
 
     #[test]
@@ -849,6 +897,50 @@ mod tests {
         let (direct, mutual) = count_left_recursive(&g);
         assert_eq!(direct, 0);
         assert_eq!(mutual, 2);
+    }
+
+    #[test]
+    /// A self-reference wrapped in `reserved(…)` is still recognised as direct
+    /// left recursion — `Reserved` is transparent to leading-non-terminal collection.
+    fn left_recursive_through_reserved() {
+        let g = grammar(vec![p(
+            "a",
+            Choice(vec![
+                Sequence(vec![Reserved("kw".into(), Box::new(nt("a"))), lit("'x'")]),
+                lit("'y'"),
+            ]),
+        )]);
+        assert_eq!(count_left_recursive(&g), (1, 0));
+    }
+
+    #[test]
+    /// A self-reference wrapped in `field(…)` is still recognised as direct left recursion.
+    fn left_recursive_through_field() {
+        let g = grammar(vec![p(
+            "a",
+            Choice(vec![
+                Sequence(vec![Field("f".into(), Box::new(nt("a"))), lit("'x'")]),
+                lit("'y'"),
+            ]),
+        )]);
+        assert_eq!(count_left_recursive(&g), (1, 0));
+    }
+
+    #[test]
+    /// A self-reference wrapped in `prec(…)` is still recognised as direct left recursion.
+    fn left_recursive_through_prec() {
+        use crate::dom::PrecKind;
+        let g = grammar(vec![p(
+            "a",
+            Choice(vec![
+                Sequence(vec![
+                    Prec(PrecKind::Left, Some(1), Box::new(nt("a"))),
+                    lit("'x'"),
+                ]),
+                lit("'y'"),
+            ]),
+        )]);
+        assert_eq!(count_left_recursive(&g), (1, 0));
     }
 
     // ── first_set_stats ───────────────────────────────────────────────────────

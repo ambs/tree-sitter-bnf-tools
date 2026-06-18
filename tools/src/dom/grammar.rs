@@ -1,16 +1,69 @@
 use std::collections::HashSet;
 
-use crate::dom::{NameOrLiteral, PrecedenceGroup};
+use crate::dom::NameOrLiteral;
 
 use super::analysis::{
     count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats,
 };
 use super::diagnostic::Diagnostic;
-use super::directive::{ConflictGroup, DirectiveItem, loc};
+use super::directive::{ConflictGroup, DirectiveItem, PrecedenceGroup, ReservedEntry, loc};
 use super::summary::GrammarSummary;
 use super::types::Grammar;
 
 impl Grammar {
+    /// Checks `%reserved` directives and rule-level annotations for undefined references.
+    ///
+    /// Warns for each `ReservedEntry` rule name not in `known`, and for each rule-level
+    /// `%reserved` annotation whose set name has no matching `ReservedEntry`.
+    fn reserved_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
+        let mut known_reserved_sets: HashSet<&str> = HashSet::new();
+        let mut not_referenced: Vec<Diagnostic> = self
+            .reserved_sets
+            .iter()
+            .flat_map(
+                |ReservedEntry {
+                     set_name,
+                     rule_names,
+                     line,
+                     filename,
+                 }| {
+                    known_reserved_sets.insert(set_name.as_str());
+                    let location = loc(filename, *line);
+                    rule_names.iter().filter_map(move |item| {
+                        if let NameOrLiteral::Name(name) = item
+                            && !known.contains(name.as_str())
+                        {
+                            Some(Diagnostic::warning(format!(
+                                "%reserved references undefined rule '{name}' ({location})"
+                            )))
+                        } else {
+                            None
+                        }
+                    })
+                },
+            )
+            .collect();
+
+        not_referenced.extend(self.reserved_set_refs.iter().filter_map(
+            |DirectiveItem {
+                 name,
+                 line,
+                 filename,
+             }| {
+                if !known_reserved_sets.contains(name.as_str()) {
+                    let location = loc(filename, *line);
+                    Some(Diagnostic::warning(format!(
+                        "%reserved annotation references undeclared set '{name}' ({location})"
+                    )))
+                } else {
+                    None
+                }
+            },
+        ));
+
+        not_referenced
+    }
+
     /// Returns a warning for every rule name in `%conflicts` that has no definition.
     fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.conflicts
@@ -217,6 +270,8 @@ impl Grammar {
         self.externals.extend(other.externals);
         self.rhs_nonterminals.extend(other.rhs_nonterminals);
         self.parse_diagnostics.extend(other.parse_diagnostics);
+        self.reserved_set_refs.extend(other.reserved_set_refs);
+        self.reserved_sets.extend(other.reserved_sets);
     }
 
     /// Builds a [`GrammarSummary`] by running all summary analyses over this grammar.
@@ -264,6 +319,7 @@ impl Grammar {
         diagnostics.extend(self.extras_check(&known));
         diagnostics.extend(self.precedences_check(&known));
         diagnostics.extend(self.undefined_refs_check(&known));
+        diagnostics.extend(self.reserved_check(&known));
         diagnostics.extend(self.unreachable_rules_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
@@ -396,6 +452,58 @@ mod tests {
             0,
         )];
         assert!(g.precedences_check(&g.known_rules()).is_empty());
+    }
+
+    // ── reserved_check ───────────────────────────────────────────────────────
+
+    #[test]
+    fn reserved_check_warns_on_undefined_rule_name() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_sets = vec![re("kw", &[NameOrLiteral::Name("ghost".into())], 0)];
+        assert_eq!(
+            strs(&g.reserved_check(&g.known_rules())),
+            vec!["warning: %reserved references undefined rule 'ghost' (line 0)"]
+        );
+    }
+
+    #[test]
+    fn reserved_check_literal_never_warns() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_sets = vec![re("kw", &[NameOrLiteral::Literal("'if'".into())], 0)];
+        assert!(g.reserved_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    fn reserved_check_warns_on_undeclared_set_reference() {
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_set_refs = vec![di("ghost_set", 0)];
+        assert_eq!(
+            strs(&g.reserved_check(&g.known_rules())),
+            vec!["warning: %reserved annotation references undeclared set 'ghost_set' (line 0)"]
+        );
+    }
+
+    #[test]
+    /// `reserved_set_refs` is a `Vec`, not a `HashSet`: two occurrences of the same
+    /// undeclared set name produce two separate warnings, not one deduplicated warning.
+    fn reserved_check_two_undeclared_refs_produce_two_warnings() {
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_set_refs = vec![di("ghost", 0), di("ghost", 1)];
+        assert_eq!(g.reserved_check(&g.known_rules()).len(), 2);
+    }
+
+    #[test]
+    fn reserved_check_no_warnings_when_all_correct() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_sets = vec![re("kw", &[NameOrLiteral::Name("a".into())], 0)];
+        g.reserved_set_refs = vec![di("kw", 0)];
+        assert!(g.reserved_check(&g.known_rules()).is_empty());
     }
 
     #[test]

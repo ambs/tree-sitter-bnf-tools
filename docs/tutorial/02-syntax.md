@@ -266,6 +266,25 @@ parentheses with `%prec` inside:
 rule -> (a | b %prec 1) c ;
 ```
 
+## Reserved-word annotation
+
+A `(body %reserved setName)` annotation opts a symbol into a named
+[reserved-word set](03-directives.md#reserved), overriding the implicit
+global set for that occurrence only:
+
+```bnf
+member -> obj '.' (identifier %reserved propertyName) ;
+```
+
+generates:
+
+```js
+member: $ => seq($.obj, '.', reserved('propertyName', $.identifier)),
+```
+
+`setName` must match a set name declared with `%reserved`; referencing an
+undeclared set name is a **warning**.
+
 ## What is not supported
 
 The following constructs from other BNF/EBNF variants are **not** recognised:

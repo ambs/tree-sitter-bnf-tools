@@ -31,6 +31,28 @@ impl Scaffold<'_> {
         Ok(())
     }
 
+    /// Emits the `reserved:` directive, if the grammar declares any sets.
+    fn fmt_reserved(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if !self.grammar.reserved_sets.is_empty() {
+            writeln!(f, "  reserved: ($) => ({{")?;
+            for entry in &self.grammar.reserved_sets {
+                let items = entry
+                    .rule_names
+                    .iter()
+                    .map(|i| match i {
+                        NameOrLiteral::Literal(x) => x.clone(),
+                        NameOrLiteral::Name(n) => format!("$.{}", n.as_str()),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(f, "    {}: ($) => [{}],", entry.set_name, items)?;
+            }
+            writeln!(f, "  }}),")?;
+            writeln!(f)?;
+        }
+        Ok(())
+    }
+
     /// Emits the `word:` directive, if the grammar declares one.
     fn fmt_word(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if let Some(word) = &self.grammar.word {
@@ -184,6 +206,7 @@ impl Display for Scaffold<'_> {
         writeln!(f, "module.exports = grammar({{")?;
         writeln!(f, "  name: \"{}\",", self.name)?;
         writeln!(f)?;
+        self.fmt_reserved(f)?;
         self.fmt_word(f)?;
         self.fmt_precedences(f)?;
         self.fmt_externals(f)?;
@@ -497,5 +520,45 @@ mod tests {
     fn scaffold_word_directive_omitted_when_absent() {
         let g = Grammar::from_rules([p("ident", TerminalLiteral("'x'".into()))]);
         assert!(!s(&g, "g").to_string().contains("word:"));
+    }
+
+    // ── reserved ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn scaffold_no_reserved_omits_key() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        let out = s(&g, "g").to_string();
+        assert!(!out.contains("reserved"));
+    }
+
+    #[test]
+    fn scaffold_with_reserved_sets_name_and_literal() {
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("if_kw", TerminalLiteral("'if'".into()))]);
+        g.reserved_sets = vec![
+            re(
+                "keywords",
+                &[
+                    NameOrLiteral::Name("if_kw".into()),
+                    NameOrLiteral::Literal("'else'".into()),
+                ],
+                0,
+            ),
+            re("propertyName", &[], 0),
+        ];
+        let out = s(&g, "g").to_string();
+        assert!(out.contains("  reserved: ($) => ({"));
+        assert!(out.contains("    keywords: ($) => [$.if_kw, 'else'],"));
+        assert!(out.contains("    propertyName: ($) => [],"));
+        assert!(out.contains("  }),"));
+    }
+
+    #[test]
+    fn scaffold_reserved_before_word() {
+        let mut g = Grammar::from_rules([p("ident", TerminalLiteral("'x'".into()))]);
+        g.reserved_sets = vec![crate::dom::test_utils::re("kw", &[], 0)];
+        g.declare_word(di("ident", 1));
+        let out = s(&g, "g").to_string();
+        assert!(out.find("reserved:").unwrap() < out.find("word:").unwrap());
     }
 }
