@@ -30,6 +30,7 @@ _directive          -> axiomDirective
                      | extrasDirective
                      | includeDirective
                      | externalsDirective
+                     | reservedDirective
                      ;
 
 # ── Grammar-level directives ─────────────────────────────────────────────────
@@ -42,6 +43,9 @@ includeDirective    -> '%include' literal ;
 
 conflictsDirective  -> '%conflicts' conflictGroup (',' conflictGroup)* ;
 conflictGroup       -> '[' nonTerminal (',' nonTerminal)* ']' ;
+
+reservedDirective   -> '%reserved' reservedEntry (',' reservedEntry)* ;
+reservedEntry       -> nonTerminal ':' '[' (nonTerminalOrLiteral (',' nonTerminalOrLiteral)*)? ']' ;
 
 precedencesDirective -> '%precedences' precedenceGroup (',' precedenceGroup)* ;
 precedenceGroup      -> '[' nonTerminalOrLiteral (',' nonTerminalOrLiteral)* ']' ;
@@ -74,6 +78,7 @@ _symbolContent      -> nonTerminal
                      | tokenExpr
                      | tokenImmediateExpr
                      | precGroup
+                     | reservedGroup
                      ;
 
 # ── Grouping constructs ───────────────────────────────────────────────────────
@@ -84,6 +89,7 @@ aliasName           -> nonTerminal | literal ;
 tokenExpr           -> '<<' ruleBody '>>' ;
 tokenImmediateExpr  -> '<<!' ruleBody '>>' ;
 precGroup           -> '(' ruleBodyInner precAnnotation ')' ;
+reservedGroup       -> '(' ruleBodyInner '%reserved' nonTerminal ')' ;
 
 # ── Kleene operators and field labels ─────────────────────────────────────────
 

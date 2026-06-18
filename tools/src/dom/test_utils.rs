@@ -1,3 +1,5 @@
+use crate::dom::ReservedEntry;
+
 use super::directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup};
 use super::{GrammarNode, Production};
 
@@ -18,6 +20,16 @@ pub fn p_named(name: &str, body: GrammarNode, filename: &str) -> Production {
         body,
         line: 1,
         filename: filename.into(),
+    }
+}
+
+/// Creates a [`ReservedEntry`] with the given set name, rule names and source line (no filename).
+pub fn re(set_name: &str, rule_names: &[NameOrLiteral], line: usize) -> ReservedEntry {
+    ReservedEntry {
+        set_name: set_name.into(),
+        rule_names: rule_names.to_vec(),
+        line,
+        filename: String::new(),
     }
 }
 

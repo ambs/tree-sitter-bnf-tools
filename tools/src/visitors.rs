@@ -1,7 +1,9 @@
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::ParseError::SyntaxError;
 use crate::dom::directive::{ConflictGroup, DirectiveItem, NameOrLiteral, loc};
-use crate::dom::{Diagnostic, Grammar, ParseError, PrecKind, PrecedenceGroup, Production};
+use crate::dom::{
+    Diagnostic, Grammar, ParseError, PrecKind, PrecedenceGroup, Production, ReservedEntry,
+};
 use crate::util::syntax_error_diagnostics;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -129,11 +131,58 @@ fn visit_grammar_inner(
             "includeDirective" => {
                 visit_include_directive(&mut grammar, &child, ctx, seen)?;
             }
+            "reservedDirective" => {
+                grammar
+                    .reserved_sets
+                    .extend(visit_reserved_directive(&child, ctx)?);
+            }
             _ => {}
         }
     }
     let warnings = grammar.check();
     Ok((grammar, warnings))
+}
+
+/// Converts a `reservedDirective` node into a list of [`ReservedEntry`]s, one per `reservedEntry`.
+fn visit_reserved_directive(
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+) -> Result<Vec<ReservedEntry>, ParseError> {
+    let items = (0..node.named_child_count() as u32)
+        .map(|j| {
+            let item_node = node.named_child(j).expect("named child index in bounds");
+            visit_reserved_item(&item_node, ctx)
+        })
+        .collect();
+    Ok(items)
+}
+
+/// Converts a `reservedEntry` node into a [`ReservedEntry`], reading the `set` field and
+/// the `nonTerminalOrLiteral` items that follow it.
+fn visit_reserved_item(node: &Node<'_>, ctx: &SourceFile<'_>) -> ReservedEntry {
+    let line = node.start_position().row + 1;
+    let set_name = node
+        .child_by_field_name("set")
+        .expect("reservedItem has a set name")
+        .utf8_text(ctx.source.as_bytes())
+        .expect("valid UTF-8")
+        .to_string();
+
+    let rule_names = (1..node.named_child_count() as u32)
+        .map(|i| {
+            visit_name_or_literal(
+                &node.named_child(i).expect("named child index in bounds"),
+                ctx,
+            )
+        })
+        .collect();
+
+    ReservedEntry {
+        set_name,
+        rule_names,
+        line,
+        filename: ctx.filename.to_string(),
+    }
 }
 
 /// Resolves a `%include` directive, parses the referenced file, and merges it into `grammar`.
@@ -597,6 +646,33 @@ fn visit_prec_group(
     Ok(Prec(kind, level, Box::new(body)))
 }
 
+/// Converts a `reservedGroup` node into a [`GrammarNode::Reserved`] wrapping its body.
+fn visit_reserved_group(
+    grammar: &mut Grammar,
+    node: &Node<'_>,
+    ctx: &SourceFile<'_>,
+) -> Result<GrammarNode, ParseError> {
+    let body = visit(
+        grammar,
+        &node
+            .child_by_field_name("body")
+            .expect("reservedGroup has body field"),
+        ctx,
+    )?;
+    let set_name = node
+        .child_by_field_name("set")
+        .expect("reservedGroup has set field")
+        .utf8_text(ctx.source.as_bytes())
+        .expect("valid UTF-8")
+        .to_string();
+    grammar.reserved_set_refs.push(DirectiveItem {
+        name: set_name.clone(),
+        line: node.start_position().row + 1,
+        filename: ctx.filename.to_string(),
+    });
+    Ok(Reserved(set_name, Box::new(body)))
+}
+
 /// Converts an `aliasGroup` node into a [`GrammarNode::Alias`].
 fn visit_alias_group(
     grammar: &mut Grammar,
@@ -646,6 +722,7 @@ fn visit(
         "tokenExpr" => visit_token_expr(grammar, node, ctx),
         "tokenImmediateExpr" => visit_token_immediate_expr(grammar, node, ctx),
         "precGroup" => visit_prec_group(grammar, node, ctx),
+        "reservedGroup" => visit_reserved_group(grammar, node, ctx),
         "ruleBodyInner" => visit_rule_body(grammar, node, ctx),
         "symbolSeqInner" => visit_symbol_seq(grammar, node, ctx),
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
@@ -1096,6 +1173,83 @@ mod tests {
                 NameOrLiteral::Name("b".into()),
                 NameOrLiteral::Name("c".into()),
             ]
+        );
+    }
+
+    // ── %reserved directive ───────────────────────────────────────────────────
+
+    #[test]
+    /// Literal items in `%reserved` entries are assigned the `Literal` variant; an
+    /// empty bracket list produces an empty `rule_names`.
+    fn reserved_directive_literal_entries() {
+        let (g, diags) = parse_source(indoc! {"
+            %reserved kw: ['if', 'else'], prop: []
+            root -> 'if' ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.reserved_sets.len(), 2);
+        assert_eq!(g.reserved_sets[0].set_name, "kw");
+        assert_eq!(
+            g.reserved_sets[0].rule_names,
+            vec![
+                NameOrLiteral::Literal("'if'".into()),
+                NameOrLiteral::Literal("'else'".into()),
+            ]
+        );
+        assert_eq!(g.reserved_sets[1].set_name, "prop");
+        assert_eq!(g.reserved_sets[1].rule_names, vec![]);
+    }
+
+    #[test]
+    /// Bare nonterminal items in a `%reserved` entry are assigned the `Name` variant.
+    fn reserved_directive_nonterminal_entries() {
+        let (g, diags) = parse_source(indoc! {"
+            %reserved kw2: [if, else]
+            root -> if else ;
+            if -> 'if' ;
+            else -> 'else' ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(
+            g.reserved_sets[0].rule_names,
+            vec![
+                NameOrLiteral::Name("if".into()),
+                NameOrLiteral::Name("else".into()),
+            ]
+        );
+    }
+
+    #[test]
+    /// A rule-level `(body %reserved setName)` annotation records the referenced set
+    /// name, with its own source line, in `grammar.reserved_set_refs`.
+    fn reserved_group_records_rule_level_annotation() {
+        let (g, diags) = parse_source(indoc! {"
+            %reserved kw: []
+            id -> (/[a-z]+/ %reserved kw) ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(g.reserved_set_refs.len(), 1);
+        assert_eq!(g.reserved_set_refs[0].name, "kw");
+        assert_eq!(g.reserved_set_refs[0].line, 2);
+    }
+
+    #[test]
+    /// Guards the `"reservedDirective"` dispatch arm in `visit_grammar_inner`, which has
+    /// no compiler safety net (silent `_ => {}` fallback): if that arm were ever removed,
+    /// this assertion fails loudly instead of the directive silently vanishing.
+    fn reserved_directive_dispatch_is_not_silently_skipped() {
+        let (g, diags) = parse_source(indoc! {"
+            %reserved kw: ['if']
+            root -> 'if' ;
+        "})
+        .unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert!(
+            !g.reserved_sets.is_empty(),
+            "%reserved directive must not be silently dropped"
         );
     }
 

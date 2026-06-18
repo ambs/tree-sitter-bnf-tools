@@ -90,6 +90,36 @@ Multiple `%precedences` lines are additive — each adds groups to the list.
 Referencing an undefined rule name is a **warning**; string literal items are
 never checked.
 
+## `%reserved`
+
+Declares named reserved-word sets — groups of keywords that should be
+preferred over a generic identifier rule wherever they apply. The first set
+declared is the implicit **global** set, applied everywhere by default; later
+sets (often empty) are swapped in for specific occurrences via the
+[rule-level `%reserved` annotation](02-syntax.md#reserved-word-annotation).
+Each set name is followed by a bracketed list of rule names or quoted string
+literals — empty brackets declare a set with no reserved words:
+
+```bnf
+%reserved keywords: [if, else, 'while'],
+          propertyName: []
+```
+
+generates:
+
+```js
+reserved: ($) => ({
+  keywords: ($) => [$.if, $.else, 'while'],
+  propertyName: ($) => [],
+}),
+```
+
+Multiple `%reserved` directives are additive — each adds sets to the list;
+the *first* set declared overall stays the implicit global set even if a
+later line declares more sets. Referencing an undefined rule name is a
+**warning**; string literal items are never checked. A rule-level `%reserved`
+annotation naming a set that was never declared here is also a **warning**.
+
 ## `%inline`
 
 Lists rules to substitute at every call site during parser-table generation.

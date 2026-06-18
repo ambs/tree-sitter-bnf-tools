@@ -19,7 +19,9 @@ fn has_terminal(node: &GrammarNode) -> bool {
         | GrammarNode::OneOrMore(b)
         | GrammarNode::Token(b)
         | GrammarNode::TokenImmediate(b) => has_terminal(b),
-        GrammarNode::Field(_, b) | GrammarNode::Prec(_, _, b) => has_terminal(b),
+        GrammarNode::Field(_, b) | GrammarNode::Prec(_, _, b) | GrammarNode::Reserved(_, b) => {
+            has_terminal(b)
+        }
         GrammarNode::Alias(b, _) => has_terminal(b),
         GrammarNode::NonTerminal(_) => false,
     }

@@ -70,6 +70,15 @@ fn rename_directives(grammar: &mut Grammar, old: &str, new: &str) {
             }
         }
     }
+    for entry in grammar.reserved_sets.iter_mut() {
+        for item in entry.rule_names.iter_mut() {
+            if let NameOrLiteral::Name(name) = item
+                && name == old
+            {
+                *name = new.to_owned();
+            }
+        }
+    }
 }
 
 /// Rebuilds `grammar.productions`, replacing the key and `Production::name` for the renamed rule.
@@ -105,12 +114,13 @@ fn rename_node(node: &mut GrammarNode, old: &str, new: &str) {
         | GrammarNode::OneOrMore(inner)
         | GrammarNode::Token(inner)
         | GrammarNode::TokenImmediate(inner) => rename_node(inner, old, new),
-        GrammarNode::Field(_, inner) => rename_node(inner, old, new),
         GrammarNode::Alias(body, name_node) => {
             rename_node(body, old, new);
             rename_node(name_node, old, new);
         }
-        GrammarNode::Prec(_, _, inner) => rename_node(inner, old, new),
+        GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Field(_, inner)
+        | GrammarNode::Reserved(_, inner) => rename_node(inner, old, new),
         _ => {}
     }
 }
@@ -371,5 +381,74 @@ mod tests {
             g.precedences[0].items[0],
             NameOrLiteral::Literal("'expr'".into())
         );
+    }
+
+    /// Renaming a rule referenced in a `%reserved` entry's `rule_names` (as a `Name`)
+    /// updates that entry in place.
+    #[test]
+    fn renames_reserved_set_name_item() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("expr", nt("x")), p("term", nt("y"))]);
+        g.reserved_sets = vec![re(
+            "kw",
+            &[
+                NameOrLiteral::Name("expr".into()),
+                NameOrLiteral::Name("term".into()),
+            ],
+            1,
+        )];
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        assert_eq!(
+            g.reserved_sets[0].rule_names[0],
+            NameOrLiteral::Name("expression".into())
+        );
+        assert_eq!(
+            g.reserved_sets[0].rule_names[1],
+            NameOrLiteral::Name("term".into())
+        );
+    }
+
+    /// A `Literal` item in a `%reserved` entry's `rule_names` is never modified by a rename.
+    #[test]
+    fn renames_reserved_literal_item_untouched() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("expr", nt("x"))]);
+        g.reserved_sets = vec![re("kw", &[NameOrLiteral::Literal("'expr'".into())], 1)];
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        assert_eq!(
+            g.reserved_sets[0].rule_names[0],
+            NameOrLiteral::Literal("'expr'".into())
+        );
+    }
+
+    /// Renaming never touches a `%reserved` entry's `set_name`, nor `reserved_set_refs`
+    /// (both hold set names, not rule names).
+    #[test]
+    fn rename_does_not_alter_reserved_set_name_or_refs() {
+        use crate::dom::test_utils::{di, re};
+        let mut g = Grammar::from_rules([p("expr", nt("x"))]);
+        g.reserved_sets = vec![re("expr", &[], 1)];
+        g.reserved_set_refs = vec![di("expr", 1)];
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        assert_eq!(g.reserved_sets[0].set_name, "expr");
+        assert_eq!(g.reserved_set_refs[0].name, "expr");
+    }
+
+    /// `rename_node`'s `Reserved` arm has no compiler safety net (wildcard fallback) —
+    /// this is the only test guarding that the body is actually traversed.
+    #[test]
+    fn renames_nonterminal_in_reserved_body() {
+        use crate::dom::GrammarNode::Reserved;
+        let body = Reserved("kw".into(), Box::new(nt("expr")));
+        let mut g = Grammar::from_rules([p("root", body), p("expr", nt("x"))]);
+        rename_grammar(&mut g, "expr", "expression").unwrap();
+        if let Reserved(set_name, inner) = &g.productions["root"].body {
+            assert_eq!(set_name, "kw");
+            assert!(matches!(inner.as_ref(), GrammarNode::NonTerminal(n) if n == "expression"));
+        } else {
+            panic!("expected Reserved");
+        }
     }
 }

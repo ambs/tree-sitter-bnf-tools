@@ -41,6 +41,22 @@ pub struct PrecedenceGroup {
     pub filename: String,
 }
 
+/// A declared reserved-word set: maps a set name to the list of terminal
+/// rules that belong to it.  The first `ReservedEntry` declared in the
+/// grammar is the implicit global set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservedEntry {
+    /// The set name (used in rule-level `%reserved setName` annotations).
+    pub set_name: String,
+    /// The rules (nonterminal names or literals) belonging to this set.
+    /// May be empty — an empty set means "no keywords reserved here".
+    pub rule_names: Vec<NameOrLiteral>,
+    /// 1-based source line.
+    pub line: usize,
+    /// Source filename where this directive appears (empty string if unknown).
+    pub filename: String,
+}
+
 /// Formats a source location for use in diagnostic messages.
 ///
 /// Returns `"filename:line"` when `filename` is non-empty, or `"line N"` otherwise.

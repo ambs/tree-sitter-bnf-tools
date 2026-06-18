@@ -9,6 +9,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### `tree-sitter-bnf`
+- `%reserved setName: [r1, r2, 'literal'], otherSet: []` directive for named
+  reserved-word sets, and a rule-level `(body %reserved setName)` annotation
+  to override the global set for a specific occurrence. Maps to tree-sitter's
+  `reserved:` grammar field and `reserved('setName', body)` call respectively.
+  The first declared set is the implicit global set; multiple `%reserved`
+  lines are additive. Referencing an undefined rule name, or annotating with
+  an undeclared set name, is a warning; string literals are not checked. (#175)
 - `%externals name1, name2, 'literal'` directive for external scanner tokens.
   Maps to tree-sitter's `externals:` grammar field; items may be rule names or
   quoted string literals. Multiple `%externals` lines are additive. Declared

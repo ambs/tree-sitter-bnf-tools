@@ -21,12 +21,14 @@
 | `body %prec.left N` | `prec.left(N, body)` | Left-associative precedence |
 | `body %prec.right N` | `prec.right(N, body)` | Right-associative precedence |
 | `body %prec.dynamic N` | `prec.dynamic(N, body)` | Dynamic precedence |
+| `body %reserved setName` | `reserved('setName', body)` | Reserved-word set override |
 | `%axiom r` | *(emits `r` first in `rules:`)* | Explicit start rule |
 | `%conflicts [r1, r2]` | `conflicts: $ => [[$.r1, $.r2]]` | Conflict declaration |
 | `%inline r` | `inline: $ => [$.r]` | Inline rule |
 | `%supertypes r` | `supertypes: $ => [$.r]` | Supertype declaration |
 | `%extras /x/, r` | `extras: $ => [/x/, $.r]` | Extra tokens |
 | `%externals r, 'lit'` | `externals: $ => [$.r, 'lit']` | External scanner tokens |
+| `%reserved set: [r, 'lit']` | `reserved: ($) => ({ set: ($) => [$.r, 'lit'] })` | Reserved-word set declaration |
 | `%include "f.bnf"` | *(merges the file's rules and directives)* | File inclusion |
 | `# comment` | *(removed)* | Line comment |
 

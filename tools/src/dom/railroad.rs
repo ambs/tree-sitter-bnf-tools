@@ -32,7 +32,8 @@ impl LinkMode {
 ///
 /// Tree-sitter-specific annotations ([`GrammarNode::Token`],
 /// [`GrammarNode::TokenImmediate`], [`GrammarNode::Field`], [`GrammarNode::Alias`],
-/// [`GrammarNode::Prec`]) are transparent: only the inner body node is rendered.
+/// [`GrammarNode::Prec`], [`GrammarNode::Reserved`]) are transparent: only the inner
+/// body node is rendered.
 pub fn node_to_railroad(
     node: &GrammarNode,
     mode: &LinkMode,
@@ -87,7 +88,8 @@ pub fn node_to_railroad(
         // Tree-sitter annotations have no visual equivalent; render only the inner expression.
         GrammarNode::Token(inner)
         | GrammarNode::TokenImmediate(inner)
-        | GrammarNode::Prec(_, _, inner) => node_to_railroad(inner, mode, defined, warnings),
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => node_to_railroad(inner, mode, defined, warnings),
 
         GrammarNode::Field(_, inner) | GrammarNode::Alias(inner, _) => {
             node_to_railroad(inner, mode, defined, warnings)

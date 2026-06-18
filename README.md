@@ -61,7 +61,8 @@ The dialect supports the full tree-sitter feature set:
 | Field label | `name: symbol` | [Fields](docs/tutorial/02-syntax.md#field-labels) |
 | Alias group | `(body => name)` | [Aliases](docs/tutorial/02-syntax.md#alias-groups) |
 | Precedence | `%prec`, `%prec.left`, … | [Precedence](docs/tutorial/02-syntax.md#precedence-annotations) |
-| Directives | `%axiom`, `%word`, `%conflicts`, `%precedences`, `%inline`, `%supertypes`, `%extras`, `%externals`, `%include` | [Directives](docs/tutorial/03-directives.md) |
+| Reserved-word override | `(body %reserved setName)` | [Reserved-word annotation](docs/tutorial/02-syntax.md#reserved-word-annotation) |
+| Directives | `%axiom`, `%word`, `%conflicts`, `%precedences`, `%inline`, `%supertypes`, `%extras`, `%externals`, `%reserved`, `%include` | [Directives](docs/tutorial/03-directives.md) |
 
 The full mapping fits on one page: see the
 [BNF → tree-sitter cheat sheet](docs/tutorial/04-cheatsheet.md). Constructs
