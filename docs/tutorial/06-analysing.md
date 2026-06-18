@@ -15,13 +15,13 @@ Checks performed:
 
 | Check | Severity | Example diagnostic |
 |-------|----------|--------------------|
-| Undefined rule references | warning | `warning: undefined rule reference 'foo'` |
+| Undefined rule references | **error** | `error: undefined rule reference 'foo'` |
 | Undefined `%axiom` rule | **error** | `error: %axiom references undefined rule 'foo' (line 1)` |
 | Duplicate `%axiom` | **error** | `error: %axiom declared more than once (line 2)` |
-| Undefined `%conflicts` rules | warning | `warning: %conflicts references undefined rule 'foo'` |
-| Undefined `%inline` rules | warning | `warning: %inline references undefined rule 'foo'` |
-| Undefined `%supertypes` rules | warning | `warning: %supertypes references undefined rule 'foo'` |
-| Undefined `%extras` rules | warning | `warning: %extras references undefined rule 'foo'` |
+| Undefined `%conflicts` rules | **error** | `error: %conflicts references undefined rule 'foo'` |
+| Undefined `%inline` rules | **error** | `error: %inline references undefined rule 'foo'` |
+| Undefined `%supertypes` rules | **error** | `error: %supertypes references undefined rule 'foo'` |
+| Undefined `%extras` rules | **error** | `error: %extras references undefined rule 'foo'` |
 | Unreferenced rule | warning | `warning: rule 'foo' is never referenced (line 4)` |
 
 Pass `--json` to get diagnostics as a JSON object on stdout instead of plain
@@ -118,7 +118,7 @@ Each row measures a different aspect of the grammar:
 |-----|-------------------|
 | **Rules** | Total named productions. *leaf* = rules whose body contains no rule references (only terminals). *unreachable* = rules never reached from the root, which `check` also flags as warnings. |
 | **Terminals** | Unique terminal values across all rule bodies, split into string literals and regex patterns. See the note on uniqueness below. |
-| **Undefined refs** | Rule names used in bodies but never defined — `check` flags these as warnings too. |
+| **Undefined refs** | Rule names used in bodies but never defined — `check` flags these as errors too. |
 | **Left-recursive** | Rules involved in left-recursion, split into *direct* (`a → a …`) and *mutual* (`a → b …`, `b → a …`). Informational only — left recursion is idiomatic tree-sitter style, not a defect. |
 | **FIRST sets** | Size statistics (min / max / average) of the FIRST set of each rule — the set of terminals that can open a derivation. A large max or high average suggests the grammar may have ambiguous alternatives. |
 

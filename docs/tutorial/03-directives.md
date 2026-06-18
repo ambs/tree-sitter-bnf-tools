@@ -3,7 +3,7 @@
 Directives appear at the top of the file (before or after rules; order does
 not matter) and configure the generated `grammar.js`. All of them map directly
 to the same-named fields in `grammar.js`, except `%axiom` (which controls rule
-order) and `%include` (which merges files). A warning is printed to stderr for
+order) and `%include` (which merges files). An error is printed to stderr for
 any referenced rule name that has no definition.
 
 ## `%word`
@@ -87,7 +87,7 @@ precedences: ($) => [
 ```
 
 Multiple `%precedences` lines are additive — each adds groups to the list.
-Referencing an undefined rule name is a **warning**; string literal items are
+Referencing an undefined rule name is an **error**; string literal items are
 never checked.
 
 ## `%reserved`
@@ -116,9 +116,9 @@ reserved: ($) => ({
 
 Multiple `%reserved` directives are additive — each adds sets to the list;
 the *first* set declared overall stays the implicit global set even if a
-later line declares more sets. Referencing an undefined rule name is a
-**warning**; string literal items are never checked. A rule-level `%reserved`
-annotation naming a set that was never declared here is also a **warning**.
+later line declares more sets. Referencing an undefined rule name is an
+**error**; string literal items are never checked. A rule-level `%reserved`
+annotation naming a set that was never declared here is also an **error**.
 
 ## `%inline`
 
@@ -155,7 +155,7 @@ externals: $ => [$.indent, $.dedent, 'string_content'],
 ```
 
 Multiple `%externals` lines are additive — each adds items to the list.
-Declared names are exempt from undefined-reference warnings: they are defined
+Declared names are exempt from undefined-reference errors: they are defined
 by the external scanner, not by any rule in the BNF file.
 
 ## `%axiom`

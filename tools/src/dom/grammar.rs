@@ -13,7 +13,7 @@ use super::types::Grammar;
 impl Grammar {
     /// Checks `%reserved` directives and rule-level annotations for undefined references.
     ///
-    /// Warns for each `ReservedEntry` rule name not in `known`, and for each rule-level
+    /// Errors for each `ReservedEntry` rule name not in `known`, and for each rule-level
     /// `%reserved` annotation whose set name has no matching `ReservedEntry`.
     fn reserved_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         let mut known_reserved_sets: HashSet<&str> = HashSet::new();
@@ -33,7 +33,7 @@ impl Grammar {
                         if let NameOrLiteral::Name(name) = item
                             && !known.contains(name.as_str())
                         {
-                            Some(Diagnostic::warning(format!(
+                            Some(Diagnostic::error(format!(
                                 "%reserved references undefined rule '{name}' ({location})"
                             )))
                         } else {
@@ -52,7 +52,7 @@ impl Grammar {
              }| {
                 if !known_reserved_sets.contains(name.as_str()) {
                     let location = loc(filename, *line);
-                    Some(Diagnostic::warning(format!(
+                    Some(Diagnostic::error(format!(
                         "%reserved annotation references undeclared set '{name}' ({location})"
                     )))
                 } else {
@@ -64,7 +64,7 @@ impl Grammar {
         not_referenced
     }
 
-    /// Returns a warning for every rule name in `%conflicts` that has no definition.
+    /// Returns an error for every rule name in `%conflicts` that has no definition.
     fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.conflicts
             .iter()
@@ -79,7 +79,7 @@ impl Grammar {
                         if known.contains(name.as_str()) {
                             return None;
                         }
-                        Some(Diagnostic::warning(format!(
+                        Some(Diagnostic::error(format!(
                             "%conflicts references undefined rule '{name}' ({location})"
                         )))
                     })
@@ -88,7 +88,7 @@ impl Grammar {
             .collect()
     }
 
-    /// Checks each `%precedences` group and warns for any `Name` item not in `known`.
+    /// Checks each `%precedences` group and errors for any `Name` item not in `known`.
     fn precedences_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.precedences
             .iter()
@@ -103,7 +103,7 @@ impl Grammar {
                         if let NameOrLiteral::Name(name) = item
                             && !known.contains(name.as_str())
                         {
-                            Some(Diagnostic::warning(format!(
+                            Some(Diagnostic::error(format!(
                                 "%precedences references undefined rule '{name}' ({location})"
                             )))
                         } else {
@@ -115,7 +115,7 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns a warning for every rule name in `%inline` that has no definition.
+    /// Returns an error for every rule name in `%inline` that has no definition.
     fn inline_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.inline
             .iter()
@@ -126,7 +126,7 @@ impl Grammar {
                      line,
                      filename,
                  }| {
-                    Diagnostic::warning(format!(
+                    Diagnostic::error(format!(
                         "%inline references undefined rule '{name}' ({})",
                         loc(filename, *line)
                     ))
@@ -135,7 +135,7 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns a warning for every rule name in `%supertypes` that has no definition.
+    /// Returns an error for every rule name in `%supertypes` that has no definition.
     fn supertypes_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.supertypes
             .iter()
@@ -146,7 +146,7 @@ impl Grammar {
                      line,
                      filename,
                  }| {
-                    Diagnostic::warning(format!(
+                    Diagnostic::error(format!(
                         "%supertypes references undefined rule '{name}' ({})",
                         loc(filename, *line)
                     ))
@@ -155,7 +155,7 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns a warning for every rule reference in `%extras` that has no definition.
+    /// Returns an error for every rule reference in `%extras` that has no definition.
     fn extras_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.extras
             .iter()
@@ -166,7 +166,7 @@ impl Grammar {
                      line,
                      filename,
                  }| {
-                    Diagnostic::warning(format!(
+                    Diagnostic::error(format!(
                         "%extras references undefined rule '{name}' ({})",
                         loc(filename, *line)
                     ))
@@ -175,12 +175,12 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns a warning for every non-terminal referenced in a rule body that has no definition.
+    /// Returns an error for every non-terminal referenced in a rule body that has no definition.
     fn undefined_refs_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.rhs_nonterminals
             .iter()
             .filter(|name| !known.contains(name.as_str()))
-            .map(|name| Diagnostic::warning(format!("undefined rule reference '{name}'")))
+            .map(|name| Diagnostic::error(format!("undefined rule reference '{name}'")))
             .collect()
     }
 
@@ -360,17 +360,17 @@ mod tests {
     }
 
     #[test]
-    fn conflicts_check_warns_on_undefined_rule() {
+    fn conflicts_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.conflicts = vec![cg(&["a", "ghost"], 0)];
         assert_eq!(
             strs(&g.conflicts_check(&g.known_rules())),
-            vec!["warning: %conflicts references undefined rule 'ghost' (line 0)"]
+            vec!["error: %conflicts references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
-    fn conflicts_check_no_warnings_when_all_rules_defined() {
+    fn conflicts_check_no_errors_when_all_rules_defined() {
         let mut g = Grammar::from_rules([
             p("a", TerminalLiteral("'x'".into())),
             p("b", TerminalLiteral("'y'".into())),
@@ -380,34 +380,34 @@ mod tests {
     }
 
     #[test]
-    fn supertypes_check_warns_on_undefined_rule() {
+    fn supertypes_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.supertypes = vec![di("ghost", 0)];
         assert_eq!(
             strs(&g.supertypes_check(&g.known_rules())),
-            vec!["warning: %supertypes references undefined rule 'ghost' (line 0)"]
+            vec!["error: %supertypes references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
-    fn supertypes_check_no_warnings_when_all_rules_defined() {
+    fn supertypes_check_no_errors_when_all_rules_defined() {
         let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
         g.supertypes = vec![di("expression", 0)];
         assert!(g.supertypes_check(&g.known_rules()).is_empty());
     }
 
     #[test]
-    fn inline_check_warns_on_undefined_rule() {
+    fn inline_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.inline = vec![di("ghost", 0)];
         assert_eq!(
             strs(&g.inline_check(&g.known_rules())),
-            vec!["warning: %inline references undefined rule 'ghost' (line 0)"]
+            vec!["error: %inline references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
-    fn inline_check_no_warnings_when_all_rules_defined() {
+    fn inline_check_no_errors_when_all_rules_defined() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.inline = vec![di("a", 0)];
         assert!(g.inline_check(&g.known_rules()).is_empty());
@@ -416,19 +416,19 @@ mod tests {
     // ── precedences_check ────────────────────────────────────────────────────
 
     #[test]
-    fn precedences_check_warns_on_undefined_name() {
+    fn precedences_check_errors_on_undefined_name() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.precedences = vec![pg(&[NameOrLiteral::Name("ghost".into())], 0)];
         assert_eq!(
             strs(&g.precedences_check(&g.known_rules())),
-            vec!["warning: %precedences references undefined rule 'ghost' (line 0)"]
+            vec!["error: %precedences references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
-    fn precedences_check_literal_never_warns() {
+    fn precedences_check_literal_never_errors() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn precedences_check_no_warnings_when_all_defined() {
+    fn precedences_check_no_errors_when_all_defined() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
         let mut g = Grammar::from_rules([
@@ -457,19 +457,19 @@ mod tests {
     // ── reserved_check ───────────────────────────────────────────────────────
 
     #[test]
-    fn reserved_check_warns_on_undefined_rule_name() {
+    fn reserved_check_errors_on_undefined_rule_name() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::re;
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.reserved_sets = vec![re("kw", &[NameOrLiteral::Name("ghost".into())], 0)];
         assert_eq!(
             strs(&g.reserved_check(&g.known_rules())),
-            vec!["warning: %reserved references undefined rule 'ghost' (line 0)"]
+            vec!["error: %reserved references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
-    fn reserved_check_literal_never_warns() {
+    fn reserved_check_literal_never_errors() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::re;
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
@@ -478,26 +478,26 @@ mod tests {
     }
 
     #[test]
-    fn reserved_check_warns_on_undeclared_set_reference() {
+    fn reserved_check_errors_on_undeclared_set_reference() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.reserved_set_refs = vec![di("ghost_set", 0)];
         assert_eq!(
             strs(&g.reserved_check(&g.known_rules())),
-            vec!["warning: %reserved annotation references undeclared set 'ghost_set' (line 0)"]
+            vec!["error: %reserved annotation references undeclared set 'ghost_set' (line 0)"]
         );
     }
 
     #[test]
     /// `reserved_set_refs` is a `Vec`, not a `HashSet`: two occurrences of the same
-    /// undeclared set name produce two separate warnings, not one deduplicated warning.
-    fn reserved_check_two_undeclared_refs_produce_two_warnings() {
+    /// undeclared set name produce two separate errors, not one deduplicated error.
+    fn reserved_check_two_undeclared_refs_produce_two_errors() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.reserved_set_refs = vec![di("ghost", 0), di("ghost", 1)];
         assert_eq!(g.reserved_check(&g.known_rules()).len(), 2);
     }
 
     #[test]
-    fn reserved_check_no_warnings_when_all_correct() {
+    fn reserved_check_no_errors_when_all_correct() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::re;
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
@@ -507,24 +507,24 @@ mod tests {
     }
 
     #[test]
-    fn extras_check_warns_on_undefined_rule() {
+    fn extras_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.extras = vec![di("/\\s/", 0), di("ghost", 0)];
         assert_eq!(
             strs(&g.extras_check(&g.known_rules())),
-            vec!["warning: %extras references undefined rule 'ghost' (line 0)"]
+            vec!["error: %extras references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
-    fn extras_check_no_warning_for_pattern() {
+    fn extras_check_no_error_for_pattern() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.extras = vec![di("/\\s/", 0)];
         assert!(g.extras_check(&g.known_rules()).is_empty());
     }
 
     #[test]
-    fn extras_check_no_warnings_when_rule_defined() {
+    fn extras_check_no_errors_when_rule_defined() {
         let mut g = Grammar::from_rules([
             p("a", TerminalLiteral("'x'".into())),
             p("comment", TerminalLiteral("'#'".into())),
@@ -534,17 +534,17 @@ mod tests {
     }
 
     #[test]
-    fn undefined_refs_check_warns_on_missing_rule() {
+    fn undefined_refs_check_errors_on_missing_rule() {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("term".into());
         assert_eq!(
             strs(&g.undefined_refs_check(&g.known_rules())),
-            vec!["warning: undefined rule reference 'term'"]
+            vec!["error: undefined rule reference 'term'"]
         );
     }
 
     #[test]
-    fn undefined_refs_check_no_warning_when_defined() {
+    fn undefined_refs_check_no_error_when_defined() {
         let mut g = Grammar::from_rules([p("term", TerminalLiteral("'x'".into()))]);
         g.rhs_nonterminals.insert("term".into());
         assert!(g.undefined_refs_check(&g.known_rules()).is_empty());
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     /// A `Name` item declared in `%externals` is treated as known: referencing it in a
-    /// rule body must not trigger an undefined-rule-reference warning from `check()`.
+    /// rule body must not trigger an undefined-rule-reference error from `check()`.
     fn check_externals_name_not_flagged_as_undefined() {
         let mut g = Grammar::new();
         g.externals = vec![NameOrLiteral::Name("token".into())];
@@ -571,12 +571,12 @@ mod tests {
 
     #[test]
     /// Without a matching `%externals` declaration, the same reference is still flagged.
-    fn check_undefined_ref_without_externals_declaration_still_warns() {
+    fn check_undefined_ref_without_externals_declaration_still_errors() {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("token".into());
         assert_eq!(
             strs(&g.check()),
-            vec!["warning: undefined rule reference 'token'"]
+            vec!["error: undefined rule reference 'token'"]
         );
     }
 
