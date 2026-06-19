@@ -9,8 +9,11 @@ any referenced rule name that has no definition.
 ## `%word`
 
 Declares the rule that tree-sitter should treat as the language's identifier
-token. This enables keyword extraction (reserved words are matched as keywords
-rather than identifiers) and improves error recovery:
+token. This enables keyword extraction: literal keyword tokens (e.g. `'if'`,
+`'while'`) are matched via the identifier pattern first, so input like `ifx`
+is correctly lexed as one identifier rather than being mis-split into the
+keyword `if` plus a dangling `x`. It also lets tree-sitter generate a smaller,
+faster-compiling lexer:
 
 ```bnf
 %word identifier
@@ -43,7 +46,8 @@ extras: $ => [/\s/, $.comment],
 ```
 
 Without this directive, tree-sitter's built-in default (skip whitespace
-everywhere) applies.
+everywhere) applies. Multiple `%extras` lines are additive — each adds items
+to the list.
 
 ## `%conflicts`
 
@@ -132,7 +136,9 @@ Typically used for hidden helper rules that exist as structural glue:
 ## `%supertypes`
 
 Lists abstract rule names that act as union types over concrete subtypes. This
-enriches the type annotations in language bindings:
+enriches the type annotations in language bindings. Declaring a rule as a
+supertype also unconditionally hides it from the parse tree, even if its name
+doesn't start with `_`:
 
 ```bnf
 %supertypes expression, statement, declaration
