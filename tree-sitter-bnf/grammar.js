@@ -38,18 +38,33 @@ module.exports = grammar({
         field("set", $.nonTerminal),
         ":",
         "[",
-        optional(seq($.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral)))),
+        optional(
+          seq($.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral))),
+        ),
         "]",
       ),
     externalsDirective: ($) =>
-      seq("%externals", $.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral))),
+      seq(
+        "%externals",
+        $.nonTerminalOrLiteral,
+        repeat(seq(",", $.nonTerminalOrLiteral)),
+      ),
     includeDirective: ($) => seq("%include", $.literal),
     axiomDirective: ($) => seq("%axiom", $.nonTerminal),
     wordDirective: ($) => seq("%word", $.nonTerminal),
     precedencesDirective: ($) =>
-      seq("%precedences", $.precedenceGroup, repeat(seq(",", $.precedenceGroup))),
+      seq(
+        "%precedences",
+        $.precedenceGroup,
+        repeat(seq(",", $.precedenceGroup)),
+      ),
     precedenceGroup: ($) =>
-      seq("[", $.nonTerminalOrLiteral, repeat(seq(",", $.nonTerminalOrLiteral)), "]"),
+      seq(
+        "[",
+        $.nonTerminalOrLiteral,
+        repeat(seq(",", $.nonTerminalOrLiteral)),
+        "]",
+      ),
     nonTerminalOrLiteral: ($) => choice($.nonTerminal, $.literal),
     inlineDirective: ($) =>
       seq("%inline", $.nonTerminal, repeat(seq(",", $.nonTerminal))),
@@ -120,7 +135,11 @@ module.exports = grammar({
         ")",
       ),
     precAnnotation: ($) =>
-      seq("%", field("kind", $.precKind), optional(field("level", $.integer))),
+      seq(
+        "%",
+        field("kind", $.precKind),
+        optional(choice(field("level", $.integer), field("name", $.literal))),
+      ),
     precKind: ($) => choice("prec.dynamic", "prec.left", "prec.right", "prec"),
     integer: ($) => /-?[0-9]+/,
     _terminal: ($) => choice($.pattern, $.literal),

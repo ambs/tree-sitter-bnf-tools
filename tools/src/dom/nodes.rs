@@ -13,6 +13,24 @@ pub enum PrecKind {
     Dynamic,
 }
 
+/// A `prec(…)` level: either an integer or an already-quoted name.
+pub enum PrecLevel {
+    /// A numeric precedence level, e.g. the `1` in `prec(1, …)`.
+    Integer(i32),
+    /// A named precedence level, stored pre-quoted (e.g. `'unary'`) so
+    /// `Display` can print it verbatim.
+    Name(String),
+}
+
+impl Display for PrecLevel {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            PrecLevel::Integer(i) => write!(f, "{}", i),
+            PrecLevel::Name(name) => write!(f, "{}", name),
+        }
+    }
+}
+
 /// A node in the grammar rule tree, mirroring tree-sitter combinator functions.
 pub enum GrammarNode {
     /// `seq(…)` — an ordered sequence of sub-nodes.
@@ -40,7 +58,7 @@ pub enum GrammarNode {
     /// `alias(body, name)` — renames a node in the syntax tree.
     Alias(Box<GrammarNode>, Box<GrammarNode>),
     /// `prec[.left|.right|.dynamic](level, …)` — precedence annotation.
-    Prec(PrecKind, Option<i32>, Box<GrammarNode>),
+    Prec(PrecKind, Option<PrecLevel>, Box<GrammarNode>),
     /// `reserved('setName', body)` — opts `body` into a named reserved-word set.
     Reserved(String, Box<GrammarNode>),
 }
@@ -187,7 +205,11 @@ mod tests {
             Token(Box::new(NonTerminal("d".into()))),
             TokenImmediate(Box::new(NonTerminal("e".into()))),
             Field("f".into(), Box::new(NonTerminal("g".into()))),
-            Prec(PrecKind::Left, Some(1), Box::new(NonTerminal("h".into()))),
+            Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(NonTerminal("h".into())),
+            ),
             Choice(vec![NonTerminal("i".into()), TerminalLiteral("'x'".into())]),
         ]);
         assert_eq!(
@@ -267,15 +289,35 @@ mod tests {
     /// prec(…) propagates the check into its inner node.
     fn prec_wrapping_nonterminal_contains_nonterminal() {
         assert!(
-            Prec(PrecKind::Left, Some(1), Box::new(NonTerminal("a".into()))).contains_nonterminal()
+            Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(NonTerminal("a".into()))
+            )
+            .contains_nonterminal()
         );
     }
 
     #[test]
     /// A negative precedence level is emitted verbatim in the prec(…) call.
     fn prec_negative_level_displays_verbatim() {
-        let node = Prec(PrecKind::Plain, Some(-1), Box::new(NonTerminal("a".into())));
+        let node = Prec(
+            PrecKind::Plain,
+            Some(PrecLevel::Integer(-1)),
+            Box::new(NonTerminal("a".into())),
+        );
         assert_eq!(node.to_string(), "prec(-1, $.a)");
+    }
+
+    #[test]
+    /// A literal precedence level is emitted verbatim in the prec(…) call.
+    fn prec_literal_level_displays_verbatim() {
+        let node = Prec(
+            PrecKind::Plain,
+            Some(PrecLevel::Name("'unary'".into())),
+            Box::new(NonTerminal("a".into())),
+        );
+        assert_eq!(node.to_string(), "prec('unary', $.a)");
     }
 
     #[test]
