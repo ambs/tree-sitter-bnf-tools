@@ -17,10 +17,10 @@
 | `label: sym` | `field('label', sym)` | Named AST field |
 | `(body => name)` | `alias(body, $.name)` | Named alias |
 | `(body => 'str')` | `alias(body, 'str')` | Anonymous alias |
-| `body %prec N` | `prec(N, body)` | Precedence (`N` may be negative) |
-| `body %prec.left N` | `prec.left(N, body)` | Left-associative precedence |
-| `body %prec.right N` | `prec.right(N, body)` | Right-associative precedence |
-| `body %prec.dynamic N` | `prec.dynamic(N, body)` | Dynamic precedence |
+| `body %prec N` or `body %prec 'name'` | `prec(N, body)` or `prec('name', body)` | Precedence (`N` may be negative; `'name'` must be declared in `%precedences`) |
+| `body %prec.left N` or `body %prec.left 'name'` | `prec.left(N, body)` or `prec.left('name', body)` | Left-associative precedence |
+| `body %prec.right N` or `body %prec.right 'name'` | `prec.right(N, body)` or `prec.right('name', body)` | Right-associative precedence |
+| `body %prec.dynamic N` or `body %prec.dynamic 'name'` | `prec.dynamic(N, body)` or `prec.dynamic('name', body)` | Dynamic precedence |
 | `body %reserved setName` | `reserved('setName', body)` | Reserved-word set override |
 | `%axiom r` | *(emits `r` first in `rules:`)* | Explicit start rule |
 | `%conflicts [r1, r2]` | `conflicts: $ => [[$.r1, $.r2]]` | Conflict declaration |

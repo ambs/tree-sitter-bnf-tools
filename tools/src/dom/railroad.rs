@@ -326,7 +326,7 @@ fn extract_diagram_content(svg: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::{GrammarNode, PrecKind};
+    use crate::dom::{GrammarNode, PrecKind, PrecLevel};
 
     /// Builds a `HashSet<String>` of defined rule names for use in walker tests.
     fn def(names: &[&str]) -> HashSet<String> {
@@ -502,7 +502,7 @@ mod tests {
     fn prec_wrapper_is_transparent() {
         let node = GrammarNode::Prec(
             PrecKind::Left,
-            Some(1),
+            Some(PrecLevel::Integer(1)),
             Box::new(GrammarNode::TerminalLiteral("PRC".into())),
         );
         let (svg, _) = to_svg(&node, &LinkMode::SingleFile, &def(&[]));

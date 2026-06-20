@@ -9,6 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### `tree-sitter-bnf`
+- `%prec` (and `.left`/`.right`/`.dynamic`) annotations accept a quoted
+  string name in place of the integer level, e.g. `%prec 'unary'`,
+  generating `prec('unary', …)` in `grammar.js`. The name must match a
+  string item declared in some `%precedences` group; `check` reports an
+  error for a named level with no matching declaration. (#243)
 - `%reserved setName: [r1, r2, 'literal'], otherSet: []` directive for named
   reserved-word sets, and a rule-level `(body %reserved setName)` annotation
   to override the global set for a specific occurrence. Maps to tree-sitter's

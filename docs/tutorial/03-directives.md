@@ -92,7 +92,17 @@ precedences: ($) => [
 
 Multiple `%precedences` lines are additive — each adds groups to the list.
 Referencing an undefined rule name is an **error**; string literal items are
-never checked.
+never checked against rule definitions, but a string item only has effect
+once some rule alternative tags itself with that name via a named
+[`%prec`](02-syntax.md#precedence-annotations) annotation:
+
+```bnf
+unary_expr  -> ('-' expr %prec 'unary') ;
+binary_expr -> (expr '+' expr %prec 'binary') ;
+```
+
+Tagging `%prec` with a name that has no matching string item in any
+`%precedences` group is itself an **error**.
 
 ## `%reserved`
 

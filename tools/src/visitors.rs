@@ -323,7 +323,12 @@ fn visit_precedences_directive(
             let items = (0..child.named_child_count() as u32)
                 .map(|j| {
                     let item_node = child.named_child(j).expect("named child index in bounds");
-                    visit_name_or_literal(&item_node, ctx)
+                    let name_or_literal = visit_name_or_literal(&item_node, ctx);
+                    if let NameOrLiteral::Literal(literal) = name_or_literal {
+                        NameOrLiteral::Literal(normalize_literal(literal.as_str()))
+                    } else {
+                        name_or_literal
+                    }
                 })
                 .collect();
             groups.push(PrecedenceGroup {
