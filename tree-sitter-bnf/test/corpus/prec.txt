@@ -326,3 +326,112 @@ rule -> (a | (b %prec 1)) ;
                     annotation: (precAnnotation
                       kind: (precKind)
                       level: (integer))))))))))))
+
+================================================================================
+prec suffix with named level
+================================================================================
+
+expr -> a b %prec 'unary' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          name: (literal))))))
+
+================================================================================
+prec.left suffix with named level
+================================================================================
+
+expr -> a '+' a %prec.left 'unary' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (literal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          name: (literal))))))
+
+================================================================================
+prec.right suffix with named level
+================================================================================
+
+expr -> a '^' a %prec.right 'unary' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (literal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          name: (literal))))))
+
+================================================================================
+prec.dynamic suffix with named level
+================================================================================
+
+expr -> a b %prec.dynamic 'unary' ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          name: (literal))))))
+
+================================================================================
+prec suffix with double-quoted named level
+================================================================================
+
+expr -> a b %prec "unary" ;
+
+--------------------------------------------------------------------------------
+
+(grammar
+  (rule
+    name: (nonTerminal)
+    body: (ruleBody
+      (symbolSeq
+        (symbol
+          content: (nonTerminal))
+        (symbol
+          content: (nonTerminal))
+        prec: (precAnnotation
+          kind: (precKind)
+          name: (literal))))))

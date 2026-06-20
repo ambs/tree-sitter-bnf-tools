@@ -64,6 +64,50 @@ impl Grammar {
         not_referenced
     }
 
+    /// Checks rule-level `%prec 'name'` annotations against declared `%precedences` names.
+    ///
+    /// Errors for each `prec_name_refs` entry whose normalized name has no matching
+    /// `Literal` item across all `%precedences` groups.
+    fn prec_name_check(&self) -> Vec<Diagnostic> {
+        let named_precedences: HashSet<&str> = self
+            .precedences
+            .iter()
+            .flat_map(
+                |PrecedenceGroup {
+                     items,
+                     line: _,
+                     filename: _,
+                 }| {
+                    items.iter().filter_map(|item| match item {
+                        NameOrLiteral::Name(_) => None,
+                        NameOrLiteral::Literal(literal) => Some(literal.as_str()),
+                    })
+                },
+            )
+            .collect();
+
+        self.prec_name_refs
+            .iter()
+            .filter_map(
+                |DirectiveItem {
+                     name,
+                     line,
+                     filename,
+                 }| {
+                    if !named_precedences.contains(name.as_str()) {
+                        Some(Diagnostic::error(format!(
+                            "%precedence references undefined precedence literal {} ({})",
+                            name,
+                            loc(filename, *line)
+                        )))
+                    } else {
+                        None
+                    }
+                },
+            )
+            .collect()
+    }
+
     /// Returns an error for every rule name in `%conflicts` that has no definition.
     fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.conflicts
@@ -321,6 +365,7 @@ impl Grammar {
         diagnostics.extend(self.undefined_refs_check(&known));
         diagnostics.extend(self.reserved_check(&known));
         diagnostics.extend(self.unreachable_rules_check());
+        diagnostics.extend(self.prec_name_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
     }
@@ -504,6 +549,56 @@ mod tests {
         g.reserved_sets = vec![re("kw", &[NameOrLiteral::Name("a".into())], 0)];
         g.reserved_set_refs = vec![di("kw", 0)];
         assert!(g.reserved_check(&g.known_rules()).is_empty());
+    }
+
+    // ── prec_name_check ──────────────────────────────────────────────────────
+
+    #[test]
+    fn prec_name_check_errors_on_undeclared_name() {
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.prec_name_refs = vec![di("'unary'", 0)];
+        assert_eq!(
+            strs(&g.prec_name_check()),
+            vec!["error: %precedence references undefined precedence literal 'unary' (line 0)"]
+        );
+    }
+
+    #[test]
+    fn prec_name_check_no_errors_when_declared() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'unary'".into())], 0)];
+        g.prec_name_refs = vec![di("'unary'", 0)];
+        assert!(g.prec_name_check().is_empty());
+    }
+
+    #[test]
+    /// An integer level never reaches `prec_name_refs` (only named levels do), so it must
+    /// never be checked against `%precedences` names, even when one is declared.
+    fn prec_name_check_integer_level_never_checked() {
+        use crate::dom::test_utils::{nt, pg};
+        use crate::dom::{NameOrLiteral, PrecKind, PrecLevel};
+        let mut g = Grammar::from_rules([p(
+            "a",
+            GrammarNode::Prec(
+                PrecKind::Plain,
+                Some(PrecLevel::Integer(1)),
+                Box::new(nt("a")),
+            ),
+        )]);
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'unary'".into())], 0)];
+        assert!(g.prec_name_check().is_empty());
+    }
+
+    #[test]
+    /// `%precedences` literal items are normalized at parse time (`visit_precedences_directive`),
+    /// the same way `%prec` annotation names are, so a quote-style mismatch in the source
+    /// (`"unary"` declared, `'unary'` referenced) must not produce a false-positive error.
+    fn prec_name_check_mixed_quote_style_normalizes() {
+        let src = "%precedences [\"unary\"]\na -> 'x' %prec 'unary' ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert!(g.prec_name_check().is_empty());
     }
 
     #[test]

@@ -128,8 +128,8 @@ fn rename_node(node: &mut GrammarNode, old: &str, new: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::Grammar;
     use crate::dom::test_utils::{nt, p};
+    use crate::dom::{Grammar, PrecLevel};
 
     /// Renaming a rule updates both the `productions` map key and `Production::name`.
     #[test]
@@ -474,7 +474,11 @@ mod tests {
     fn renames_nonterminal_in_prec_body() {
         use crate::dom::GrammarNode::Prec;
         use crate::dom::PrecKind;
-        let body = Prec(PrecKind::Left, Some(1), Box::new(nt("expr")));
+        let body = Prec(
+            PrecKind::Left,
+            Some(PrecLevel::Integer(1)),
+            Box::new(nt("expr")),
+        );
         let mut g = Grammar::from_rules([p("root", body), p("expr", nt("x"))]);
         rename_grammar(&mut g, "expr", "expression").unwrap();
         if let Prec(_, _, inner) = &g.productions["root"].body {

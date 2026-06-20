@@ -508,9 +508,9 @@ pub fn first_set_stats(grammar: &Grammar) -> Option<super::summary::FirstSetStat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::GrammarNode::*;
     use crate::dom::test_utils::p;
     use crate::dom::{Grammar, Production};
+    use crate::dom::{GrammarNode::*, PrecLevel};
 
     fn grammar(prods: Vec<Production>) -> Grammar {
         Grammar::from_rules(prods)
@@ -713,7 +713,11 @@ mod tests {
         use crate::dom::PrecKind;
         let g = grammar(vec![p(
             "a",
-            Prec(PrecKind::Left, Some(1), Box::new(lit("'x'"))),
+            Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(lit("'x'")),
+            ),
         )]);
         assert_eq!(
             first_sets(&g)["a"],
@@ -857,7 +861,11 @@ mod tests {
         use crate::dom::PrecKind;
         let g = grammar(vec![p(
             "a",
-            Prec(PrecKind::Left, Some(1), Box::new(lit("'x'"))),
+            Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(lit("'x'")),
+            ),
         )]);
         assert_eq!(count_unique_terminals(&g), (1, 0));
     }
@@ -934,7 +942,11 @@ mod tests {
             "a",
             Choice(vec![
                 Sequence(vec![
-                    Prec(PrecKind::Left, Some(1), Box::new(nt("a"))),
+                    Prec(
+                        PrecKind::Left,
+                        Some(PrecLevel::Integer(1)),
+                        Box::new(nt("a")),
+                    ),
                     lit("'x'"),
                 ]),
                 lit("'y'"),

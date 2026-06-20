@@ -250,14 +250,17 @@ The four annotation kinds:
 
 | Annotation | Level | Maps to |
 |---|---|---|
-| `%prec N` | required | `prec(N, ...)` |
-| `%prec.left` or `%prec.left N` | optional | `prec.left([N,] ...)` |
-| `%prec.right` or `%prec.right N` | optional | `prec.right([N,] ...)` |
-| `%prec.dynamic N` | required | `prec.dynamic(N, ...)` |
+| `%prec N` or `%prec 'name'` | required | `prec(N, ...)` or `prec('name', ...)` |
+| `%prec.left` or `%prec.left N` or `%prec.left 'name'` | optional | `prec.left([N or 'name',] ...)` |
+| `%prec.right` or `%prec.right N` or `%prec.right 'name'` | optional | `prec.right([N or 'name',] ...)` |
+| `%prec.dynamic N` or `%prec.dynamic 'name'` | required | `prec.dynamic(N, ...)` or `prec.dynamic('name', ...)` |
 
-The level `N` is a signed integer: negative levels such as `%prec -1` are
-allowed and map to `prec(-1, ...)`. Tree-sitter grammars commonly use
-negative precedence to disfavour an interpretation.
+The level is either a signed integer or a quoted name, never both. An
+integer level such as `%prec -1` allows negative values and maps to
+`prec(-1, ...)`; tree-sitter grammars commonly use negative precedence to
+disfavour an interpretation. A named level such as `%prec 'unary'` must
+match a string item declared in some [`%precedences`](03-directives.md#precedences)
+group — referencing an undeclared name is an **error**.
 
 To annotate a sub-expression rather than a whole alternative, wrap it in
 parentheses with `%prec` inside:

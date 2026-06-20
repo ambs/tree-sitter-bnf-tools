@@ -26,6 +26,8 @@ pub struct Grammar {
     pub conflicts: Vec<ConflictGroup>,
     /// Precedences directive data
     pub precedences: Vec<PrecedenceGroup>,
+    /// Names referenced by rule-level `%prec` annotations, accumulated by the visitor.
+    pub prec_name_refs: Vec<DirectiveItem>,
     /// Rule names declared with `%inline`.
     pub inline: Vec<DirectiveItem>,
     /// Rule names declared with `%supertypes`.
@@ -68,6 +70,7 @@ impl Grammar {
             reserved_sets: Vec::new(),
             rhs_nonterminals: HashSet::new(),
             parse_diagnostics: Vec::new(),
+            prec_name_refs: Vec::new(),
         }
     }
 

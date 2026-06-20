@@ -1,4 +1,4 @@
-use crate::dom::{NameOrLiteral, PrecedenceGroup};
+use crate::dom::{NameOrLiteral, PrecLevel, PrecedenceGroup};
 
 /// Pretty-printer that re-emits a [`Grammar`] as canonical BNF text.
 ///
@@ -154,7 +154,7 @@ fn format_node_top(node: &GrammarNode) -> String {
             format!(
                 "{} {}",
                 format_sequence_items(inner),
-                prec_annotation(kind, *level)
+                prec_annotation(kind, level)
             )
         }
         GrammarNode::Sequence(items) => items
@@ -204,7 +204,7 @@ fn format_node_nested(node: &GrammarNode) -> String {
             format!(
                 "({} {})",
                 format_sequence_items(inner),
-                prec_annotation(kind, *level)
+                prec_annotation(kind, level)
             )
         }
         GrammarNode::Reserved(name, inner) => {
@@ -253,7 +253,7 @@ fn format_sequence_items(node: &GrammarNode) -> String {
 }
 
 /// Builds the `%prec[.left|.right|.dynamic] [level]` annotation string.
-fn prec_annotation(kind: &PrecKind, level: Option<i32>) -> String {
+fn prec_annotation(kind: &PrecKind, level: &Option<PrecLevel>) -> String {
     let kw = match kind {
         PrecKind::Plain => "prec",
         PrecKind::Left => "prec.left",
@@ -261,7 +261,8 @@ fn prec_annotation(kind: &PrecKind, level: Option<i32>) -> String {
         PrecKind::Dynamic => "prec.dynamic",
     };
     match level {
-        Some(n) => format!("%{} {}", kw, n),
+        Some(PrecLevel::Integer(i)) => format!("%{} {}", kw, i),
+        Some(PrecLevel::Name(n)) => format!("%{} {}", kw, n),
         None => format!("%{}", kw),
     }
 }
@@ -603,22 +604,62 @@ mod tests {
     }
 
     #[test]
+    /// A top-level `Prec` with an integer level formats without parens: `body %kind level`.
     fn prec_top_level_no_parens() {
         assert_eq!(
-            format_node_top(&Prec(PrecKind::Left, Some(1), Box::new(nt("a")))),
+            format_node_top(&Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(nt("a"))
+            )),
             "a %prec.left 1"
         );
     }
 
     #[test]
+    /// A top-level `Prec` with a named level prints the level verbatim (already quoted),
+    /// with no parens, same as the integer case.
+    fn prec_top_level_no_parens_named() {
+        assert_eq!(
+            format_node_top(&Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Name("'unary'".into())),
+                Box::new(nt("a"))
+            )),
+            "a %prec.left 'unary'"
+        );
+    }
+
+    #[test]
+    /// A nested `Prec` (inside a quantifier, field, etc.) with an integer level gets
+    /// wrapped in parens so it can't be misread as part of the surrounding expression.
     fn prec_nested_gets_parens() {
         assert_eq!(
-            format_node_nested(&Prec(PrecKind::Left, Some(1), Box::new(nt("a")))),
+            format_node_nested(&Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(nt("a"))
+            )),
             "(a %prec.left 1)"
         );
     }
 
     #[test]
+    /// Same as `prec_nested_gets_parens`, but for a named level: parens are still added,
+    /// and the name still prints verbatim.
+    fn prec_nested_gets_parens_named() {
+        assert_eq!(
+            format_node_nested(&Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Name("'unary'".into())),
+                Box::new(nt("a"))
+            )),
+            "(a %prec.left 'unary')"
+        );
+    }
+
+    #[test]
+    /// A `Prec` with no level at all omits the level entirely: just `body %kind`.
     fn prec_no_level() {
         assert_eq!(
             format_node_top(&Prec(PrecKind::Right, None, Box::new(nt("a")))),
@@ -627,11 +668,42 @@ mod tests {
     }
 
     #[test]
+    /// A negative integer level prints its sign verbatim (`-1`), not just non-negative levels.
     fn prec_negative_level() {
         assert_eq!(
-            format_node_top(&Prec(PrecKind::Plain, Some(-1), Box::new(nt("a")))),
+            format_node_top(&Prec(
+                PrecKind::Plain,
+                Some(PrecLevel::Integer(-1)),
+                Box::new(nt("a"))
+            )),
             "a %prec -1"
         );
+    }
+
+    #[test]
+    /// A rule with a named `%prec` level formats and re-parses to the same body (round-trip).
+    fn prec_named_level_round_trips_through_parse() {
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([
+            p(
+                "expr",
+                Prec(
+                    PrecKind::Plain,
+                    Some(PrecLevel::Name("'unary'".into())),
+                    Box::new(nt("a")),
+                ),
+            ),
+            p("a", lit("'x'")),
+        ]);
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'unary'".into())], 1)];
+        let formatted = format_grammar(&g);
+        assert!(formatted.contains("%prec 'unary'"));
+        let (reparsed, diags) = crate::visitors::parse_source(&formatted).unwrap();
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert!(matches!(
+            &reparsed.productions["expr"].body,
+            Prec(PrecKind::Plain, Some(PrecLevel::Name(name)), _) if name == "'unary'"
+        ));
     }
 
     #[test]

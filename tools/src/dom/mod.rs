@@ -37,7 +37,7 @@ pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup
 pub use error::ParseError;
 pub use format::format_grammar;
 pub use highlights::Highlights;
-pub use nodes::{GrammarNode, PrecKind};
+pub use nodes::{GrammarNode, PrecKind, PrecLevel};
 pub use production::Production;
 pub use rename::rename_grammar;
 pub use scaffold::Scaffold;

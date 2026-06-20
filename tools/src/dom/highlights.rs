@@ -168,6 +168,8 @@ impl Display for Highlights<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::dom::PrecLevel;
+
     use super::*;
 
     #[test]
@@ -339,7 +341,7 @@ mod tests {
     fn has_terminal_prec() {
         let node = GrammarNode::Prec(
             crate::dom::PrecKind::Plain,
-            Some(1),
+            Some(PrecLevel::Integer(1)),
             Box::new(GrammarNode::TerminalLiteral("'+'".into())),
         );
         assert!(has_terminal(&node));

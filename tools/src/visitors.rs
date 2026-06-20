@@ -2,7 +2,8 @@ use crate::dom::GrammarNode::{self, *};
 use crate::dom::ParseError::SyntaxError;
 use crate::dom::directive::{ConflictGroup, DirectiveItem, NameOrLiteral, loc};
 use crate::dom::{
-    Diagnostic, Grammar, ParseError, PrecKind, PrecedenceGroup, Production, ReservedEntry,
+    Diagnostic, Grammar, ParseError, PrecKind, PrecLevel, PrecedenceGroup, Production,
+    ReservedEntry,
 };
 use crate::util::syntax_error_diagnostics;
 use std::collections::HashSet;
@@ -322,7 +323,12 @@ fn visit_precedences_directive(
             let items = (0..child.named_child_count() as u32)
                 .map(|j| {
                     let item_node = child.named_child(j).expect("named child index in bounds");
-                    visit_name_or_literal(&item_node, ctx)
+                    let name_or_literal = visit_name_or_literal(&item_node, ctx);
+                    if let NameOrLiteral::Literal(literal) = name_or_literal {
+                        NameOrLiteral::Literal(normalize_literal(literal.as_str()))
+                    } else {
+                        name_or_literal
+                    }
                 })
                 .collect();
             groups.push(PrecedenceGroup {
@@ -515,11 +521,11 @@ fn visit_symbol(
     )
 }
 
-/// Extracts the precedence kind and optional numeric level from a `precAnnotation` node.
+/// Extracts the precedence kind and optional level (integer or name) from a `precAnnotation` node.
 fn parse_prec_annotation(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
-) -> Result<(PrecKind, Option<i32>), ParseError> {
+) -> Result<(PrecKind, Option<PrecLevel>), ParseError> {
     let kind_node = node
         .child_by_field_name("kind")
         .expect("precAnnotation has kind field");
@@ -535,10 +541,13 @@ fn parse_prec_annotation(
     };
     let level = if let Some(n) = node.child_by_field_name("level") {
         let text = n.utf8_text(ctx.source.as_bytes()).expect("valid UTF-8");
-        Some(
+        Some(PrecLevel::Integer(
             text.parse::<i32>()
                 .map_err(|_| ParseError::MalformedProduction)?,
-        )
+        ))
+    } else if let Some(name) = node.child_by_field_name("name") {
+        let text = normalize_literal(name.utf8_text(ctx.source.as_bytes()).expect("valid UTF-8"));
+        Some(PrecLevel::Name(text))
     } else {
         None
     };
@@ -574,7 +583,16 @@ fn visit_symbol_seq(
     };
 
     Ok(match prec_annotation {
-        Some((kind, level)) => Prec(kind, level, Box::new(body)),
+        Some((kind, level)) => {
+            if let Some(PrecLevel::Name(prec_name)) = &level {
+                grammar.prec_name_refs.push(DirectiveItem {
+                    name: prec_name.clone(),
+                    line: node.start_position().row + 1,
+                    filename: ctx.filename.to_string(),
+                })
+            }
+            Prec(kind, level, Box::new(body))
+        }
         None => body,
     })
 }
@@ -643,6 +661,13 @@ fn visit_prec_group(
         .child_by_field_name("annotation")
         .expect("precGroup has annotation field");
     let (kind, level) = parse_prec_annotation(&annotation, ctx)?;
+    if let Some(PrecLevel::Name(prec_name)) = &level {
+        grammar.prec_name_refs.push(DirectiveItem {
+            name: prec_name.clone(),
+            line: node.start_position().row + 1,
+            filename: ctx.filename.to_string(),
+        })
+    }
     Ok(Prec(kind, level, Box::new(body)))
 }
 
