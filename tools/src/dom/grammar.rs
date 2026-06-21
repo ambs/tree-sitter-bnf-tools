@@ -64,6 +64,23 @@ impl Grammar {
         not_referenced
     }
 
+    /// Returns an error for every `%externals` name that is also defined as a rule.
+    fn externals_check(&self) -> Vec<Diagnostic> {
+        self.externals
+            .iter()
+            .filter_map(|item| {
+                let NameOrLiteral::Name(name) = item else {
+                    return None;
+                };
+                let production = self.productions.get(name)?;
+                Some(Diagnostic::error(format!(
+                    "%externals declares '{name}', but it is also defined as a rule ({})",
+                    loc(&production.filename, production.line)
+                )))
+            })
+            .collect()
+    }
+
     /// Checks rule-level `%prec 'name'` annotations against declared `%precedences` names.
     ///
     /// Errors for each `prec_name_refs` entry whose normalized name has no matching
@@ -366,6 +383,7 @@ impl Grammar {
         diagnostics.extend(self.reserved_check(&known));
         diagnostics.extend(self.unreachable_rules_check());
         diagnostics.extend(self.prec_name_check());
+        diagnostics.extend(self.externals_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
     }
@@ -405,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    /// Errors when a `%conflicts` group names a rule that has no definition.
     fn conflicts_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.conflicts = vec![cg(&["a", "ghost"], 0)];
@@ -415,6 +434,7 @@ mod tests {
     }
 
     #[test]
+    /// No errors when every rule named in `%conflicts` is defined.
     fn conflicts_check_no_errors_when_all_rules_defined() {
         let mut g = Grammar::from_rules([
             p("a", TerminalLiteral("'x'".into())),
@@ -425,6 +445,7 @@ mod tests {
     }
 
     #[test]
+    /// Errors when `%supertypes` names a rule that has no definition.
     fn supertypes_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.supertypes = vec![di("ghost", 0)];
@@ -435,6 +456,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when the rule named in `%supertypes` is defined.
     fn supertypes_check_no_errors_when_all_rules_defined() {
         let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
         g.supertypes = vec![di("expression", 0)];
@@ -442,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    /// Errors when `%inline` names a rule that has no definition.
     fn inline_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.inline = vec![di("ghost", 0)];
@@ -452,6 +475,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when the rule named in `%inline` is defined.
     fn inline_check_no_errors_when_all_rules_defined() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.inline = vec![di("a", 0)];
@@ -461,6 +485,7 @@ mod tests {
     // ── precedences_check ────────────────────────────────────────────────────
 
     #[test]
+    /// Errors when a `%precedences` group's `Name` item has no matching rule.
     fn precedences_check_errors_on_undefined_name() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
@@ -473,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    /// A `%precedences` group's `Literal` item is never checked against rule names.
     fn precedences_check_literal_never_errors() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
@@ -482,6 +508,7 @@ mod tests {
     }
 
     #[test]
+    /// No errors when every `Name` item across a `%precedences` group is defined.
     fn precedences_check_no_errors_when_all_defined() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
@@ -502,6 +529,7 @@ mod tests {
     // ── reserved_check ───────────────────────────────────────────────────────
 
     #[test]
+    /// Errors when a `%reserved` set's `Name` item has no matching rule.
     fn reserved_check_errors_on_undefined_rule_name() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::re;
@@ -514,6 +542,7 @@ mod tests {
     }
 
     #[test]
+    /// A `%reserved` set's `Literal` item is never checked against rule names.
     fn reserved_check_literal_never_errors() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::re;
@@ -523,6 +552,7 @@ mod tests {
     }
 
     #[test]
+    /// Errors when a rule-level `%reserved` annotation names a set that was never declared.
     fn reserved_check_errors_on_undeclared_set_reference() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.reserved_set_refs = vec![di("ghost_set", 0)];
@@ -542,6 +572,7 @@ mod tests {
     }
 
     #[test]
+    /// No errors when the reserved set's rule is defined and the annotation matches a declared set.
     fn reserved_check_no_errors_when_all_correct() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::re;
@@ -554,6 +585,7 @@ mod tests {
     // ── prec_name_check ──────────────────────────────────────────────────────
 
     #[test]
+    /// Errors when a `%prec 'name'` annotation has no matching `%precedences` literal.
     fn prec_name_check_errors_on_undeclared_name() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.prec_name_refs = vec![di("'unary'", 0)];
@@ -564,6 +596,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when the `%prec` name matches a declared `%precedences` literal.
     fn prec_name_check_no_errors_when_declared() {
         use crate::dom::NameOrLiteral;
         use crate::dom::test_utils::pg;
@@ -602,6 +635,7 @@ mod tests {
     }
 
     #[test]
+    /// Errors when `%extras` names a rule that has no definition.
     fn extras_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.extras = vec![di("/\\s/", 0), di("ghost", 0)];
@@ -612,6 +646,7 @@ mod tests {
     }
 
     #[test]
+    /// A pattern item (e.g. `/\s/`) in `%extras` is never checked against rule names.
     fn extras_check_no_error_for_pattern() {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.extras = vec![di("/\\s/", 0)];
@@ -619,6 +654,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when the `%extras` rule is defined, alongside an exempt pattern item.
     fn extras_check_no_errors_when_rule_defined() {
         let mut g = Grammar::from_rules([
             p("a", TerminalLiteral("'x'".into())),
@@ -629,6 +665,7 @@ mod tests {
     }
 
     #[test]
+    /// Errors for a rule-body reference that has no matching rule definition.
     fn undefined_refs_check_errors_on_missing_rule() {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("term".into());
@@ -639,6 +676,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when the referenced rule is defined.
     fn undefined_refs_check_no_error_when_defined() {
         let mut g = Grammar::from_rules([p("term", TerminalLiteral("'x'".into()))]);
         g.rhs_nonterminals.insert("term".into());
@@ -646,10 +684,40 @@ mod tests {
     }
 
     #[test]
+    /// Exactly one error is produced per distinct undefined name.
     fn undefined_refs_check_deduplicates() {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("ghost".into());
         assert_eq!(g.undefined_refs_check(&g.known_rules()).len(), 1);
+    }
+
+    // ── externals_check ──────────────────────────────────────────────────────
+
+    #[test]
+    /// Errors when a `%externals` name is also defined as a rule.
+    fn externals_check_errors_when_name_also_defined_as_rule() {
+        let mut g = Grammar::from_rules([p("foo", TerminalLiteral("'x'".into()))]);
+        g.externals = vec![NameOrLiteral::Name("foo".into())];
+        assert_eq!(
+            strs(&g.externals_check()),
+            vec!["error: %externals declares 'foo', but it is also defined as a rule (test.bnf:1)"]
+        );
+    }
+
+    #[test]
+    /// No error when a `%externals` name has no matching rule (the legitimate, scanner-defined case).
+    fn externals_check_no_error_for_undefined_external_name() {
+        let mut g = Grammar::new();
+        g.externals = vec![NameOrLiteral::Name("token".into())];
+        assert!(g.externals_check().is_empty());
+    }
+
+    #[test]
+    /// A `Literal` item in `%externals` never collides with a rule, even if a rule shares its text.
+    fn externals_check_no_error_for_literal_item() {
+        let mut g = Grammar::from_rules([p("'bar'", TerminalLiteral("'x'".into()))]);
+        g.externals = vec![NameOrLiteral::Literal("'bar'".into())];
+        assert!(g.externals_check().is_empty());
     }
 
     // ── externals in known set ───────────────────────────────────────────────
@@ -676,6 +744,23 @@ mod tests {
     }
 
     #[test]
+    /// End-to-end: `check()` reports the collision when `%externals` and a same-named rule
+    /// are both present, even though the name is also referenced in a rule body.
+    fn check_errors_when_externals_name_collides_with_rule() {
+        let mut g = Grammar::from_rules([
+            p("root", GrammarNode::NonTerminal("foo".into())),
+            p("foo", TerminalLiteral("'x'".into())),
+        ]);
+        g.rhs_nonterminals.insert("foo".into());
+        g.externals = vec![NameOrLiteral::Name("foo".into())];
+        assert_eq!(
+            strs(&g.check()),
+            vec!["error: %externals declares 'foo', but it is also defined as a rule (test.bnf:1)"]
+        );
+    }
+
+    #[test]
+    /// `check()` returns diagnostics sorted alphabetically by message, regardless of insertion order.
     fn check_diagnostics_are_sorted_by_message() {
         let mut g = Grammar::new();
         g.rhs_nonterminals.insert("zebra".into());
@@ -731,6 +816,7 @@ mod tests {
     }
 
     #[test]
+    /// Warns when a rule is never referenced by another rule or directive.
     fn unreachable_rules_warns_on_unreferenced_rule() {
         let g = Grammar::from_rules([
             p("root", TerminalLiteral("'x'".into())),
@@ -743,12 +829,14 @@ mod tests {
     }
 
     #[test]
+    /// No warning for the implicit root (first-declared) rule.
     fn unreachable_rules_no_warning_for_root() {
         let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         assert!(g.unreachable_rules_check().is_empty());
     }
 
     #[test]
+    /// No warning when a rule is referenced from another rule's body.
     fn unreachable_rules_no_warning_when_referenced_in_body() {
         let mut g = Grammar::from_rules([
             p("root", GrammarNode::NonTerminal("helper".into())),
@@ -759,6 +847,7 @@ mod tests {
     }
 
     #[test]
+    /// No warning for a rule that is only ever referenced via `%extras`.
     fn unreachable_rules_no_warning_for_extras_rule() {
         let mut g = Grammar::from_rules([
             p("root", TerminalLiteral("'x'".into())),
@@ -769,6 +858,7 @@ mod tests {
     }
 
     #[test]
+    /// Errors when `%axiom` names a rule that has no definition.
     fn axiom_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         g.declare_axiom(di("ghost", 3));
@@ -783,6 +873,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when the `%axiom` rule is defined.
     fn axiom_check_no_error_when_rule_defined() {
         let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         g.declare_axiom(di("root", 1));
@@ -790,12 +881,14 @@ mod tests {
     }
 
     #[test]
+    /// No error when no `%axiom` directive is present.
     fn axiom_check_no_error_when_absent() {
         let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         assert!(check_directive_ref(g.axiom_directive(), "%axiom", &g.known_rules()).is_empty());
     }
 
     #[test]
+    /// When `%axiom` is declared, the first-declared rule loses its implicit-root exemption.
     fn unreachable_rules_axiom_replaces_implicit_root() {
         // `first` is the first-declared rule but not the axiom; it should be flagged.
         let mut g = Grammar::from_rules([
@@ -809,6 +902,7 @@ mod tests {
     }
 
     #[test]
+    /// No warning for the rule declared as `%axiom`.
     fn unreachable_rules_no_warning_for_axiom_rule() {
         let mut g = Grammar::from_rules([p("entry", TerminalLiteral("'x'".into()))]);
         g.declare_axiom(di("entry", 1));
@@ -816,6 +910,7 @@ mod tests {
     }
 
     #[test]
+    /// Declaring `%axiom` more than once in the same source is a parse-time error.
     fn duplicate_axiom_is_an_error() {
         let src = "%axiom foo\n%axiom bar\nfoo -> 'x' ;\nbar -> 'y' ;\n";
         let (_, diags) = crate::visitors::parse_source(src).unwrap();
@@ -867,6 +962,7 @@ mod tests {
     }
 
     #[test]
+    /// Right recursion is not left recursion; `check` must not flag it as left-recursive.
     fn check_no_warning_for_right_recursive_rule() {
         use crate::dom::GrammarNode::{Choice, NonTerminal, Sequence};
         let g = Grammar::from_rules([p(
@@ -961,6 +1057,7 @@ mod tests {
     // ── word_check ────────────────────────────────────────────────────────────
 
     #[test]
+    /// Errors when `%word` names a rule that has no definition.
     fn word_check_errors_on_undefined_rule() {
         let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         g.declare_word(di("ghost", 3));
@@ -975,6 +1072,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when the `%word` rule is defined.
     fn word_check_no_error_when_rule_defined() {
         let mut g = Grammar::from_rules([p("ident", TerminalLiteral("'x'".into()))]);
         g.declare_word(di("ident", 1));
@@ -982,6 +1080,7 @@ mod tests {
     }
 
     #[test]
+    /// No error when no `%word` directive is present.
     fn word_check_no_error_when_absent() {
         let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         assert!(check_directive_ref(g.word.as_ref(), "%word", &g.known_rules()).is_empty());

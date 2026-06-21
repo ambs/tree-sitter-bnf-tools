@@ -79,6 +79,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `check` no longer reports left recursion as an error — tree-sitter (GLR)
   supports it. The counts remain in `check --summary`. (#197)
 
+### Fixed
+
+#### `ts-bnf-tool`
+- `check` now errors when a `%externals` name is also given a rule
+  definition, instead of staying silent until `tree-sitter generate` fails
+  with `ExternalTokenNonTerminal`. (#246)
+
 ## [0.3.0] - 2026-06-11
 
 ### Added
