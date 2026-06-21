@@ -172,7 +172,9 @@ externals: $ => [$.indent, $.dedent, 'string_content'],
 
 Multiple `%externals` lines are additive — each adds items to the list.
 Declared names are exempt from undefined-reference errors: they are defined
-by the external scanner, not by any rule in the BNF file.
+by the external scanner, not by any rule in the BNF file. A name cannot be
+declared in `%externals` *and* given a rule definition — `check` reports an
+error if it is.
 
 ## `%axiom`
 

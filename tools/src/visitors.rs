@@ -1167,7 +1167,6 @@ mod tests {
         let (g, diags) = parse_source(indoc! {"
             %externals foo, 'bar'
             root -> foo ;
-            foo -> /a/ ;
         "})
         .unwrap();
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -1187,7 +1186,6 @@ mod tests {
             %externals a
             %externals b, c
             root -> a b c ;
-            a -> /x/ ;
         "})
         .unwrap();
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
