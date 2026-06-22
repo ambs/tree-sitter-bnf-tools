@@ -90,6 +90,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tree-sitter generate` already rejects such a grammar with "A grammar's
   start rule must be visible"; `check` previously had no equivalent
   diagnostic. (#241)
+- `check` now also errors when the resolved start rule is hidden because
+  it's listed in `%supertypes`, which unconditionally hides a rule even
+  without a `_` prefix. Previously neither `check` nor upstream
+  `tree-sitter generate` rejected this case, producing a generated parser
+  whose root node is flagged invisible yet unavoidably appears at the root
+  of the syntax tree. (#253)
 
 ## [0.3.0] - 2026-06-11
 

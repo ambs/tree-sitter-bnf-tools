@@ -154,6 +154,10 @@ doesn't start with `_`:
 %supertypes expression, statement, declaration
 ```
 
+A supertype rule cannot also be the grammar's resolved start rule (see
+`%axiom` below) — `check` reports an **error** if it is, since the start rule
+must be visible.
+
 ## `%externals`
 
 Declares tokens produced by an external scanner (a hand-written C lexer)
@@ -198,8 +202,9 @@ declaration order.
 Declaring `%axiom` more than once is an **error**, as is naming a rule that is
 not defined anywhere in the file. The resolved start rule — whether set by
 `%axiom` or, absent `%axiom`, the implicit first-declared rule — also cannot
-be hidden (a `_`-prefixed name): tree-sitter requires the start rule to be
-visible, and `check` reports an **error** if it is not.
+be hidden: tree-sitter requires the start rule to be visible, and `check`
+reports an **error** if it is not, whether the rule is hidden by a
+`_`-prefixed name or because it's also listed in `%supertypes`.
 
 ## `%include`
 
