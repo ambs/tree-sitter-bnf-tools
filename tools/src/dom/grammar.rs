@@ -12,7 +12,8 @@ use super::types::Grammar;
 
 impl Grammar {
     /// Returns an error when the resolved start rule (via `%axiom`, or the implicit
-    /// first-declared rule) is hidden (its name starts with `_`).
+    /// first-declared rule) is hidden, either because its name starts with `_` or
+    /// because it's listed in `%supertypes` (which unconditionally hides a rule).
     ///
     /// Upstream `tree-sitter generate` requires the start rule to be visible; the
     /// diagnostic's location is the `%axiom` directive's line when `%axiom` produced
@@ -21,9 +22,14 @@ impl Grammar {
         let Some(root) = self.root_rule() else {
             return vec![];
         };
-        if !root.starts_with('_') {
+
+        let reason = if root.starts_with('_') {
+            "rule names starting with '_' are not allowed as the grammar's start symbol"
+        } else if self.supertypes.iter().any(|item| item.name == root) {
+            "rules listed in %supertypes are hidden and cannot be the grammar's start symbol"
+        } else {
             return vec![];
-        }
+        };
 
         let (line, filename) = match self.axiom_directive() {
             Some(DirectiveItem {
@@ -39,7 +45,7 @@ impl Grammar {
         };
 
         vec![Diagnostic::error(format!(
-            "start rule '{root}' cannot be hidden (rule names starting with '_' are not allowed as the grammar's start symbol) ({})",
+            "start rule '{root}' cannot be hidden ({reason}) ({})",
             loc(filename, line)
         ))]
     }
@@ -1164,6 +1170,52 @@ mod tests {
         assert!(g.hidden_start_rule_check().is_empty());
 
         g.declare_axiom(di("b", 1));
+        assert!(g.hidden_start_rule_check().is_empty());
+    }
+
+    #[test]
+    /// Errors when there is no `%axiom` and the implicit first-declared rule is hidden
+    /// via `%supertypes` membership, using that rule's own declaration location.
+    fn hidden_start_rule_check_errors_when_implicit_first_rule_is_supertype() {
+        let mut g = Grammar::from_rules([
+            p("expr", TerminalLiteral("'x'".into())),
+            p("other", TerminalLiteral("'y'".into())),
+        ]);
+        g.supertypes = vec![di("expr", 0)];
+        assert_eq!(
+            strs(&g.hidden_start_rule_check()),
+            vec![
+                "error: start rule 'expr' cannot be hidden (rules listed in %supertypes are hidden and cannot be the grammar's start symbol) (test.bnf:1)"
+            ]
+        );
+    }
+
+    #[test]
+    /// Errors when `%axiom` names a rule that's hidden via `%supertypes` membership,
+    /// using the `%axiom` directive's own location.
+    fn hidden_start_rule_check_errors_when_axiom_is_supertype() {
+        let mut g = Grammar::from_rules([
+            p("expr", TerminalLiteral("'x'".into())),
+            p("other", TerminalLiteral("'y'".into())),
+        ]);
+        g.supertypes = vec![di("expr", 0)];
+        g.declare_axiom(di("expr", 5));
+        assert_eq!(
+            strs(&g.hidden_start_rule_check()),
+            vec![
+                "error: start rule 'expr' cannot be hidden (rules listed in %supertypes are hidden and cannot be the grammar's start symbol) (line 5)"
+            ]
+        );
+    }
+
+    #[test]
+    /// No error when `%supertypes` lists a rule other than the resolved start rule.
+    fn hidden_start_rule_check_no_error_when_supertype_is_not_start_rule() {
+        let mut g = Grammar::from_rules([
+            p("root", TerminalLiteral("'x'".into())),
+            p("expr", TerminalLiteral("'y'".into())),
+        ]);
+        g.supertypes = vec![di("expr", 0)];
         assert!(g.hidden_start_rule_check().is_empty());
     }
 
