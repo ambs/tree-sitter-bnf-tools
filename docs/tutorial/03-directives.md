@@ -158,6 +158,12 @@ A supertype rule cannot also be the grammar's resolved start rule (see
 `%axiom` below) — `check` reports an **error** if it is, since the start rule
 must be visible.
 
+A supertype rule's body also can't reduce to a pure token (e.g.
+`ident -> /[a-zA-Z_]+/ ;`), and every one of its alternatives must be exactly
+one step (`expr -> term | unary ;` is fine, `expr -> term | term '+' term ;`
+is not) — `check` reports an **error** for either shape, since upstream
+`tree-sitter generate` rejects both.
+
 ## `%externals`
 
 Declares tokens produced by an external scanner (a hand-written C lexer)
