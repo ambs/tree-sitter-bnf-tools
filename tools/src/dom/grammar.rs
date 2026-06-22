@@ -11,6 +11,39 @@ use super::summary::GrammarSummary;
 use super::types::Grammar;
 
 impl Grammar {
+    /// Returns an error when the resolved start rule (via `%axiom`, or the implicit
+    /// first-declared rule) is hidden (its name starts with `_`).
+    ///
+    /// Upstream `tree-sitter generate` requires the start rule to be visible; the
+    /// diagnostic's location is the `%axiom` directive's line when `%axiom` produced
+    /// the hidden root, or the rule's own declaration line otherwise.
+    fn hidden_start_rule_check(&self) -> Vec<Diagnostic> {
+        let Some(root) = self.root_rule() else {
+            return vec![];
+        };
+        if !root.starts_with('_') {
+            return vec![];
+        }
+
+        let (line, filename) = match self.axiom_directive() {
+            Some(DirectiveItem {
+                name,
+                line,
+                filename,
+            }) if name == root => (*line, filename.as_str()),
+            _ => self
+                .productions
+                .get(root)
+                .map(|p| (p.line, p.filename.as_str()))
+                .unwrap_or((0, "")),
+        };
+
+        vec![Diagnostic::error(format!(
+            "start rule '{root}' cannot be hidden (rule names starting with '_' are not allowed as the grammar's start symbol) ({})",
+            loc(filename, line)
+        ))]
+    }
+
     /// Checks `%reserved` directives and rule-level annotations for undefined references.
     ///
     /// Errors for each `ReservedEntry` rule name not in `known`, and for each rule-level
@@ -384,6 +417,7 @@ impl Grammar {
         diagnostics.extend(self.unreachable_rules_check());
         diagnostics.extend(self.prec_name_check());
         diagnostics.extend(self.externals_check());
+        diagnostics.extend(self.hidden_start_rule_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
         diagnostics
     }
@@ -1084,6 +1118,53 @@ mod tests {
     fn word_check_no_error_when_absent() {
         let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         assert!(check_directive_ref(g.word.as_ref(), "%word", &g.known_rules()).is_empty());
+    }
+
+    // ── hidden_start_rule_check ──────────────────────────────────────────────
+
+    #[test]
+    /// Errors when `%axiom` names a hidden rule, using the `%axiom` directive's own location.
+    fn hidden_start_rule_check_errors_when_axiom_is_hidden() {
+        let mut g = Grammar::from_rules([
+            p("_hidden", TerminalLiteral("'x'".into())),
+            p("visible", TerminalLiteral("'y'".into())),
+        ]);
+        g.declare_axiom(di("_hidden", 5));
+        assert_eq!(
+            strs(&g.hidden_start_rule_check()),
+            vec![
+                "error: start rule '_hidden' cannot be hidden (rule names starting with '_' are not allowed as the grammar's start symbol) (line 5)"
+            ]
+        );
+    }
+
+    #[test]
+    /// Errors when there is no `%axiom` and the implicit first-declared rule is hidden,
+    /// using that rule's own declaration location.
+    fn hidden_start_rule_check_errors_when_implicit_first_rule_is_hidden() {
+        let g = Grammar::from_rules([
+            p("_hidden", TerminalLiteral("'x'".into())),
+            p("visible", TerminalLiteral("'y'".into())),
+        ]);
+        assert_eq!(
+            strs(&g.hidden_start_rule_check()),
+            vec![
+                "error: start rule '_hidden' cannot be hidden (rule names starting with '_' are not allowed as the grammar's start symbol) (test.bnf:1)"
+            ]
+        );
+    }
+
+    #[test]
+    /// No error when the resolved start rule is visible, whether via `%axiom` or implicitly.
+    fn hidden_start_rule_check_no_error_when_visible() {
+        let mut g = Grammar::from_rules([
+            p("a", TerminalLiteral("'x'".into())),
+            p("b", TerminalLiteral("'y'".into())),
+        ]);
+        assert!(g.hidden_start_rule_check().is_empty());
+
+        g.declare_axiom(di("b", 1));
+        assert!(g.hidden_start_rule_check().is_empty());
     }
 
     #[test]
