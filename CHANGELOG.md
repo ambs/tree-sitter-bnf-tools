@@ -85,6 +85,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `check` now errors when a `%externals` name is also given a rule
   definition, instead of staying silent until `tree-sitter generate` fails
   with `ExternalTokenNonTerminal`. (#246)
+- `check` now errors when the resolved start rule — set via `%axiom`, or
+  implicitly the first-declared rule — is hidden (`_`-prefixed). Upstream
+  `tree-sitter generate` already rejects such a grammar with "A grammar's
+  start rule must be visible"; `check` previously had no equivalent
+  diagnostic. (#241)
 
 ## [0.3.0] - 2026-06-11
 

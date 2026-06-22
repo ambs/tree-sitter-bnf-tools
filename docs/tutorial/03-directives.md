@@ -196,7 +196,10 @@ tree-sitter uses it as the start symbol, while the BNF file keeps its original
 declaration order.
 
 Declaring `%axiom` more than once is an **error**, as is naming a rule that is
-not defined anywhere in the file.
+not defined anywhere in the file. The resolved start rule — whether set by
+`%axiom` or, absent `%axiom`, the implicit first-declared rule — also cannot
+be hidden (a `_`-prefixed name): tree-sitter requires the start rule to be
+visible, and `check` reports an **error** if it is not.
 
 ## `%include`
 
