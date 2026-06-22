@@ -116,6 +116,69 @@ impl GrammarNode {
             GrammarNode::Reserved(_, inner) => inner.contains_nonterminal(),
         }
     }
+
+    /// Returns `true` if this node reduces to a bare terminal (literal or
+    /// regex), optionally wrapped in transparent annotations
+    /// ([`GrammarNode::Token`], [`GrammarNode::TokenImmediate`],
+    /// [`GrammarNode::Field`], [`GrammarNode::Alias`], [`GrammarNode::Prec`],
+    /// [`GrammarNode::Reserved`]). Anything with real structure underneath
+    /// (a [`GrammarNode::Sequence`], [`GrammarNode::Choice`], a reference to
+    /// another rule, etc.) is not a pure token.
+    pub fn is_pure_token(&self) -> bool {
+        match self {
+            GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => true,
+            GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner)
+            | GrammarNode::Field(_, inner)
+            | GrammarNode::Alias(inner, _)
+            | GrammarNode::Prec(_, _, inner)
+            | GrammarNode::Reserved(_, inner) => inner.is_pure_token(),
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if this node occupies exactly one step within its
+    /// enclosing alternative: a bare terminal, a rule reference, or a
+    /// `?`/`*`/`+` repetition, optionally wrapped in transparent annotations
+    /// ([`GrammarNode::Token`], [`GrammarNode::TokenImmediate`],
+    /// [`GrammarNode::Field`], [`GrammarNode::Alias`], [`GrammarNode::Prec`],
+    /// [`GrammarNode::Reserved`]). A multi-element [`GrammarNode::Sequence`]
+    /// is not atomic.
+    pub fn is_atomic_node(&self) -> bool {
+        match self {
+            GrammarNode::TerminalLiteral(_)
+            | GrammarNode::TerminalPattern(_)
+            | GrammarNode::NonTerminal(_)
+            | GrammarNode::Optional(_)
+            | GrammarNode::OneOrMore(_)
+            | GrammarNode::ZeroOrMore(_) => true,
+            GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner)
+            | GrammarNode::Field(_, inner)
+            | GrammarNode::Alias(inner, _)
+            | GrammarNode::Prec(_, _, inner)
+            | GrammarNode::Reserved(_, inner) => inner.is_atomic_node(),
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if every alternative of this production body has
+    /// exactly one step: if `self` is a [`GrammarNode::Choice`], every
+    /// element must be atomic; otherwise `self` is the production's only
+    /// alternative, so it must be atomic on its own.
+    pub fn single_choice_options(&self) -> bool {
+        match self {
+            GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner)
+            | GrammarNode::Field(_, inner)
+            | GrammarNode::Alias(inner, _)
+            | GrammarNode::Prec(_, _, inner)
+            | GrammarNode::Reserved(_, inner) => inner.single_choice_options(),
+            GrammarNode::Choice(children) => children.iter().all(|c| c.is_atomic_node()),
+            node if node.is_atomic_node() => true,
+            _ => false,
+        }
+    }
 }
 
 impl Display for GrammarNode {
@@ -342,5 +405,245 @@ mod tests {
             Box::new(NonTerminal("label".into())),
         );
         assert!(!node.contains_nonterminal());
+    }
+
+    // ── is_pure_token ────────────────────────────────────────────────────────
+
+    #[test]
+    /// A bare string literal is a pure token.
+    fn terminal_literal_is_pure_token() {
+        assert!(TerminalLiteral("'x'".into()).is_pure_token());
+    }
+
+    #[test]
+    /// A bare regex pattern is a pure token.
+    fn terminal_pattern_is_pure_token() {
+        assert!(TerminalPattern("/a+/".into()).is_pure_token());
+    }
+
+    #[test]
+    /// A reference to another rule is never a pure token.
+    fn nonterminal_is_not_pure_token() {
+        assert!(!NonTerminal("a".into()).is_pure_token());
+    }
+
+    #[test]
+    /// A sequence has real structure, even if every element is a terminal.
+    fn sequence_of_terminals_is_not_pure_token() {
+        let node = Sequence(vec![
+            TerminalLiteral("'x'".into()),
+            TerminalPattern("/y/".into()),
+        ]);
+        assert!(!node.is_pure_token());
+    }
+
+    #[test]
+    /// A choice between terminals still has real structure.
+    fn choice_of_terminals_is_not_pure_token() {
+        let node = Choice(vec![
+            TerminalLiteral("'x'".into()),
+            TerminalLiteral("'y'".into()),
+        ]);
+        assert!(!node.is_pure_token());
+    }
+
+    #[test]
+    /// token(…)/token.immediate(…)/field(…)/prec(…)/reserved(…) wrapping a
+    /// bare terminal are all transparent.
+    fn annotation_wrappers_around_terminal_are_pure_tokens() {
+        assert!(Token(Box::new(TerminalPattern("/x/".into()))).is_pure_token());
+        assert!(TokenImmediate(Box::new(TerminalLiteral("'x'".into()))).is_pure_token());
+        assert!(Field("f".into(), Box::new(TerminalLiteral("'x'".into()))).is_pure_token());
+        assert!(
+            Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(TerminalLiteral("'x'".into())),
+            )
+            .is_pure_token()
+        );
+        assert!(Reserved("kw".into(), Box::new(TerminalLiteral("'x'".into()))).is_pure_token());
+    }
+
+    #[test]
+    /// alias(body, name) checks the body, not the display-label name.
+    fn alias_body_checked_for_pure_token() {
+        let node = Alias(
+            Box::new(TerminalLiteral("'x'".into())),
+            Box::new(NonTerminal("label".into())),
+        );
+        assert!(node.is_pure_token());
+    }
+
+    #[test]
+    /// Nested annotation wrappers around a bare terminal are still a pure token.
+    fn nested_annotation_wrappers_around_terminal_are_pure_token() {
+        let node = Token(Box::new(Field(
+            "f".into(),
+            Box::new(TerminalPattern("/x/".into())),
+        )));
+        assert!(node.is_pure_token());
+    }
+
+    #[test]
+    /// An annotation wrapper around something with real structure is not a
+    /// pure token.
+    fn annotation_wrapper_around_nonterminal_is_not_pure_token() {
+        assert!(!Token(Box::new(NonTerminal("a".into()))).is_pure_token());
+        assert!(
+            !Field(
+                "f".into(),
+                Box::new(Sequence(vec![NonTerminal("a".into())]))
+            )
+            .is_pure_token()
+        );
+    }
+
+    // ── is_atomic_node ───────────────────────────────────────────────────────
+
+    #[test]
+    /// Bare terminals are atomic.
+    fn terminals_are_atomic() {
+        assert!(TerminalLiteral("'x'".into()).is_atomic_node());
+        assert!(TerminalPattern("/a+/".into()).is_atomic_node());
+    }
+
+    #[test]
+    /// A rule reference is atomic.
+    fn nonterminal_is_atomic() {
+        assert!(NonTerminal("a".into()).is_atomic_node());
+    }
+
+    #[test]
+    /// `?`/`*`/`+` repetitions are atomic regardless of what they wrap, since
+    /// the repetition itself is still a single step.
+    fn repetitions_are_atomic_regardless_of_inner_structure() {
+        let multi_step = || Sequence(vec![NonTerminal("a".into()), NonTerminal("b".into())]);
+        assert!(Optional(Box::new(multi_step())).is_atomic_node());
+        assert!(ZeroOrMore(Box::new(multi_step())).is_atomic_node());
+        assert!(OneOrMore(Box::new(multi_step())).is_atomic_node());
+    }
+
+    #[test]
+    /// A multi-element sequence spans more than one step, so it is not atomic.
+    fn multi_element_sequence_is_not_atomic() {
+        let node = Sequence(vec![NonTerminal("a".into()), NonTerminal("b".into())]);
+        assert!(!node.is_atomic_node());
+    }
+
+    #[test]
+    /// A choice found where a single step is expected is not atomic.
+    fn choice_is_not_atomic() {
+        let node = Choice(vec![NonTerminal("a".into()), NonTerminal("b".into())]);
+        assert!(!node.is_atomic_node());
+    }
+
+    #[test]
+    /// token(…)/token.immediate(…)/field(…)/prec(…)/reserved(…) wrapping an
+    /// atomic node are all transparent.
+    fn annotation_wrappers_around_atomic_node_are_atomic() {
+        assert!(Token(Box::new(NonTerminal("a".into()))).is_atomic_node());
+        assert!(TokenImmediate(Box::new(NonTerminal("a".into()))).is_atomic_node());
+        assert!(Field("f".into(), Box::new(NonTerminal("a".into()))).is_atomic_node());
+        assert!(
+            Prec(
+                PrecKind::Left,
+                Some(PrecLevel::Integer(1)),
+                Box::new(NonTerminal("a".into())),
+            )
+            .is_atomic_node()
+        );
+        assert!(Reserved("kw".into(), Box::new(NonTerminal("a".into()))).is_atomic_node());
+    }
+
+    #[test]
+    /// alias(body, name) checks the body, not the display-label name.
+    fn alias_body_checked_for_atomic_node() {
+        let node = Alias(
+            Box::new(NonTerminal("a".into())),
+            Box::new(NonTerminal("label".into())),
+        );
+        assert!(node.is_atomic_node());
+    }
+
+    #[test]
+    /// An annotation wrapper around a multi-element sequence is not atomic.
+    fn annotation_wrapper_around_multi_element_sequence_is_not_atomic() {
+        let node = Token(Box::new(Sequence(vec![
+            NonTerminal("a".into()),
+            NonTerminal("b".into()),
+        ])));
+        assert!(!node.is_atomic_node());
+    }
+
+    // ── single_choice_options ────────────────────────────────────────────────
+
+    #[test]
+    /// A single, unwrapped alternative with one step is valid.
+    fn single_atomic_alternative_has_single_step() {
+        assert!(NonTerminal("term".into()).single_choice_options());
+    }
+
+    #[test]
+    /// A single, unwrapped alternative with more than one step is invalid.
+    fn single_multi_step_alternative_fails() {
+        let node = Sequence(vec![
+            NonTerminal("term".into()),
+            TerminalLiteral("'+'".into()),
+            NonTerminal("term".into()),
+        ]);
+        assert!(!node.single_choice_options());
+    }
+
+    #[test]
+    /// A precedence-annotated single alternative with one step is still valid.
+    fn annotation_wrapped_atomic_alternative_has_single_step() {
+        let node = Prec(
+            PrecKind::Left,
+            Some(PrecLevel::Integer(1)),
+            Box::new(NonTerminal("term".into())),
+        );
+        assert!(node.single_choice_options());
+    }
+
+    #[test]
+    /// A precedence-annotated single alternative with more than one step is
+    /// invalid.
+    fn annotation_wrapped_multi_step_alternative_fails() {
+        let node = Prec(
+            PrecKind::Left,
+            Some(PrecLevel::Integer(1)),
+            Box::new(Sequence(vec![
+                NonTerminal("term".into()),
+                TerminalLiteral("'+'".into()),
+                NonTerminal("term".into()),
+            ])),
+        );
+        assert!(!node.single_choice_options());
+    }
+
+    #[test]
+    /// `expr -> term | unary | binary ;` — every alternative is a single step.
+    fn choice_of_single_step_alternatives_passes() {
+        let node = Choice(vec![
+            NonTerminal("term".into()),
+            NonTerminal("unary".into()),
+            NonTerminal("binary".into()),
+        ]);
+        assert!(node.single_choice_options());
+    }
+
+    #[test]
+    /// `expr -> term | term '+' term ;` — the second alternative has three steps.
+    fn choice_with_one_multi_step_alternative_fails() {
+        let node = Choice(vec![
+            NonTerminal("term".into()),
+            Sequence(vec![
+                NonTerminal("term".into()),
+                TerminalLiteral("'+'".into()),
+                NonTerminal("term".into()),
+            ]),
+        ]);
+        assert!(!node.single_choice_options());
     }
 }

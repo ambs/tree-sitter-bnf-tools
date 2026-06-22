@@ -96,6 +96,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tree-sitter generate` rejected this case, producing a generated parser
   whose root node is flagged invisible yet unavoidably appears at the root
   of the syntax tree. (#253)
+- `check` now errors when a `%supertypes` rule's body reduces to a pure
+  token, or when one of its alternatives spans more than one step.
+  Previously both shapes passed `check` but failed real `tree-sitter
+  generate` with `SupertypeTerminal` or `InvalidSupertype` respectively. A
+  name declared only via `%externals` (no rule body) is now also reported
+  as an undefined rule, since a supertype must have an actual body to
+  check. (#245)
 
 ## [0.3.0] - 2026-06-11
 

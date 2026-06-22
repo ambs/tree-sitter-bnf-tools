@@ -235,21 +235,41 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns an error for every rule name in `%supertypes` that has no definition.
-    fn supertypes_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
+    /// Returns an error for every rule name in `%supertypes` that has no definition
+    /// (a name only declared via `%externals` does not count: a supertype must be an
+    /// actual rule with a body), plus, for each name that resolves to a defined rule,
+    /// an error for each of upstream `tree-sitter generate`'s two further constraints
+    /// it violates: a body that reduces to a pure token (`SupertypeTerminal`), or an
+    /// alternative spanning more than one step (`InvalidSupertype`).
+    fn supertypes_check(&self) -> Vec<Diagnostic> {
         self.supertypes
             .iter()
-            .filter(|item| !known.contains(item.name.as_str()))
-            .map(
+            .flat_map(
                 |DirectiveItem {
                      name,
                      line,
                      filename,
                  }| {
-                    Diagnostic::error(format!(
-                        "%supertypes references undefined rule '{name}' ({})",
-                        loc(filename, *line)
-                    ))
+                    let Some(production) = self.productions.get(name) else {
+                        return vec![Diagnostic::error(format!(
+                            "%supertypes references undefined rule '{name}' ({})",
+                            loc(filename, *line)
+                        ))];
+                    };
+                    let mut diagnostics = Vec::new();
+                    if production.body.is_pure_token() {
+                        diagnostics.push(Diagnostic::error(format!(
+                            "%supertypes rule '{name}' must not be a pure token ({})",
+                            loc(&production.filename, production.line)
+                        )));
+                    }
+                    if !production.body.single_choice_options() {
+                        diagnostics.push(Diagnostic::error(format!(
+                            "%supertypes rule '{name}' has an alternative with more than one step ({})",
+                            loc(&production.filename, production.line)
+                        )));
+                    }
+                    diagnostics
                 },
             )
             .collect()
@@ -415,7 +435,7 @@ impl Grammar {
         diagnostics.extend(check_directive_ref(self.word.as_ref(), "%word", &known));
         diagnostics.extend(self.conflicts_check(&known));
         diagnostics.extend(self.inline_check(&known));
-        diagnostics.extend(self.supertypes_check(&known));
+        diagnostics.extend(self.supertypes_check());
         diagnostics.extend(self.extras_check(&known));
         diagnostics.extend(self.precedences_check(&known));
         diagnostics.extend(self.undefined_refs_check(&known));
@@ -453,7 +473,7 @@ fn check_directive_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::GrammarNode::TerminalLiteral;
+    use crate::dom::GrammarNode::{NonTerminal, TerminalLiteral};
     use crate::dom::test_utils::{cg, di, p};
     use crate::dom::{GrammarNode, Severity};
 
@@ -490,17 +510,117 @@ mod tests {
         let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         g.supertypes = vec![di("ghost", 0)];
         assert_eq!(
-            strs(&g.supertypes_check(&g.known_rules())),
+            strs(&g.supertypes_check()),
             vec!["error: %supertypes references undefined rule 'ghost' (line 0)"]
         );
     }
 
     #[test]
-    /// No error when the rule named in `%supertypes` is defined.
+    /// No error when the rule named in `%supertypes` is defined with a
+    /// non-token, single-step body (a reference to another rule).
     fn supertypes_check_no_errors_when_all_rules_defined() {
-        let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
+        let mut g = Grammar::from_rules([
+            p("expression", NonTerminal("statement".into())),
+            p("statement", TerminalLiteral("'x'".into())),
+        ]);
         g.supertypes = vec![di("expression", 0)];
-        assert!(g.supertypes_check(&g.known_rules()).is_empty());
+        assert!(g.supertypes_check().is_empty());
+    }
+
+    #[test]
+    /// A name declared only via `%externals` (no rule body) is undefined for
+    /// `%supertypes` purposes — a supertype must be an actual rule.
+    fn supertypes_check_errors_on_external_only_name() {
+        use crate::dom::NameOrLiteral;
+
+        let mut g = Grammar::from_rules([p("expression", TerminalLiteral("'x'".into()))]);
+        g.externals = vec![NameOrLiteral::Name("foo".into())];
+        g.supertypes = vec![di("foo", 0)];
+        assert_eq!(
+            strs(&g.supertypes_check()),
+            vec!["error: %supertypes references undefined rule 'foo' (line 0)"]
+        );
+    }
+
+    #[test]
+    /// Errors when a `%supertypes` rule's body is a bare token (`SupertypeTerminal`);
+    /// the location points at the rule's own definition, not at the directive's
+    /// distinct, deliberately mismatched line/file.
+    fn supertypes_check_errors_on_terminal_rule() {
+        use crate::dom::Production;
+
+        let mut g = Grammar::from_rules([Production {
+            name: "ident".into(),
+            body: TerminalLiteral("'x'".into()),
+            line: 42,
+            filename: "ident.bnf".into(),
+        }]);
+        g.supertypes = vec![di("ident", 99)];
+        assert_eq!(
+            strs(&g.supertypes_check()),
+            vec!["error: %supertypes rule 'ident' must not be a pure token (ident.bnf:42)"]
+        );
+    }
+
+    #[test]
+    /// Errors when one alternative of a `%supertypes` rule has more than one
+    /// step (`InvalidSupertype`); the location points at the offending rule's
+    /// own definition, distinct from the other rule's and the directive's.
+    fn supertypes_check_errors_on_multi_step_alternative() {
+        use crate::dom::GrammarNode::{Choice, Sequence};
+        use crate::dom::Production;
+
+        let mut g = Grammar::from_rules([
+            Production {
+                name: "expr".into(),
+                body: Choice(vec![
+                    NonTerminal("term".into()),
+                    Sequence(vec![
+                        NonTerminal("term".into()),
+                        TerminalLiteral("'+'".into()),
+                        NonTerminal("term".into()),
+                    ]),
+                ]),
+                line: 7,
+                filename: "expr.bnf".into(),
+            },
+            Production {
+                name: "term".into(),
+                body: TerminalLiteral("'1'".into()),
+                line: 13,
+                filename: "term.bnf".into(),
+            },
+        ]);
+        g.supertypes = vec![di("expr", 99)];
+        assert_eq!(
+            strs(&g.supertypes_check()),
+            vec![
+                "error: %supertypes rule 'expr' has an alternative with more than one step (expr.bnf:7)"
+            ]
+        );
+    }
+
+    #[test]
+    /// No error when every alternative of a `%supertypes` rule is a single
+    /// step, mirroring `expr -> term | unary | binary ;`.
+    fn supertypes_check_no_errors_on_single_step_alternatives() {
+        use crate::dom::GrammarNode::Choice;
+
+        let mut g = Grammar::from_rules([
+            p(
+                "expr",
+                Choice(vec![
+                    NonTerminal("term".into()),
+                    NonTerminal("unary".into()),
+                    NonTerminal("binary".into()),
+                ]),
+            ),
+            p("term", TerminalLiteral("'1'".into())),
+            p("unary", TerminalLiteral("'-'".into())),
+            p("binary", TerminalLiteral("'+'".into())),
+        ]);
+        g.supertypes = vec![di("expr", 0)];
+        assert!(g.supertypes_check().is_empty());
     }
 
     #[test]
