@@ -30,6 +30,12 @@ word: $ => $.identifier,
 `%word` names a single rule. Declaring it more than once is an **error**, as is
 naming a rule that is not defined anywhere in the file.
 
+The named rule's body must reduce to a single bare literal or pattern (e.g.
+`identifier -> /[a-zA-Z_][a-zA-Z0-9_]*/ ;`, not a `seq`/`choice` built from
+other rules), and it must be the only rule with that exact body — `check`
+reports an **error** for either shape, since upstream `tree-sitter generate`
+rejects both.
+
 ## `%extras`
 
 Declares tokens that may appear anywhere in the input — typically whitespace

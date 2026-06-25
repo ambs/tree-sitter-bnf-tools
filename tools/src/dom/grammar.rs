@@ -266,6 +266,49 @@ impl Grammar {
             .collect()
     }
 
+    /// Returns an error when `%word`'s target rule has no definition, plus,
+    /// when it resolves to a defined rule, an error for each of upstream
+    /// `tree-sitter generate`'s `NonTerminalWordTokenError` constraints it
+    /// violates: a body that isn't a pure token, or a body identical to
+    /// another rule's (naming the conflicting rule, like upstream's
+    /// `conflicting_symbol_name`).
+    fn word_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
+        let Some(DirectiveItem {
+            name,
+            line,
+            filename,
+        }) = self.word.as_ref()
+        else {
+            return vec![];
+        };
+        if !known.contains(name.as_str()) {
+            return vec![Diagnostic::error(format!(
+                "%word references undefined rule '{name}' ({})",
+                loc(filename, *line)
+            ))];
+        }
+        let Some(production) = self.productions.get(name) else {
+            return vec![];
+        };
+        let mut diagnostics = Vec::new();
+        if !production.body.is_pure_token() {
+            diagnostics.push(Diagnostic::error(format!(
+                "%word rule '{name}' must be a pure token ({})",
+                loc(&production.filename, production.line)
+            )));
+        }
+        let body = production.body.to_string();
+        if let Some((conflicting_name, _)) = self.productions.iter().find(|(other_name, other)| {
+            other_name.as_str() != name && other.body.to_string() == body
+        }) {
+            diagnostics.push(Diagnostic::error(format!(
+                "%word rule '{name}' has the same body as rule '{conflicting_name}' ({})",
+                loc(&production.filename, production.line)
+            )));
+        }
+        diagnostics
+    }
+
     /// Returns an error for every rule name in `%supertypes` that has no definition
     /// (a name only declared via `%externals` does not count: a supertype must be an
     /// actual rule with a body), plus, for each name that resolves to a defined rule,
@@ -463,7 +506,7 @@ impl Grammar {
             "%axiom",
             &known,
         ));
-        diagnostics.extend(check_directive_ref(self.word.as_ref(), "%word", &known));
+        diagnostics.extend(self.word_check(&known));
         diagnostics.extend(self.conflicts_check(&known));
         diagnostics.extend(self.inline_check(&known));
         diagnostics.extend(self.supertypes_check());
@@ -1314,28 +1357,58 @@ mod tests {
         let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
         g.declare_word(di("ghost", 3));
         assert_eq!(
-            strs(&check_directive_ref(
-                g.word.as_ref(),
-                "%word",
-                &g.known_rules()
-            )),
+            strs(&g.word_check(&g.known_rules())),
             vec!["error: %word references undefined rule 'ghost' (line 3)"]
         );
     }
 
     #[test]
-    /// No error when the `%word` rule is defined.
+    /// No error when the `%word` rule is defined and its body is a pure token.
     fn word_check_no_error_when_rule_defined() {
         let mut g = Grammar::from_rules([p("ident", TerminalLiteral("'x'".into()))]);
         g.declare_word(di("ident", 1));
-        assert!(check_directive_ref(g.word.as_ref(), "%word", &g.known_rules()).is_empty());
+        assert!(g.word_check(&g.known_rules()).is_empty());
     }
 
     #[test]
     /// No error when no `%word` directive is present.
     fn word_check_no_error_when_absent() {
         let g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
-        assert!(check_directive_ref(g.word.as_ref(), "%word", &g.known_rules()).is_empty());
+        assert!(g.word_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    /// Errors when the `%word` rule's body isn't a pure token, e.g. a `seq`
+    /// referencing other rules, mirroring upstream's `NonTerminalWordTokenError`.
+    fn word_check_errors_on_non_token_body() {
+        let mut g = Grammar::from_rules([
+            p(
+                "identifier",
+                GrammarNode::Sequence(vec![NonTerminal("letter".into())]),
+            ),
+            p("letter", TerminalLiteral("'a'".into())),
+        ]);
+        g.declare_word(di("identifier", 1));
+        assert_eq!(
+            strs(&g.word_check(&g.known_rules())),
+            vec!["error: %word rule 'identifier' must be a pure token (test.bnf:1)"]
+        );
+    }
+
+    #[test]
+    /// Errors when the `%word` rule's body is structurally identical to another
+    /// rule's, naming the conflicting rule, mirroring upstream's
+    /// `conflicting_symbol_name`.
+    fn word_check_errors_on_duplicate_body() {
+        let mut g = Grammar::from_rules([
+            p("ident", TerminalLiteral("'x'".into())),
+            p("other_name", TerminalLiteral("'x'".into())),
+        ]);
+        g.declare_word(di("ident", 1));
+        assert_eq!(
+            strs(&g.word_check(&g.known_rules())),
+            vec!["error: %word rule 'ident' has the same body as rule 'other_name' (test.bnf:1)"]
+        );
     }
 
     // ── hidden_start_rule_check ──────────────────────────────────────────────
