@@ -7,6 +7,8 @@ use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+mod support;
+
 fn tool() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
 }
@@ -279,42 +281,15 @@ fn generate_does_not_overwrite_existing_tree_sitter_json() {
     );
 }
 
-/// Returns the installed tree-sitter CLI version as `(major, minor)`, or `None` if not found.
-fn tree_sitter_version() -> Option<(u32, u32)> {
-    let out = Command::new("tree-sitter").arg("--version").output().ok()?;
-    let s = String::from_utf8(out.stdout).ok()?;
-    // output: "tree-sitter 0.26.9"
-    let ver = s.trim().split_whitespace().nth(1)?;
-    let mut parts = ver.split('.');
-    let major: u32 = parts.next()?.parse().ok()?;
-    let minor: u32 = parts.next()?.parse().ok()?;
-    Some((major, minor))
-}
-
 #[test]
 fn generate_produces_abi_15_with_tree_sitter_json() {
-    let Some(version) = tree_sitter_version() else {
+    let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
     };
     if version < (0, 25) {
         return; // ABI 15 requires tree-sitter >= 0.25
     }
-    let path = write_tmp("ts_bnf_gen_abi.bnf", CLEAN_BNF);
-    let out_dir = std::env::temp_dir().join("ts_bnf_gen_abi_project");
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let out = tool()
-        .args([
-            "convert",
-            "--generate",
-            "--name",
-            "mygrammar",
-            "--output-dir",
-        ])
-        .arg(&out_dir)
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "convert --generate must succeed");
+    let out_dir = support::generate("ts_bnf_gen_abi_project", Some("mygrammar"), CLEAN_BNF);
     let parser_c = out_dir.join("src").join("parser.c");
     assert!(parser_c.exists(), "src/parser.c must be generated");
     let content = fs::read_to_string(&parser_c).unwrap();
