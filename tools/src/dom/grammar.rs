@@ -215,21 +215,52 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns an error for every rule name in `%inline` that has no definition.
+    /// Returns an error for every rule name in `%inline` that has no definition,
+    /// plus, for each name that resolves to a defined rule, an error for each of
+    /// upstream `tree-sitter generate`'s further `process_inlines` constraints it
+    /// violates: being the resolved start rule (`ProcessInlinesError::FirstRule`),
+    /// also being declared via `%externals` (`ProcessInlinesError::ExternalToken`),
+    /// or having a body that reduces to a pure token (`ProcessInlinesError::Token`).
     fn inline_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
+        let root = self.root_rule();
         self.inline
             .iter()
-            .filter(|item| !known.contains(item.name.as_str()))
-            .map(
+            .flat_map(
                 |DirectiveItem {
                      name,
                      line,
                      filename,
                  }| {
-                    Diagnostic::error(format!(
-                        "%inline references undefined rule '{name}' ({})",
-                        loc(filename, *line)
-                    ))
+                    let location = loc(filename, *line);
+                    if !known.contains(name.as_str()) {
+                        return vec![Diagnostic::error(format!(
+                            "%inline references undefined rule '{name}' ({location})"
+                        ))];
+                    }
+                    let mut diagnostics = Vec::new();
+                    if Some(name.as_str()) == root {
+                        diagnostics.push(Diagnostic::error(format!(
+                            "%inline rule '{name}' cannot be the grammar's start rule ({location})"
+                        )));
+                    }
+                    if self
+                        .externals
+                        .iter()
+                        .any(|e| matches!(e, NameOrLiteral::Name(n) if n == name))
+                    {
+                        diagnostics.push(Diagnostic::error(format!(
+                            "%inline rule '{name}' cannot also be declared via %externals ({location})"
+                        )));
+                    }
+                    if let Some(production) = self.productions.get(name.as_str())
+                        && production.body.is_pure_token()
+                    {
+                        diagnostics.push(Diagnostic::error(format!(
+                            "%inline rule '{name}' must not be a pure token ({})",
+                            loc(&production.filename, production.line)
+                        )));
+                    }
+                    diagnostics
                 },
             )
             .collect()
@@ -635,11 +666,72 @@ mod tests {
     }
 
     #[test]
-    /// No error when the rule named in `%inline` is defined.
+    /// No error when the rule named in `%inline` is defined, is not the start
+    /// rule, is not also declared via `%externals`, and is not a pure token.
     fn inline_check_no_errors_when_all_rules_defined() {
-        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        let mut g = Grammar::from_rules([
+            p("root", NonTerminal("a".into())),
+            p("a", NonTerminal("b".into())),
+            p("b", TerminalLiteral("'x'".into())),
+        ]);
         g.inline = vec![di("a", 0)];
         assert!(g.inline_check(&g.known_rules()).is_empty());
+    }
+
+    #[test]
+    /// Errors when `%inline` names the resolved start rule
+    /// (`ProcessInlinesError::FirstRule` upstream).
+    fn inline_check_errors_on_start_rule() {
+        let mut g = Grammar::from_rules([
+            p("root", NonTerminal("a".into())),
+            p("a", TerminalLiteral("'x'".into())),
+        ]);
+        g.inline = vec![di("root", 0)];
+        assert_eq!(
+            strs(&g.inline_check(&g.known_rules())),
+            vec!["error: %inline rule 'root' cannot be the grammar's start rule (line 0)"]
+        );
+    }
+
+    #[test]
+    /// Errors when `%inline` names a rule also declared via `%externals`
+    /// (`ProcessInlinesError::ExternalToken` upstream).
+    fn inline_check_errors_on_external_token() {
+        use crate::dom::NameOrLiteral;
+
+        let mut g = Grammar::from_rules([p("root", TerminalLiteral("'x'".into()))]);
+        g.externals = vec![NameOrLiteral::Name("foo".into())];
+        g.inline = vec![di("foo", 0)];
+        let mut known = g.known_rules();
+        known.insert("foo");
+        assert_eq!(
+            strs(&g.inline_check(&known)),
+            vec!["error: %inline rule 'foo' cannot also be declared via %externals (line 0)"]
+        );
+    }
+
+    #[test]
+    /// Errors when `%inline` names a rule whose body is a bare token
+    /// (`ProcessInlinesError::Token` upstream); the location points at the
+    /// rule's own definition, not at the directive's distinct, deliberately
+    /// mismatched line/file.
+    fn inline_check_errors_on_pure_token_rule() {
+        use crate::dom::Production;
+
+        let mut g = Grammar::from_rules([
+            p("root", NonTerminal("ident".into())),
+            Production {
+                name: "ident".into(),
+                body: TerminalLiteral("'x'".into()),
+                line: 42,
+                filename: "ident.bnf".into(),
+            },
+        ]);
+        g.inline = vec![di("ident", 99)];
+        assert_eq!(
+            strs(&g.inline_check(&g.known_rules())),
+            vec!["error: %inline rule 'ident' must not be a pure token (ident.bnf:42)"]
+        );
     }
 
     // ── precedences_check ────────────────────────────────────────────────────

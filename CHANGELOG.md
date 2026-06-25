@@ -103,6 +103,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   name declared only via `%externals` (no rule body) is now also reported
   as an undefined rule, since a supertype must have an actual body to
   check. (#245)
+- `check` now errors when `%inline` names the resolved start rule, a name
+  also declared via `%externals`, or a rule whose body reduces to a pure
+  token. Previously all three passed `check` but failed real `tree-sitter
+  generate` with `ProcessInlinesError::FirstRule`, `ExternalToken`, or
+  `Token` respectively. (#244)
 
 ## [0.3.0] - 2026-06-11
 
