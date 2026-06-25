@@ -303,6 +303,64 @@ fn generate_produces_abi_15_with_tree_sitter_json() {
     );
 }
 
+// ── %axiom real-CLI start symbol (#264) ─────────────────────────────────────
+
+/// `term` is declared first, `expression` second, with no `%axiom`. Used to
+/// pin the default declaration-order fallback through the real CLI.
+const BASELINE_BNF: &str = indoc! {"
+    term -> /[0-9]+/ ;
+    expression -> term '+' term ;
+"};
+
+/// Same two rules as `BASELINE_BNF`, but `%axiom expression` overrides the
+/// declaration-order default, making `expression` the start symbol despite
+/// `term` being declared first.
+const AXIOM_BNF: &str = indoc! {"
+    %axiom expression
+    term -> /[0-9]+/ ;
+    expression -> term '+' term ;
+"};
+
+#[test]
+/// With no `%axiom`, the real `tree-sitter` CLI's parser root is the
+/// first-declared rule (`term`), not `expression`.
+fn generate_default_root_is_first_declared_rule_with_tree_sitter_parse() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate(
+        "ts_bnf_gen_baseline_project",
+        Some("baselinetest"),
+        BASELINE_BNF,
+    );
+    let stdout = support::parse(&out_dir, "1");
+    assert!(
+        stdout.trim_start().starts_with("(term "),
+        "expected 'term' as root node; got: {stdout}"
+    );
+}
+
+#[test]
+/// `%axiom expression` overrides declaration order: the real `tree-sitter`
+/// CLI's parser root is `expression`, not the first-declared rule `term`.
+fn generate_axiom_rule_becomes_parser_root_symbol() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate("ts_bnf_gen_axiom_project", Some("axiomtest"), AXIOM_BNF);
+    let stdout = support::parse(&out_dir, "1+1");
+    assert!(
+        stdout.trim_start().starts_with("(expression "),
+        "expected 'expression' as root node; got: {stdout}"
+    );
+}
+
 // ── highlights ────────────────────────────────────────────────────────────────
 
 /// A grammar with a variety of rule names to exercise the heuristics.

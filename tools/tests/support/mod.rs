@@ -27,7 +27,7 @@
 //!   before codegen), so no real-CLI test applies; covered by existing
 //!   parse/check-level tests instead (see 235.23).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Returns the installed tree-sitter CLI version as `(major, minor)`, or `None` if not found.
@@ -68,4 +68,26 @@ pub fn generate(dir_name: &str, name: Option<&str>, bnf_source: &str) -> PathBuf
         String::from_utf8_lossy(&out.stderr)
     );
     out_dir
+}
+
+/// Writes `input` to a file under `out_dir` and runs `tree-sitter parse` on it
+/// with `out_dir` as the working directory, so the CLI picks up the grammar
+/// generated there. Panics if the parse subprocess does not exit successfully.
+/// Returns the captured stdout (the printed s-expression).
+pub fn parse(out_dir: &Path, input: &str) -> String {
+    let input_path = out_dir.join("sample-input.txt");
+    std::fs::write(&input_path, input).unwrap();
+
+    let out = Command::new("tree-sitter")
+        .arg("parse")
+        .arg(&input_path)
+        .current_dir(out_dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "tree-sitter parse failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
 }
