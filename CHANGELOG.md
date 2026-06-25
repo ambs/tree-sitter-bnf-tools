@@ -108,6 +108,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   token. Previously all three passed `check` but failed real `tree-sitter
   generate` with `ProcessInlinesError::FirstRule`, `ExternalToken`, or
   `Token` respectively. (#244)
+- `check` now errors when `%word`'s target rule's body isn't a pure token,
+  or is structurally identical to another rule's body (naming the
+  conflicting rule). Previously both shapes passed `check` but failed real
+  `tree-sitter generate` with `NonTerminalWordTokenError`. (#242)
 
 ## [0.3.0] - 2026-06-11
 
