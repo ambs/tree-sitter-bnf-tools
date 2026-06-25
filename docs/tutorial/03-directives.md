@@ -143,6 +143,11 @@ Typically used for hidden helper rules that exist as structural glue:
 %inline _helper, _wrapper
 ```
 
+An inlined rule cannot be the grammar's resolved start rule, cannot also be
+declared via `%externals`, and its body cannot reduce to a pure token (e.g.
+`ident -> /[a-zA-Z_]+/ ;`) — `check` reports an **error** for any of these,
+since upstream `tree-sitter generate` rejects them.
+
 ## `%supertypes`
 
 Lists abstract rule names that act as union types over concrete subtypes. This
