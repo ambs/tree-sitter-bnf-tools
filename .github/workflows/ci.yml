@@ -37,7 +37,7 @@ jobs:
       - name: Install tree-sitter-cli
         if: steps.cache-ts-cli.outputs.cache-hit != 'true'
         run: cargo install tree-sitter-cli --version 0.26.9 --locked
-      - uses: taiki-e/install-action@6ed6112eb9893c58dd600eebccdf6e77ab7bfa9c # v2.79.12
+      - uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: cargo-audit
       - run: make fmt-check
@@ -80,7 +80,7 @@ jobs:
       - name: Install graphviz
         run: sudo apt-get update && sudo apt-get install -y graphviz
       - run: make generate
-      - uses: taiki-e/install-action@6ed6112eb9893c58dd600eebccdf6e77ab7bfa9c # v2.79.12
+      - uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: cargo-llvm-cov
       - name: Run tests with coverage
@@ -133,7 +133,6 @@ jobs:
           header: coverage
           path: coverage-table.md
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: github.actor != 'dependabot[bot]'
         with:
           files: lcov.info
           disable_search: true
