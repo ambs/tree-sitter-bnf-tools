@@ -552,6 +552,50 @@ fn generate_supertypes_rule_marked_in_node_types_json() {
     );
 }
 
+// ── %inline real-CLI test (#269) ─────────────────────────────────────────────
+
+/// Grammar with `%inline kv_pair` so the helper rule is absent from the parse
+/// tree: its children (`key`, `value`) should appear directly under `program`.
+const INLINE_BNF: &str = indoc! {"
+    %axiom program
+    %inline kv_pair
+    program -> kv_pair+ ;
+    kv_pair -> key '=' value ;
+    key -> /[a-z]+/ ;
+    value -> /[0-9]+/ ;
+"};
+
+#[test]
+/// `%inline kv_pair` causes the inlined rule's node to be absent from the
+/// real `tree-sitter` parse output while its children appear directly under
+/// the caller (`program`).
+fn generate_inline_rule_absent_from_parse_tree() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate("ts_bnf_gen_inline_project", Some("inlinetest"), INLINE_BNF);
+    let stdout = support::parse(&out_dir, "x=1");
+    assert!(
+        stdout.trim_start().starts_with("(program "),
+        "expected 'program' as root node; got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("(kv_pair "),
+        "inlined rule 'kv_pair' must not appear as a node; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("(key "),
+        "expected '(key' node directly under program; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("(value "),
+        "expected '(value' node directly under program; got: {stdout}"
+    );
+}
+
 // ── highlights ────────────────────────────────────────────────────────────────
 
 /// A grammar with a variety of rule names to exercise the heuristics.
