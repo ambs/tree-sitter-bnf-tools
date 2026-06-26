@@ -596,6 +596,62 @@ fn generate_inline_rule_absent_from_parse_tree() {
     );
 }
 
+// ── %word real-CLI test (#265) ───────────────────────────────────────────────
+
+/// Grammar with `%word identifier` so the real parser performs keyword
+/// extraction: `if` is recognized as the keyword token while `ifx` is treated
+/// as a single identifier rather than a mis-split keyword + dangling suffix.
+const WORD_BNF: &str = indoc! {"
+    %axiom program
+    %word identifier
+
+    program -> stmt+ ;
+    stmt -> kw_if name ';' | name ';' ;
+    kw_if -> 'if' ;
+    identifier -> /[a-z]+/ ;
+    name -> identifier ;
+"};
+
+#[test]
+/// With `%word identifier`, `if` parses as the keyword node (`kw_if`) while
+/// `ifx` parses as a single identifier — not as `if` followed by a dangling
+/// suffix.
+fn generate_word_keyword_distinguished_from_prefixed_identifier() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate("ts_bnf_gen_word_project", Some("wordtest"), WORD_BNF);
+
+    // `if x;` — `if` must be recognised as the keyword, not an identifier.
+    let kw_out = support::parse(&out_dir, "if x;");
+    assert!(
+        !kw_out.contains("ERROR"),
+        "expected no ERROR for 'if x;'; got: {kw_out}"
+    );
+    assert!(
+        kw_out.contains("(kw_if"),
+        "expected '(kw_if' node for keyword 'if'; got: {kw_out}"
+    );
+
+    // `ifx;` — `ifx` must be a single identifier, not split at the keyword prefix.
+    let id_out = support::parse(&out_dir, "ifx;");
+    assert!(
+        !id_out.contains("ERROR"),
+        "expected no ERROR for 'ifx;'; got: {id_out}"
+    );
+    assert!(
+        !id_out.contains("(kw_if"),
+        "'ifx' must not produce a kw_if node; got: {id_out}"
+    );
+    assert!(
+        id_out.contains("(identifier"),
+        "expected '(identifier' node for 'ifx'; got: {id_out}"
+    );
+}
+
 // ── %precedences real-CLI test (#268) ────────────────────────────────────────
 
 /// Grammar with a classic `+`/`*` operator-precedence ambiguity.
