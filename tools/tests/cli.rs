@@ -596,6 +596,62 @@ fn generate_inline_rule_absent_from_parse_tree() {
     );
 }
 
+// ── %precedences real-CLI test (#268) ────────────────────────────────────────
+
+/// Grammar with a classic `+`/`*` operator-precedence ambiguity.
+/// `%precedences [mul_expr, add_expr]` declares `mul_expr > add_expr`, so `*`
+/// binds tighter than `+`.  `%conflicts` suppresses the within-rule
+/// associativity conflicts that would otherwise block generation.
+const PRECEDENCES_BNF: &str = indoc! {"
+    %axiom expr
+    %precedences [mul_expr, add_expr]
+    %conflicts [mul_expr]
+    %conflicts [add_expr]
+
+    expr -> mul_expr | add_expr | num ;
+    mul_expr -> expr '*' expr ;
+    add_expr -> expr '+' expr ;
+    num -> /[0-9]+/ ;
+"};
+
+#[test]
+/// With `%precedences [mul_expr, add_expr]`, `*` binds tighter than `+`:
+/// parsing `1+2*3` must produce a tree where `mul_expr` is nested inside
+/// `add_expr` (i.e. `1+(2*3)`, not `(1+2)*3`).
+fn generate_precedences_mul_binds_tighter_than_add() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate(
+        "ts_bnf_gen_precedences_project",
+        Some("precedencestest"),
+        PRECEDENCES_BNF,
+    );
+    let stdout = support::parse(&out_dir, "1+2*3");
+    assert!(
+        !stdout.contains("ERROR"),
+        "expected no ERROR node; got: {stdout}"
+    );
+    assert!(
+        stdout.trim_start().starts_with("(expr "),
+        "expected 'expr' as root node; got: {stdout}"
+    );
+    let add_pos = stdout
+        .find("(add_expr")
+        .expect("expected '(add_expr' in parse output; got: {stdout}");
+    let mul_pos = stdout
+        .find("(mul_expr")
+        .expect("expected '(mul_expr' in parse output; got: {stdout}");
+    assert!(
+        add_pos < mul_pos,
+        "expected mul_expr nested inside add_expr (1+(2*3)); \
+         add_expr at {add_pos}, mul_expr at {mul_pos}; tree: {stdout}"
+    );
+}
+
 // ── %externals real-CLI test (#271) ──────────────────────────────────────────
 
 /// Grammar with `%externals indent` so the generated JS includes an `externals`
