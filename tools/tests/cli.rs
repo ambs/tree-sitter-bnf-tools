@@ -400,6 +400,107 @@ fn generate_extras_whitespace_and_comments_are_skipped() {
     );
 }
 
+// ── %conflicts real-CLI test (#267) ──────────────────────────────────────────
+
+/// Grammar with `%conflicts [stmt]` to whitelist the dangling-else
+/// shift/reduce conflict.  Without the declaration, `tree-sitter generate`
+/// would exit non-zero (see `generate_without_conflicts_decl_fails_generate`).
+const CONFLICTS_BNF: &str = indoc! {"
+    %axiom prog
+    %conflicts [stmt]
+
+    prog -> stmt ;
+    stmt -> 'if' name stmt
+          | 'if' name stmt else_clause
+          | name ';'
+          ;
+    else_clause -> 'else' stmt ;
+    name -> /[a-z]+/ ;
+"};
+
+/// Same grammar as `CONFLICTS_BNF` but without the `%conflicts` declaration,
+/// so `tree-sitter generate` fails due to the unresolved LR conflict.
+const CONFLICTS_WITHOUT_DECL_BNF: &str = indoc! {"
+    %axiom prog
+
+    prog -> stmt ;
+    stmt -> 'if' name stmt
+          | 'if' name stmt else_clause
+          | name ';'
+          ;
+    else_clause -> 'else' stmt ;
+    name -> /[a-z]+/ ;
+"};
+
+#[test]
+/// `%conflicts [stmt]` whitelists the dangling-else LR conflict: the real
+/// `tree-sitter` CLI generates successfully and parsing a sample input
+/// produces no ERROR node.
+fn generate_conflicts_whitelist_succeeds_and_parses_cleanly() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate(
+        "ts_bnf_gen_conflicts_project",
+        Some("conflictstest"),
+        CONFLICTS_BNF,
+    );
+    let stdout = support::parse(&out_dir, "if x foo;");
+    assert!(
+        stdout.trim_start().starts_with("(prog "),
+        "expected 'prog' as root node; got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("ERROR"),
+        "expected no ERROR node; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("(stmt "),
+        "expected '(stmt' nodes in tree; got: {stdout}"
+    );
+}
+
+#[test]
+/// Without `%conflicts`, the same dangling-else grammar causes a genuine
+/// LR(1) conflict that `tree-sitter generate` cannot resolve — `convert
+/// --generate` must exit non-zero.
+fn generate_without_conflicts_decl_fails_generate() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let bnf_path = std::env::temp_dir().join("ts_bnf_gen_conflicts_neg.bnf");
+    std::fs::write(&bnf_path, CONFLICTS_WITHOUT_DECL_BNF).unwrap();
+
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_conflicts_neg_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
+        .args([
+            "convert",
+            "--generate",
+            "--name",
+            "conflictstest",
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        !out.status.success(),
+        "convert --generate must fail for an ambiguous grammar without %conflicts; \
+         stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 // ── highlights ────────────────────────────────────────────────────────────────
 
 /// A grammar with a variety of rule names to exercise the heuristics.
