@@ -596,6 +596,51 @@ fn generate_inline_rule_absent_from_parse_tree() {
     );
 }
 
+// ── %externals real-CLI test (#271) ──────────────────────────────────────────
+
+/// Grammar with `%externals indent` so the generated JS includes an `externals`
+/// array; `program` uses the external token in sequence with a pattern rule so
+/// the grammar is valid.
+const EXTERNALS_BNF: &str = indoc! {"
+    %axiom program
+    %externals indent
+    program -> indent word+ ;
+    word -> /[a-z]+/ ;
+"};
+
+#[test]
+/// After `convert --generate`, `src/parser.c` must reference the external token
+/// name, confirming the `%externals` declaration was forwarded to tree-sitter.
+///
+/// Compile-only scope: exercising `indent` at parse time requires a
+/// compiled-and-linked external scanner (hand-written C). That is out of reach
+/// for a lightweight CI fixture. Full parse-behaviour coverage is therefore
+/// intentionally omitted here; this test only verifies that `generate` succeeds
+/// and that the generated artefacts carry the token name. See
+/// `tools/tests/support/mod.rs` §`%externals` for the recorded scope decision.
+fn generate_externals_token_name_appears_in_parser_c() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate(
+        "ts_bnf_gen_externals_project",
+        Some("externalstest"),
+        EXTERNALS_BNF,
+    );
+    let parser_c = out_dir.join("src").join("parser.c");
+    assert!(parser_c.exists(), "src/parser.c must be generated");
+    let content = fs::read_to_string(&parser_c).unwrap();
+    assert!(
+        content.contains("indent"),
+        "parser.c must reference the external token name 'indent'; \
+         first 500 chars: {}",
+        &content[..content.len().min(500)]
+    );
+}
+
 // ── highlights ────────────────────────────────────────────────────────────────
 
 /// A grammar with a variety of rule names to exercise the heuristics.
