@@ -501,6 +501,57 @@ fn generate_without_conflicts_decl_fails_generate() {
     );
 }
 
+// ── %supertypes real-CLI test (#270) ─────────────────────────────────────────
+
+/// Grammar with `%supertypes expression` so that `expression` acts as a
+/// supertype over its concrete alternatives `number` and `string_lit`.
+const SUPERTYPES_BNF: &str = indoc! {"
+    %axiom program
+    %supertypes expression
+    program -> expression+ ;
+    expression -> number | string_lit ;
+    number -> /[0-9]+/ ;
+    string_lit -> '\"' /[^\"]*/ '\"' ;
+"};
+
+#[test]
+/// After `convert --generate`, `src/node-types.json` must contain an entry for
+/// `expression` with a `subtypes` array, confirming it is a supertype.
+fn generate_supertypes_rule_marked_in_node_types_json() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate(
+        "ts_bnf_gen_supertypes_project",
+        Some("supertypestest"),
+        SUPERTYPES_BNF,
+    );
+    let node_types_path = out_dir.join("src").join("node-types.json");
+    assert!(
+        node_types_path.exists(),
+        "src/node-types.json must be generated"
+    );
+    let content = fs::read_to_string(&node_types_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+    let entries = parsed
+        .as_array()
+        .expect("node-types.json must be a JSON array");
+    let supertype_entry = entries
+        .iter()
+        .find(|e| e["type"].as_str() == Some("expression"))
+        .expect("node-types.json must contain an entry for 'expression'");
+    let subtypes = supertype_entry["subtypes"]
+        .as_array()
+        .expect("supertype entry must have a 'subtypes' array");
+    assert!(
+        !subtypes.is_empty(),
+        "expression's subtypes array must not be empty; entry: {supertype_entry}"
+    );
+}
+
 // ── highlights ────────────────────────────────────────────────────────────────
 
 /// A grammar with a variety of rule names to exercise the heuristics.
