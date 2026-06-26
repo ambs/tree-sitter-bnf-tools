@@ -361,6 +361,45 @@ fn generate_axiom_rule_becomes_parser_root_symbol() {
     );
 }
 
+// ── %extras real-CLI test (#266) ─────────────────────────────────────────────
+
+/// Grammar with `%extras /\s/, comment` so whitespace and `#`-line comments
+/// are accepted anywhere between tokens without causing errors.
+const EXTRAS_BNF: &str = indoc! {"
+    %axiom program
+    %extras /\\s/, comment
+    comment -> '#' /[^\\n]*/ ;
+    program -> word+ ;
+    word -> /[a-z]+/ ;
+"};
+
+#[test]
+/// Whitespace and named comment extras are skipped between ordinary tokens:
+/// the real `tree-sitter` parser produces no ERROR node and correctly roots
+/// the tree at `program`.
+fn generate_extras_whitespace_and_comments_are_skipped() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate("ts_bnf_gen_extras_project", Some("extrastest"), EXTRAS_BNF);
+    let stdout = support::parse(&out_dir, "hello # a comment\nworld");
+    assert!(
+        stdout.trim_start().starts_with("(program "),
+        "expected 'program' as root node; got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("ERROR"),
+        "expected no ERROR node; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("(word"),
+        "expected '(word' nodes in tree; got: {stdout}"
+    );
+}
+
 // ── highlights ────────────────────────────────────────────────────────────────
 
 /// A grammar with a variety of rule names to exercise the heuristics.
