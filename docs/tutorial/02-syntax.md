@@ -307,4 +307,4 @@ supported equivalents before running `ts-bnf-tool`.
 
 ---
 
-Previous: [Getting started](01-getting-started.md) · Next: [Grammar-level directives](03-directives.md)
+Previous: [Getting started](01-getting-started.md) · Next: [Tree-sitter concepts](00-concepts.md)
