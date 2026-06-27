@@ -124,26 +124,31 @@ parser and clearer diagnostics.
 
 ## Keyword extraction and `word:` {#word-token}
 
-Tree-sitter's lexer is **separate from the parser**: it produces a stream of
-tokens before the parser runs. By default, each literal keyword (`'if'`,
-`'not'`, `'true'`) is an independent pattern, and the lexer picks whichever
-matches at the current position.
+Tree-sitter's lexer is **separate from the parser** and is
+**context-sensitive**: in each parser state, only the tokens that are valid
+at that point are considered. This causes a problem for languages with infix
+keyword operators such as `or`, `and`, or `in`.
 
-This causes a problem for languages where keywords are reserved identifiers.
-Consider a grammar with the keyword `not` and an identifier rule
-`/[a-zA-Z_][a-zA-Z0-9_]*/`. Without special handling, the input `notable` is
-tokenized as the keyword `not` followed by the identifier `able` — wrong.
+Consider a grammar with the infix keyword `or` and an identifier rule
+`/[a-zA-Z_][a-zA-Z0-9_]*/`. After a complete expression, the parser is in a
+state where the valid next tokens are the binary operators (`or`, `+`, …)
+and the statement terminator — identifiers are not expected there. If the
+input is `oracle`, the lexer sees the two characters `or`, finds that is the
+`or` keyword (valid at this position), and stops — it never reads ahead to
+discover that `a`, `c`, `l`, `e` continue the word. So `oracle` is
+incorrectly split into the keyword `or` and the identifier `acle`, silently
+producing a wrong parse tree.
 
 The `word:` field (controlled by `%word` in the BNF dialect) fixes this. It
 designates one rule as the language's *word token*. Tree-sitter then applies
-**keyword extraction**: instead of matching each keyword independently, it first
-matches the word-token pattern, then checks whether the resulting string is a
-known keyword. If it is, the token becomes that keyword; if it isn't, it stays
-as an identifier.
+**keyword extraction**: whenever a keyword could match at the current position,
+the lexer first reads the complete word-token pattern, then checks whether the
+full result is a known keyword. `oracle` matches the identifier pattern in full
+(6 characters), and since `"oracle"` is not the keyword `or`, the lexer does
+not emit `or` at that position. The mis-parse is prevented.
 
-With `%word identifier` in place, `notable` always matches the full identifier
-pattern first, and since `"notable"` is not a keyword, it stays as an
-identifier — exactly right.
+The same principle applies to any keyword that is a prefix of a valid
+identifier: `and` / `android`, `in` / `instanceof`, `is` / `isset`, and so on.
 
 An important constraint: the word rule's body must be a single regex (or literal)
 and must be unique — no other rule may use the same body. This is enforced by

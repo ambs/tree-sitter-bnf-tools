@@ -12,8 +12,9 @@ first — it explains the underlying mechanisms that these directives control.
 ## `%word`
 
 > **Background:** [Keyword extraction and `word:`](00-concepts.md#word-token)
-> explains why a default LR lexer mis-tokenises words like `notable` as `not`
-> + `able`, and how `word:` fixes it.
+> explains why the lexer can mis-tokenise identifiers like `oracle` as the
+> keyword `or` + `acle` (in contexts where only operators are expected), and
+> how `word:` fixes it.
 
 Declares the rule that tree-sitter should treat as the language's identifier
 token. This enables keyword extraction: literal keyword tokens (e.g. `'if'`,
@@ -110,7 +111,7 @@ generates:
 
 ```js
 precedences: ($) => [
-  [$.unary_expression, $._binary_expression],
+  [$._unary_expression, $._binary_expression],
   [$.call, $.member, 'unary', 'binary'],
 ],
 ```
@@ -168,6 +169,12 @@ Typically used for hidden helper rules that exist as structural glue:
 %inline _helper, _wrapper
 ```
 
+generates:
+
+```js
+inline: $ => [$._helper, $._wrapper],
+```
+
 An inlined rule cannot be the grammar's resolved start rule, cannot also be
 declared via `%externals`, and its body cannot reduce to a pure token (e.g.
 `ident -> /[a-zA-Z_]+/ ;`) — `check` reports an **error** for any of these,
@@ -186,6 +193,12 @@ doesn't start with `_`:
 
 ```bnf
 %supertypes expression, statement, declaration
+```
+
+generates:
+
+```js
+supertypes: $ => [$.expression, $.statement, $.declaration],
 ```
 
 A supertype rule cannot also be the grammar's resolved start rule (see
