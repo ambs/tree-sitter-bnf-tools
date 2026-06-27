@@ -8,6 +8,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### Docs
+- New tutorial page `docs/tutorial/00-concepts.md` covering tree-sitter grammar
+  concepts (LR parsing, shift-reduce conflicts, operator precedence, GLR
+  conflicts, keyword extraction, external scanners, hidden nodes/supertypes,
+  extras). Linked from the index and from each directive in
+  `03-directives.md`. (#259)
+- New tutorial page `docs/tutorial/09-worked-example.md`: a step-by-step
+  walkthrough of a boolean/arithmetic expression language that requires
+  operator-precedence annotations (`%prec.left`) and keyword extraction
+  (`%word`), demonstrating the full toolchain on a realistic, non-trivial
+  grammar. (#259)
+- Each directive section in `docs/tutorial/03-directives.md` now opens with a
+  "Background:" link to the corresponding concept explanation in
+  `00-concepts.md`. (#259)
+
 #### `tree-sitter-bnf`
 - `%prec` (and `.left`/`.right`/`.dynamic`) annotations accept a quoted
   string name in place of the integer level, e.g. `%prec 'unary'`,

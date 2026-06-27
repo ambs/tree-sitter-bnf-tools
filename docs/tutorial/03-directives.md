@@ -6,7 +6,14 @@ to the same-named fields in `grammar.js`, except `%axiom` (which controls rule
 order) and `%include` (which merges files). An error is printed to stderr for
 any referenced rule name that has no definition.
 
+If you are new to tree-sitter, read [Tree-sitter grammar concepts](00-concepts.md)
+first — it explains the underlying mechanisms that these directives control.
+
 ## `%word`
+
+> **Background:** [Keyword extraction and `word:`](00-concepts.md#word-token)
+> explains why a default LR lexer mis-tokenises words like `notable` as `not`
+> + `able`, and how `word:` fixes it.
 
 Declares the rule that tree-sitter should treat as the language's identifier
 token. This enables keyword extraction: literal keyword tokens (e.g. `'if'`,
@@ -38,6 +45,10 @@ rejects both.
 
 ## `%extras`
 
+> **Background:** [Extras: whitespace and comments](00-concepts.md#extras)
+> explains what tree-sitter's built-in whitespace default is and when you need
+> to override it.
+
 Declares tokens that may appear anywhere in the input — typically whitespace
 and comments:
 
@@ -56,6 +67,10 @@ everywhere) applies. Multiple `%extras` lines are additive — each adds items
 to the list.
 
 ## `%conflicts`
+
+> **Background:** [GLR conflicts](00-concepts.md#glr-conflicts) explains what
+> structural ambiguity is, why precedence cannot resolve it, and how tree-sitter's
+> GLR mode handles it.
 
 Declares rule pairs that are expected to be ambiguous, allowing tree-sitter's
 GLR parser to resolve them at parse time rather than aborting grammar
@@ -77,6 +92,10 @@ conflicts: $ => [
 ```
 
 ## `%precedences`
+
+> **Background:** [Shift-reduce conflicts and operator precedence](00-concepts.md#conflicts-precedence)
+> explains how inline `%prec` annotations (covered in the [syntax walkthrough](02-syntax.md#precedence-annotations))
+> and `%precedences` groups work together to resolve operator ambiguity.
 
 Declares named precedence levels in descending priority order. Each bracketed
 group contains rule names or quoted string literals that share equal precedence;
@@ -156,6 +175,10 @@ since upstream `tree-sitter generate` rejects them.
 
 ## `%supertypes`
 
+> **Background:** [Hidden nodes and supertypes](00-concepts.md#hidden-supertypes)
+> explains what hidden nodes and supertype rules are, and why they matter for
+> language bindings.
+
 Lists abstract rule names that act as union types over concrete subtypes. This
 enriches the type annotations in language bindings. Declaring a rule as a
 supertype also unconditionally hides it from the parse tree, even if its name
@@ -176,6 +199,11 @@ is not) — `check` reports an **error** for either shape, since upstream
 `tree-sitter generate` rejects both.
 
 ## `%externals`
+
+> **Background:** [External scanners](00-concepts.md#external-scanners)
+> explains what an external scanner is, when a regex is not enough (e.g.
+> indentation-sensitive layout), and how the scanner integrates with the
+> generated parser.
 
 Declares tokens produced by an external scanner (a hand-written C lexer)
 rather than the grammar itself. Items may be rule names or quoted string
@@ -241,4 +269,4 @@ be used when reading from stdin.
 
 ---
 
-Previous: [Syntax walkthrough](02-syntax.md) · Next: [Cheat sheet](04-cheatsheet.md)
+Previous: [Tree-sitter concepts](00-concepts.md) · Next: [Cheat sheet](04-cheatsheet.md)
