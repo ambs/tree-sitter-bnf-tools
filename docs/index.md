@@ -10,17 +10,21 @@ notation.
    solution, installing, and a complete first example
 2. [Syntax walkthrough](tutorial/02-syntax.md) — every construct of the BNF
    dialect, and what is not supported
-3. [Grammar-level directives](tutorial/03-directives.md) — `%extras`,
+3. [Tree-sitter concepts](tutorial/03-concepts.md) — LR parsing, conflicts,
+   precedence, keyword extraction, external scanners, supertypes, extras
+4. [Grammar-level directives](tutorial/04-directives.md) — `%extras`,
    `%conflicts`, `%inline`, `%supertypes`, `%axiom`, `%include`
-4. [BNF → tree-sitter cheat sheet](tutorial/04-cheatsheet.md) — every mapping
+5. [BNF → tree-sitter cheat sheet](tutorial/05-cheatsheet.md) — every mapping
    on one page
-5. [End-to-end: from `.bnf` to a working parser](tutorial/05-end-to-end.md) —
+6. [End-to-end: from `.bnf` to a working parser](tutorial/06-end-to-end.md) —
    `convert` and `highlights`
-6. [Analysing a grammar](tutorial/06-analysing.md) — `check`, `--summary`,
+7. [Worked example: a boolean/arithmetic expression language](tutorial/07-worked-example.md) —
+   operator precedence, `%prec`, and keyword extraction in a realistic grammar
+8. [Analysing a grammar](tutorial/08-analysing.md) — `check`, `--summary`,
    `firsts`
-7. [Formatting and refactoring](tutorial/07-refactoring.md) — `format`,
+9. [Formatting and refactoring](tutorial/09-refactoring.md) — `format`,
    `rename`
-8. [Visualising a grammar](tutorial/08-visualising.md) — `railroad`, `graph`
+10. [Visualising a grammar](tutorial/10-visualising.md) — `railroad`, `graph`
 
 ## Guides
 

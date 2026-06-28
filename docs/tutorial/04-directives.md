@@ -6,7 +6,15 @@ to the same-named fields in `grammar.js`, except `%axiom` (which controls rule
 order) and `%include` (which merges files). An error is printed to stderr for
 any referenced rule name that has no definition.
 
+If you are new to tree-sitter, read [Tree-sitter grammar concepts](03-concepts.md)
+first — it explains the underlying mechanisms that these directives control.
+
 ## `%word`
+
+> **Background:** [Keyword extraction and `word:`](03-concepts.md#word-token)
+> explains why the lexer can mis-tokenise identifiers like `oracle` as the
+> keyword `or` + `acle` (in contexts where only operators are expected), and
+> how `word:` fixes it.
 
 Declares the rule that tree-sitter should treat as the language's identifier
 token. This enables keyword extraction: literal keyword tokens (e.g. `'if'`,
@@ -38,6 +46,10 @@ rejects both.
 
 ## `%extras`
 
+> **Background:** [Extras: whitespace and comments](03-concepts.md#extras)
+> explains what tree-sitter's built-in whitespace default is and when you need
+> to override it.
+
 Declares tokens that may appear anywhere in the input — typically whitespace
 and comments:
 
@@ -56,6 +68,10 @@ everywhere) applies. Multiple `%extras` lines are additive — each adds items
 to the list.
 
 ## `%conflicts`
+
+> **Background:** [GLR conflicts](03-concepts.md#glr-conflicts) explains what
+> structural ambiguity is, why precedence cannot resolve it, and how tree-sitter's
+> GLR mode handles it.
 
 Declares rule pairs that are expected to be ambiguous, allowing tree-sitter's
 GLR parser to resolve them at parse time rather than aborting grammar
@@ -78,6 +94,10 @@ conflicts: $ => [
 
 ## `%precedences`
 
+> **Background:** [Shift-reduce conflicts and operator precedence](03-concepts.md#conflicts-precedence)
+> explains how inline `%prec` annotations (covered in the [syntax walkthrough](02-syntax.md#precedence-annotations))
+> and `%precedences` groups work together to resolve operator ambiguity.
+
 Declares named precedence levels in descending priority order. Each bracketed
 group contains rule names or quoted string literals that share equal precedence;
 groups listed earlier beat groups listed later:
@@ -91,7 +111,7 @@ generates:
 
 ```js
 precedences: ($) => [
-  [$.unary_expression, $._binary_expression],
+  [$._unary_expression, $._binary_expression],
   [$.call, $.member, 'unary', 'binary'],
 ],
 ```
@@ -149,12 +169,22 @@ Typically used for hidden helper rules that exist as structural glue:
 %inline _helper, _wrapper
 ```
 
+generates:
+
+```js
+inline: $ => [$._helper, $._wrapper],
+```
+
 An inlined rule cannot be the grammar's resolved start rule, cannot also be
 declared via `%externals`, and its body cannot reduce to a pure token (e.g.
 `ident -> /[a-zA-Z_]+/ ;`) — `check` reports an **error** for any of these,
 since upstream `tree-sitter generate` rejects them.
 
 ## `%supertypes`
+
+> **Background:** [Hidden nodes and supertypes](03-concepts.md#hidden-supertypes)
+> explains what hidden nodes and supertype rules are, and why they matter for
+> language bindings.
 
 Lists abstract rule names that act as union types over concrete subtypes. This
 enriches the type annotations in language bindings. Declaring a rule as a
@@ -163,6 +193,12 @@ doesn't start with `_`:
 
 ```bnf
 %supertypes expression, statement, declaration
+```
+
+generates:
+
+```js
+supertypes: $ => [$.expression, $.statement, $.declaration],
 ```
 
 A supertype rule cannot also be the grammar's resolved start rule (see
@@ -176,6 +212,11 @@ is not) — `check` reports an **error** for either shape, since upstream
 `tree-sitter generate` rejects both.
 
 ## `%externals`
+
+> **Background:** [External scanners](03-concepts.md#external-scanners)
+> explains what an external scanner is, when a regex is not enough (e.g.
+> indentation-sensitive layout), and how the scanner integrates with the
+> generated parser.
 
 Declares tokens produced by an external scanner (a hand-written C lexer)
 rather than the grammar itself. Items may be rule names or quoted string
@@ -241,4 +282,4 @@ be used when reading from stdin.
 
 ---
 
-Previous: [Syntax walkthrough](02-syntax.md) · Next: [Cheat sheet](04-cheatsheet.md)
+Previous: [Tree-sitter concepts](03-concepts.md) · Next: [Cheat sheet](05-cheatsheet.md)

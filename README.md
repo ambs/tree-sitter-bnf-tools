@@ -62,10 +62,10 @@ The dialect supports the full tree-sitter feature set:
 | Alias group | `(body => name)` | [Aliases](docs/tutorial/02-syntax.md#alias-groups) |
 | Precedence | `%prec`, `%prec.left`, … | [Precedence](docs/tutorial/02-syntax.md#precedence-annotations) |
 | Reserved-word override | `(body %reserved setName)` | [Reserved-word annotation](docs/tutorial/02-syntax.md#reserved-word-annotation) |
-| Directives | `%axiom`, `%word`, `%conflicts`, `%precedences`, `%inline`, `%supertypes`, `%extras`, `%externals`, `%reserved`, `%include` | [Directives](docs/tutorial/03-directives.md) |
+| Directives | `%axiom`, `%word`, `%conflicts`, `%precedences`, `%inline`, `%supertypes`, `%extras`, `%externals`, `%reserved`, `%include` | [Directives](docs/tutorial/04-directives.md) |
 
 The full mapping fits on one page: see the
-[BNF → tree-sitter cheat sheet](docs/tutorial/04-cheatsheet.md). Constructs
+[BNF → tree-sitter cheat sheet](docs/tutorial/05-cheatsheet.md). Constructs
 from other BNF/EBNF variants (`::=`, `<expr>`, `[optional]`, `{repetition}`, …)
 are [not supported](docs/tutorial/02-syntax.md#what-is-not-supported).
 
@@ -85,14 +85,14 @@ ts-bnf-tool <SUBCOMMAND> [OPTIONS] <file.bnf>   # pass - to read from stdin
 
 | Subcommand | Purpose | Documentation |
 |------------|---------|---------------|
-| `convert` | Convert BNF to `grammar.js` | [End-to-end workflow](docs/tutorial/05-end-to-end.md) |
-| `highlights` | Generate a skeleton `highlights.scm` | [End-to-end workflow](docs/tutorial/05-end-to-end.md#step-5--refine-the-highlights-skeleton) |
-| `check` | Run static checks; exit non-zero on any issue | [Analysing a grammar](docs/tutorial/06-analysing.md) |
-| `firsts` | Print FIRST sets for each rule | [Analysing a grammar](docs/tutorial/06-analysing.md#inspecting-first-sets) |
-| `format` | Pretty-print a `.bnf` file in canonical style | [Formatting and refactoring](docs/tutorial/07-refactoring.md) |
-| `rename` | Rename a rule and all its references | [Formatting and refactoring](docs/tutorial/07-refactoring.md#renaming-a-rule) |
-| `railroad` | Generate railroad / syntax diagrams as SVG | [Visualising a grammar](docs/tutorial/08-visualising.md) |
-| `graph` | Emit a rule-dependency graph (DOT / Mermaid / SVG / PDF / PNG) | [Visualising a grammar](docs/tutorial/08-visualising.md#rule-dependency-graph) |
+| `convert` | Convert BNF to `grammar.js` | [End-to-end workflow](docs/tutorial/06-end-to-end.md) |
+| `highlights` | Generate a skeleton `highlights.scm` | [End-to-end workflow](docs/tutorial/06-end-to-end.md#step-5--refine-the-highlights-skeleton) |
+| `check` | Run static checks; exit non-zero on any issue | [Analysing a grammar](docs/tutorial/08-analysing.md) |
+| `firsts` | Print FIRST sets for each rule | [Analysing a grammar](docs/tutorial/08-analysing.md#inspecting-first-sets) |
+| `format` | Pretty-print a `.bnf` file in canonical style | [Formatting and refactoring](docs/tutorial/09-refactoring.md) |
+| `rename` | Rename a rule and all its references | [Formatting and refactoring](docs/tutorial/09-refactoring.md#renaming-a-rule) |
+| `railroad` | Generate railroad / syntax diagrams as SVG | [Visualising a grammar](docs/tutorial/10-visualising.md) |
+| `graph` | Emit a rule-dependency graph (DOT / Mermaid / SVG / PDF / PNG) | [Visualising a grammar](docs/tutorial/10-visualising.md#rule-dependency-graph) |
 
 ## Visualising grammars
 

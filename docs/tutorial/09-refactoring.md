@@ -85,4 +85,4 @@ already taken, so it is safe to use in scripts.
 
 ---
 
-Previous: [Analysing a grammar](06-analysing.md) · Next: [Visualising a grammar](08-visualising.md)
+Previous: [Analysing a grammar](08-analysing.md) · Next: [Visualising a grammar](10-visualising.md)

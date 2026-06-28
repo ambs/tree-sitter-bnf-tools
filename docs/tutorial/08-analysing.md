@@ -75,6 +75,8 @@ reports how many rules are directly or mutually left-recursive (see
 
 What actually makes `tree-sitter generate` fail is *unresolved ambiguity*
 — for example `expr -> expr '+' expr | 'n'` with no precedence annotation.
+See [Shift-reduce conflicts and operator precedence](03-concepts.md#conflicts-precedence)
+for how to resolve these with `%prec` annotations.
 Ahead-of-time detection of such conflicts is planned separately
 ([#31](https://github.com/ambs/tree-sitter-bnf-tools/issues/31)).
 
@@ -209,4 +211,4 @@ ts-bnf-tool firsts --json json.bnf
 
 ---
 
-Previous: [End-to-end workflow](05-end-to-end.md) · Next: [Formatting and refactoring](07-refactoring.md)
+Previous: [Worked example](07-worked-example.md) · Next: [Formatting and refactoring](09-refactoring.md)
