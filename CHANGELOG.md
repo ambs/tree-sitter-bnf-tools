@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] - 2026-06-28
 
 ### Added
 
@@ -71,6 +71,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   An existing `tree-sitter.json` is never overwritten. (#199)
 
 ### Changed
+
+#### `tree-sitter-bnf`
+- Raw line breaks inside literals are now a syntax error. Use `\n` (a JS
+  escape, passed through verbatim) for an embedded newline instead. (#208)
 
 #### `ts-bnf-tool`
 - `check` now reports undefined-rule-reference issues as errors instead of
@@ -324,7 +328,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Line comments (`#`)
   - Warning on undefined rule references in directive and rule bodies
 
-[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ambs/tree-sitter-bnf-tools/releases/tag/v0.1.0
