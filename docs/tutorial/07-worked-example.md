@@ -1,6 +1,6 @@
 # Worked example: a boolean/arithmetic expression language
 
-The [first end-to-end walkthrough](05-end-to-end.md) uses a JSON grammar — a
+The [first end-to-end walkthrough](06-end-to-end.md) uses a JSON grammar — a
 great first example because JSON is well-known and conflict-free. But JSON has
 no keywords, no operator precedence, and no ambiguity. Most real languages have
 at least one of these.
@@ -78,10 +78,11 @@ Possible resolutions:
 The parser has reached a point where it sees `- expr` followed by `or` and
 cannot decide:
 
-1. **Interpretation 1**: treat `expr` as the left operand of `or`, making
-   `- expr` one side of a binary expression → gives `(-x) or y`
-2. **Interpretation 2**: reduce `- expr` first, giving `(-x)`, then combine
-   with `or` → same result but reached differently
+1. **Interpretation 1** (shift `or`): use the current `expr` as the left
+   operand of `or`, collecting `expr 'or' expr` before the `-` applies —
+   gives `-(x or y)`
+2. **Interpretation 2** (reduce `'-' expr`): apply `-` immediately, giving
+   `(-x)`, then `or` combines it with the right operand — gives `(-x) or y`
 
 Without guidance on which operators bind tighter, every pair of operators
 generates a conflict like this.
@@ -153,7 +154,8 @@ echo "1 + 2 * 3 ;" | tree-sitter parse /dev/stdin
 ```
 
 `2 * 3` is nested as the right operand of `+` — correct. The operators are
-anonymous and not shown as named nodes; each `(number …)` leaf holds the digit.
+anonymous nodes and do not appear in the default `tree-sitter parse` output;
+each `(number …)` leaf holds the digit.
 
 ## Step 3 — fix keyword extraction with `%word`
 
@@ -196,12 +198,12 @@ there. The lexer sees `or` at the start of `oracle`, finds it is a valid token
 at that position, and stops after two characters. It never considers whether the
 full string is an identifier.
 
-The fix is `%word`. It designates one rule as the language's *word token*,
-enabling **keyword extraction**: instead of matching keywords greedily by
-position, tree-sitter first matches the full word-token pattern
-(`/[a-zA-Z_][a-zA-Z0-9_]*/`), then checks whether the result is a known
-keyword. If the whole word is a keyword it emits that token; if not, no keyword
-matches at this position, and the lexer looks for other options.
+The fix is `%word`. See [Keyword extraction and `word:`](03-concepts.md#word-token)
+for the full background; in brief: `%word` designates one rule as the language's
+*word token*, enabling **keyword extraction** — tree-sitter first matches the
+full word-token pattern (`/[a-zA-Z_][a-zA-Z0-9_]*/`), then checks whether the
+result is a known keyword. If the whole word is a keyword it emits that token;
+if not, no keyword matches at this position, and the lexer looks for other options.
 
 Add `%word` at the top of the file:
 
@@ -248,7 +250,8 @@ The silent mis-parse is gone. With `%word`, the lexer tries the full identifier
 pattern at `oracle`, matches 6 characters, and finds that `"oracle"` is not a
 keyword. `or` is not emitted. The parser now correctly sees `oracle` as an
 identifier — and since an identifier cannot appear in operator position after
-`true`, it surfaces an error rather than silently accepting the wrong parse.
+`true`, it surfaces an `(ERROR ...)` node (tree-sitter's standard
+error-recovery marker) rather than silently accepting the wrong parse.
 
 Verify that identifiers starting with keyword prefixes work correctly in atom
 position:
@@ -306,13 +309,13 @@ ts-bnf-tool convert --generate --name expr expr.bnf
 ## What to explore next
 
 - **`%conflicts`** — if your language has a structurally ambiguous construct
-  (such as a dangling-else), read [GLR conflicts](00-concepts.md#glr-conflicts)
+  (such as a dangling-else), read [GLR conflicts](03-concepts.md#glr-conflicts)
   and add a `%conflicts` directive.
 - **`%supertypes`** — if your language has abstract node types that enrich
-  generated bindings, see [Hidden nodes and supertypes](00-concepts.md#hidden-supertypes).
+  generated bindings, see [Hidden nodes and supertypes](03-concepts.md#hidden-supertypes).
 - **`%externals`** — if your language is indentation-sensitive or needs tokens
-  that a regex cannot describe, see [External scanners](00-concepts.md#external-scanners).
+  that a regex cannot describe, see [External scanners](03-concepts.md#external-scanners).
 
 ---
 
-Previous: [End-to-end workflow](05-end-to-end.md) · Next: [Analysing a grammar](06-analysing.md)
+Previous: [End-to-end workflow](06-end-to-end.md) · Next: [Analysing a grammar](08-analysing.md)

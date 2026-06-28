@@ -1,7 +1,7 @@
 # Tree-sitter grammar concepts
 
 This page explains the tree-sitter parser-generator mechanisms that the grammar
-directives control. Read it before [Grammar-level directives](03-directives.md)
+directives control. Read it before [Grammar-level directives](04-directives.md)
 — the directives will make more sense once you understand what problem each one
 solves.
 
@@ -110,6 +110,10 @@ the longer, "shift" parse, i.e. bind `else` to the inner `if`).
 ```bnf
 %conflicts [stmt, stmt]
 ```
+
+`stmt` appears twice because the ambiguity is between two alternatives of the
+*same* rule: both `stmt → 'if' cond 'then' stmt` and
+`stmt → 'if' cond 'then' stmt 'else' stmt` can produce the same input prefix.
 
 Use `%conflicts` only when:
 
@@ -235,4 +239,4 @@ you full control over where whitespace is permitted.
 
 ---
 
-Previous: [Syntax walkthrough](02-syntax.md) · Next: [Grammar-level directives](03-directives.md)
+Previous: [Syntax walkthrough](02-syntax.md) · Next: [Grammar-level directives](04-directives.md)

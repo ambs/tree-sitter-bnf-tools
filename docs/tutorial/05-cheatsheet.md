@@ -34,4 +34,4 @@
 
 ---
 
-Previous: [Grammar-level directives](03-directives.md) · Next: [End-to-end workflow](05-end-to-end.md)
+Previous: [Grammar-level directives](04-directives.md) · Next: [End-to-end workflow](06-end-to-end.md)

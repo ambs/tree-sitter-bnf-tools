@@ -6,12 +6,12 @@ to the same-named fields in `grammar.js`, except `%axiom` (which controls rule
 order) and `%include` (which merges files). An error is printed to stderr for
 any referenced rule name that has no definition.
 
-If you are new to tree-sitter, read [Tree-sitter grammar concepts](00-concepts.md)
+If you are new to tree-sitter, read [Tree-sitter grammar concepts](03-concepts.md)
 first — it explains the underlying mechanisms that these directives control.
 
 ## `%word`
 
-> **Background:** [Keyword extraction and `word:`](00-concepts.md#word-token)
+> **Background:** [Keyword extraction and `word:`](03-concepts.md#word-token)
 > explains why the lexer can mis-tokenise identifiers like `oracle` as the
 > keyword `or` + `acle` (in contexts where only operators are expected), and
 > how `word:` fixes it.
@@ -46,7 +46,7 @@ rejects both.
 
 ## `%extras`
 
-> **Background:** [Extras: whitespace and comments](00-concepts.md#extras)
+> **Background:** [Extras: whitespace and comments](03-concepts.md#extras)
 > explains what tree-sitter's built-in whitespace default is and when you need
 > to override it.
 
@@ -69,7 +69,7 @@ to the list.
 
 ## `%conflicts`
 
-> **Background:** [GLR conflicts](00-concepts.md#glr-conflicts) explains what
+> **Background:** [GLR conflicts](03-concepts.md#glr-conflicts) explains what
 > structural ambiguity is, why precedence cannot resolve it, and how tree-sitter's
 > GLR mode handles it.
 
@@ -94,7 +94,7 @@ conflicts: $ => [
 
 ## `%precedences`
 
-> **Background:** [Shift-reduce conflicts and operator precedence](00-concepts.md#conflicts-precedence)
+> **Background:** [Shift-reduce conflicts and operator precedence](03-concepts.md#conflicts-precedence)
 > explains how inline `%prec` annotations (covered in the [syntax walkthrough](02-syntax.md#precedence-annotations))
 > and `%precedences` groups work together to resolve operator ambiguity.
 
@@ -182,7 +182,7 @@ since upstream `tree-sitter generate` rejects them.
 
 ## `%supertypes`
 
-> **Background:** [Hidden nodes and supertypes](00-concepts.md#hidden-supertypes)
+> **Background:** [Hidden nodes and supertypes](03-concepts.md#hidden-supertypes)
 > explains what hidden nodes and supertype rules are, and why they matter for
 > language bindings.
 
@@ -213,7 +213,7 @@ is not) — `check` reports an **error** for either shape, since upstream
 
 ## `%externals`
 
-> **Background:** [External scanners](00-concepts.md#external-scanners)
+> **Background:** [External scanners](03-concepts.md#external-scanners)
 > explains what an external scanner is, when a regex is not enough (e.g.
 > indentation-sensitive layout), and how the scanner integrates with the
 > generated parser.
@@ -282,4 +282,4 @@ be used when reading from stdin.
 
 ---
 
-Previous: [Tree-sitter concepts](00-concepts.md) · Next: [Cheat sheet](04-cheatsheet.md)
+Previous: [Tree-sitter concepts](03-concepts.md) · Next: [Cheat sheet](05-cheatsheet.md)

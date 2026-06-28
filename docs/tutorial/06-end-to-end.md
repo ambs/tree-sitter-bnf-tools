@@ -146,4 +146,4 @@ get a `; TODO: @???` placeholder for human review. The heuristics applied are:
 
 ---
 
-Previous: [Cheat sheet](04-cheatsheet.md) · Next: [Worked example](09-worked-example.md)
+Previous: [Cheat sheet](05-cheatsheet.md) · Next: [Worked example](07-worked-example.md)

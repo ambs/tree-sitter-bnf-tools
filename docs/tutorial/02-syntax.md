@@ -225,7 +225,9 @@ What the parse tree looks like, for each alias form:
 ## Precedence annotations
 
 Precedence annotations wrap an alternative in a `prec()` call, resolving
-ambiguities in the grammar:
+ambiguities in the grammar. For an explanation of *why* these conflicts arise
+(shift-reduce conflicts, LR parsing), see
+[Shift-reduce conflicts and operator precedence](03-concepts.md#conflicts-precedence).
 
 ```bnf
 expr -> expr '+' expr  %prec.left 1
@@ -259,7 +261,7 @@ The level is either a signed integer or a quoted name, never both. An
 integer level such as `%prec -1` allows negative values and maps to
 `prec(-1, ...)`; tree-sitter grammars commonly use negative precedence to
 disfavour an interpretation. A named level such as `%prec 'unary'` must
-match a string item declared in some [`%precedences`](03-directives.md#precedences)
+match a string item declared in some [`%precedences`](04-directives.md#precedences)
 group — referencing an undeclared name is an **error**.
 
 To annotate a sub-expression rather than a whole alternative, wrap it in
@@ -272,7 +274,7 @@ rule -> (a | b %prec 1) c ;
 ## Reserved-word annotation
 
 A `(body %reserved setName)` annotation opts a symbol into a named
-[reserved-word set](03-directives.md#reserved), overriding the implicit
+[reserved-word set](04-directives.md#reserved), overriding the implicit
 global set for that occurrence only:
 
 ```bnf
@@ -307,4 +309,4 @@ supported equivalents before running `ts-bnf-tool`.
 
 ---
 
-Previous: [Getting started](01-getting-started.md) · Next: [Tree-sitter concepts](00-concepts.md)
+Previous: [Getting started](01-getting-started.md) · Next: [Tree-sitter concepts](03-concepts.md)
