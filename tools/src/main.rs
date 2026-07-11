@@ -609,13 +609,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         } => {
             let (grammar, diagnostics) = match parse_file(&filename, true) {
                 Ok((g, d)) => (Some(g), d),
-                Err(e) => match e.downcast::<ParseError>() {
-                    Ok(pe) => match *pe {
+                Err(e) => {
+                    let pe = e.downcast::<ParseError>()?;
+                    match *pe {
                         ParseError::SyntaxError(diags) => (None, diags),
                         other => return Err(Box::new(other)),
-                    },
-                    Err(other) => return Err(other),
-                },
+                    }
+                }
             };
             // bool::then is lazy — the closure (and first_sets inside it) only
             // runs when --summary was passed. Without it, summarise() would
