@@ -19,7 +19,7 @@ impl Display for Production {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         fmt.write_str(&self.name)?;
         fmt.write_str(" -> ")?;
-        write!(fmt, "{}", &self.body)?;
+        write!(fmt, "{}", self.body)?;
         Ok(())
     }
 }
