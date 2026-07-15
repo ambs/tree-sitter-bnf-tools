@@ -20,7 +20,7 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -30,14 +30,14 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
       - name: Cache tree-sitter-cli
         id: cache-ts-cli
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/tree-sitter
           key: ${{ runner.os }}-tree-sitter-cli-0.26.9
       - name: Install tree-sitter-cli
         if: steps.cache-ts-cli.outputs.cache-hit != 'true'
         run: cargo install tree-sitter-cli --version 0.26.9 --locked
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+      - uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6 # v2.82.6
         with:
           tool: cargo-audit
       - run: make fmt-check
@@ -58,7 +58,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -68,7 +68,7 @@ jobs:
           restore-keys: ubuntu-latest-cargo-llvm-cov-
       - name: Cache tree-sitter-cli
         id: cache-ts-cli
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/tree-sitter
           key: ${{ runner.os }}-tree-sitter-cli-0.26.9
@@ -80,7 +80,7 @@ jobs:
       - name: Install graphviz
         run: sudo apt-get update && sudo apt-get install -y graphviz
       - run: make generate
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+      - uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6 # v2.82.6
         with:
           tool: cargo-llvm-cov
       - name: Run tests with coverage
