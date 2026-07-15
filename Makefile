@@ -10,7 +10,7 @@ GRAPH_PDF   := grammar/graph.pdf
 
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish grammar grammar-check audit
+.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish install grammar grammar-check audit
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -77,6 +77,9 @@ fmt: ## Format Rust source
 
 fmt-check: ## Check formatting without modifying
 	$(CARGO) fmt --check
+
+install: $(PARSER_C) ## Install ts-bnf-tool locally (cargo install --path)
+	$(CARGO) install --path tools
 
 publish: ## Publish crates to crates.io (tree-sitter-bnf first, then ts-bnf-tool)
 	$(CARGO) publish -p tree-sitter-bnf --allow-dirty
