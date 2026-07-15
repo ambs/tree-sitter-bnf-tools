@@ -138,6 +138,7 @@ make test-grammar  # run tree-sitter corpus tests
 make lint       # clippy
 make fmt        # rustfmt
 make audit      # check dependencies against the RustSec advisory database
+make install    # install ts-bnf-tool locally (cargo install --path)
 make clean      # remove build artifacts
 ```
 
