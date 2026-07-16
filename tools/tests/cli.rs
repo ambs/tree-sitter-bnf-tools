@@ -1207,6 +1207,72 @@ fn railroad_unknown_rule_exits_nonzero() {
     );
 }
 
+#[test]
+/// Without `--annotate`, a field label is not drawn in the SVG output (#182).
+fn railroad_without_annotate_omits_field_label() {
+    let bnf = "expr -> operand: 'NUM' ;\n";
+    let path = write_tmp("ts_bnf_rr_annotate_off.bnf", bnf);
+    let out = tool().args(["railroad"]).arg(&path).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(!stdout.contains("operand"));
+}
+
+#[test]
+/// `--annotate` draws a field label in a stylesheet-styled labeled box in the SVG output (#182).
+fn railroad_annotate_shows_field_label() {
+    let bnf = "expr -> operand: 'NUM' ;\n";
+    let path = write_tmp("ts_bnf_rr_annotate_on.bnf", bnf);
+    let out = tool()
+        .args(["railroad", "--annotate"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "railroad --annotate must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("operand:"),
+        "field name must appear as an annotation label in the dialect's `name:` syntax"
+    );
+    assert!(
+        stdout.contains("labeledbox annotation-field"),
+        "annotation box must carry the labeledbox class (styled by the embedded stylesheet) plus a per-kind class"
+    );
+    assert!(
+        stdout.contains("fill-opacity"),
+        "stylesheet must re-state the labeledbox fill in Inkscape-safe syntax (rgba() fills render as opaque black in Inkscape)"
+    );
+}
+
+#[test]
+/// `--annotate` also applies in `--split` mode (#182).
+fn railroad_annotate_applies_in_split_mode() {
+    let bnf = "expr -> operand: 'NUM' ;\n";
+    let path = write_tmp("ts_bnf_rr_annotate_split.bnf", bnf);
+    let out_dir = std::env::temp_dir().join("ts_bnf_rr_annotate_split_out");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["railroad", "--annotate", "--split", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "railroad --annotate --split must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let svg = std::fs::read_to_string(out_dir.join("expr.svg")).unwrap();
+    assert!(
+        svg.contains("operand:"),
+        "field name must appear as an annotation label in split output"
+    );
+}
+
 // ── stdin ─────────────────────────────────────────────────────────────────────
 
 #[test]

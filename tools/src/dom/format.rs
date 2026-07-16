@@ -254,12 +254,7 @@ fn format_sequence_items(node: &GrammarNode) -> String {
 
 /// Builds the `%prec[.left|.right|.dynamic] [level]` annotation string.
 fn prec_annotation(kind: &PrecKind, level: &Option<PrecLevel>) -> String {
-    let kw = match kind {
-        PrecKind::Plain => "prec",
-        PrecKind::Left => "prec.left",
-        PrecKind::Right => "prec.right",
-        PrecKind::Dynamic => "prec.dynamic",
-    };
+    let kw = kind.as_str();
     match level {
         Some(PrecLevel::Integer(i)) => format!("%{} {}", kw, i),
         Some(PrecLevel::Name(n)) => format!("%{} {}", kw, n),

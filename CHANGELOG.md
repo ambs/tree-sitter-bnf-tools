@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - `make install` target: installs `ts-bnf-tool` locally via `cargo install --path tools`.
+- `railroad --annotate` flag: draws tree-sitter-specific annotations
+  (`field`, `token`, `token.immediate`, `alias`, `prec`) as labeled boxes
+  instead of rendering them transparently. Works in both single-file and
+  `--split` modes (#182).
 
 ### Changed
 - `%axiom` resolution is now scoped to the top-level file (#295). An

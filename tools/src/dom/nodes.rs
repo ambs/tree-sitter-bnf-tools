@@ -13,6 +13,18 @@ pub enum PrecKind {
     Dynamic,
 }
 
+impl PrecKind {
+    /// The tree-sitter surface name of this precedence kind, e.g. `"prec.left"`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PrecKind::Plain => "prec",
+            PrecKind::Left => "prec.left",
+            PrecKind::Right => "prec.right",
+            PrecKind::Dynamic => "prec.dynamic",
+        }
+    }
+}
+
 /// A `prec(…)` level: either an integer or an already-quoted name.
 pub enum PrecLevel {
     /// A numeric precedence level, e.g. the `1` in `prec(1, …)`.
@@ -235,12 +247,7 @@ impl Display for GrammarNode {
                 write!(f, "alias({}, {})", body, name)
             }
             GrammarNode::Prec(kind, level, inner) => {
-                let name = match kind {
-                    PrecKind::Plain => "prec",
-                    PrecKind::Left => "prec.left",
-                    PrecKind::Right => "prec.right",
-                    PrecKind::Dynamic => "prec.dynamic",
-                };
+                let name = kind.as_str();
                 match level {
                     Some(n) => write!(f, "{}({}, {})", name, n, inner),
                     None => write!(f, "{}({})", name, inner),
