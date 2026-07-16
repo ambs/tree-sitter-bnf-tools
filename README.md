@@ -106,7 +106,10 @@ term   -> factor ('*' factor)* ;
 factor -> /[0-9]+/ | '(' expr ')' ;
 ```
 
-`ts-bnf-tool railroad` draws railroad / syntax diagrams:
+`ts-bnf-tool railroad` draws railroad / syntax diagrams. By default,
+tree-sitter-specific annotations (`field`, `token`, `token.immediate`,
+`alias`, `prec`) are transparent; pass `--annotate` to draw them as labeled
+boxes:
 
 ![Railroad diagram for the toy arithmetic grammar](docs/railroad-example.svg)
 

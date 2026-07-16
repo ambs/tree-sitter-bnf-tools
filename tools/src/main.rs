@@ -123,6 +123,11 @@ enum Subcommands {
         /// Render only the named rule; incompatible with `--split`
         #[arg(long)]
         rule: Option<String>,
+        /// Draw tree-sitter annotations (field names, token/token.immediate,
+        /// alias names, precedence) as labeled boxes instead of rendering them
+        /// transparently
+        #[arg(long)]
+        annotate: bool,
     },
     /// Emit a rule-dependency graph (DOT, Mermaid, or Graphviz-rendered image).
     Graph {
@@ -484,6 +489,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             split,
             output_dir,
             rule,
+            annotate,
         } => {
             let (grammar, _) = parse_file(&filename, false)?;
             let warnings;
@@ -491,12 +497,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let dir = PathBuf::from(
                     output_dir.expect("clap requires --output-dir when --split is given"),
                 );
-                warnings = ts_bnf_tool::dom::railroad::emit_split(&grammar, &dir)?;
+                warnings = ts_bnf_tool::dom::railroad::emit_split(&grammar, &dir, annotate)?;
             } else {
                 let svg;
-                (svg, warnings) =
-                    ts_bnf_tool::dom::railroad::emit_single_file(&grammar, rule.as_deref())
-                        .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
+                (svg, warnings) = ts_bnf_tool::dom::railroad::emit_single_file(
+                    &grammar,
+                    rule.as_deref(),
+                    annotate,
+                )
+                .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
                 match output {
                     Some(path) => fs::write(&path, &svg)?,
                     None => print!("{svg}"),
