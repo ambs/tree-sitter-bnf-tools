@@ -23,6 +23,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   file's `%axiom` was adopted when the includer had none — both behaviors are
   removed. Standalone use of an included file is unaffected.
 
+### Fixed
+- A file reached more than once via `%include` — directly or transitively,
+  e.g. a "diamond" where two included files both include a common third file
+  — is now merged only once instead of once per include path (#301). This
+  removes spurious "rule defined more than once" warnings and a spurious
+  duplicate-`%word` error for diamond includes. Two genuinely different files
+  that happen to declare the same rule name still produce the duplicate-rule
+  warning; circular includes are still a hard error.
+
 ## [0.4.0] - 2026-06-28
 
 ### Added

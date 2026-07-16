@@ -429,7 +429,11 @@ impl Grammar {
     /// Merges `other` into `self`, treating its contents as if inlined at the `%include` site.
     ///
     /// **Duplicate rules**: the last definition wins (the incoming rule from `other` replaces the
-    /// existing one), but a warning is emitted so the author is aware of the shadowing.
+    /// existing one), but a warning is emitted so the author is aware of the shadowing. The
+    /// caller (`visit_include_directive`, issue #301) never calls this twice for the same
+    /// canonical file within one parse, so this warning only fires for two genuinely distinct
+    /// files that happen to declare the same rule name — not for a diamond include (the same
+    /// file reached via more than one `%include` path), which is skipped before reaching here.
     ///
     /// **`%axiom`**: scoped to the top-level file (issue #295) — an included file's `%axiom` is
     /// discarded unconditionally. It never overrides `self`'s axiom, is never adopted when `self`
