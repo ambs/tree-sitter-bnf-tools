@@ -431,10 +431,13 @@ impl Grammar {
     /// **Duplicate rules**: the last definition wins (the incoming rule from `other` replaces the
     /// existing one), but a warning is emitted so the author is aware of the shadowing.
     ///
-    /// **`%axiom`**: first declaration wins — if `self` already has one, the incoming axiom is
-    /// rejected with an error diagnostic rather than silently overriding the root.
+    /// **`%axiom`**: scoped to the top-level file (issue #295) — an included file's `%axiom` is
+    /// discarded unconditionally. It never overrides `self`'s axiom, is never adopted when `self`
+    /// has none, and never triggers a duplicate-axiom diagnostic; the included file's own rules
+    /// are also never candidates for `self`'s implicit-first-rule fallback (see
+    /// [`Grammar::root_rule`]). An included file used standalone still resolves its own `%axiom`
+    /// exactly as documented.
     pub(crate) fn merge_from(&mut self, mut other: Grammar) {
-        let other_axiom = other.take_axiom();
         let other_word = other.take_word();
         for (name, prod) in other.productions {
             if self.productions.contains_key(&name) {
@@ -445,11 +448,6 @@ impl Grammar {
                 )));
             }
             self.productions.insert(name, prod);
-        }
-        if let Some(axiom) = other_axiom
-            && let Some(diag) = self.declare_axiom(axiom)
-        {
-            self.parse_diagnostics.push(diag);
         }
         if let Some(word) = other_word
             && let Some(diag) = self.declare_word(word)
