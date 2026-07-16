@@ -257,12 +257,38 @@ term      -> /[0-9]+/ ;
 tree-sitter uses it as the start symbol, while the BNF file keeps its original
 declaration order.
 
-Declaring `%axiom` more than once is an **error**, as is naming a rule that is
-not defined anywhere in the file. The resolved start rule — whether set by
-`%axiom` or, absent `%axiom`, the implicit first-declared rule — also cannot
-be hidden: tree-sitter requires the start rule to be visible, and `check`
-reports an **error** if it is not, whether the rule is hidden by a
-`_`-prefixed name or because it's also listed in `%supertypes`.
+Declaring `%axiom` more than once *in the same file* is an **error**, as is
+naming a rule that is not defined anywhere in the file. The resolved start
+rule — whether set by `%axiom` or, absent `%axiom`, the implicit
+first-declared rule — also cannot be hidden: tree-sitter requires the start
+rule to be visible, and `check` reports an **error** if it is not, whether the
+rule is hidden by a `_`-prefixed name or because it's also listed in
+`%supertypes`.
+
+### `%axiom` and `%include`
+
+`%axiom` resolution is scoped to the top-level file being processed — the one
+named on the command line, not any file it `%include`s:
+
+- If the top-level file declares `%axiom`, that rule is the start symbol.
+  An `%axiom` declared in an included file is irrelevant to the composed
+  grammar and is silently discarded — it does **not** conflict with the
+  top-level file's own `%axiom`, and it is never adopted when the top-level
+  file has none.
+- If the top-level file has no `%axiom`, the start symbol falls back to the
+  *first rule declared directly in that file*, even if the file's first
+  statement is an `%include` whose own rules (or `%axiom`) would otherwise be
+  encountered first.
+- An included file parsed on its own (as its own top-level file, not via
+  `%include`) still resolves its own `%axiom` exactly as described above —
+  nothing changes for the standalone case.
+
+This keeps a grammar's start symbol a property of whoever is compiling it,
+the same way `tree-sitter generate`'s output is a property of the file passed
+to it, not of every file that file happens to pull in. It lets you split a
+large grammar into includable, independently testable sub-grammars — e.g. an
+`expressions.bnf` with its own `%axiom expr` for isolated testing — without
+forcing every includer to omit or duplicate that axiom.
 
 ## `%include`
 
@@ -276,9 +302,9 @@ directive:
 Paths are relative to the including file. Includes may be nested (A includes B
 includes C); circular includes (A includes B includes A) are detected and
 reported as an error. All directives from included files are merged
-additively. Duplicate rule names produce a warning (last definition wins);
-duplicate `%axiom` declarations across files are an error. `%include` cannot
-be used when reading from stdin.
+additively, except `%axiom` — see [`%axiom` and `%include`](#axiom-and-include)
+above. Duplicate rule names produce a warning (last definition wins).
+`%include` cannot be used when reading from stdin.
 
 ---
 

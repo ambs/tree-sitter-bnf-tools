@@ -20,6 +20,13 @@ pub struct Grammar {
     /// start-symbol resolution; the raw directive is reachable in-crate via
     /// [`axiom_directive`](Self::axiom_directive) for line-number diagnostics.
     axiom: Option<DirectiveItem>,
+    /// Name of the first rule declared *directly* in this grammar (as opposed to merged in
+    /// via `%include`), used as the implicit start-symbol fallback when no `%axiom` resolves.
+    ///
+    /// `merge_from` must never overwrite this from the incoming grammar: axiom resolution is
+    /// scoped to the top-level file (issue #295), so rules contributed by an included file can
+    /// never become the implicit root of the file that includes them.
+    own_first_rule: Option<String>,
     /// Word directive for keyword extraction.
     pub word: Option<DirectiveItem>,
     /// Conflict groups declared with `%conflicts`.
@@ -59,6 +66,7 @@ impl Grammar {
         Self {
             productions: IndexMap::new(),
             axiom: None,
+            own_first_rule: None,
             word: None,
             conflicts: Vec::new(),
             inline: Vec::new(),
@@ -78,6 +86,7 @@ impl Grammar {
     pub fn from_rules(productions: impl IntoIterator<Item = Production>) -> Self {
         let mut g = Self::new();
         for p in productions {
+            g.record_own_first_rule(&p.name);
             g.productions.insert(p.name.clone(), p);
         }
         g
@@ -89,17 +98,30 @@ impl Grammar {
     }
 
     /// Returns the grammar's start symbol: the rule named by `%axiom` when
-    /// declared and defined as a production, otherwise the first production in
-    /// declaration order, or `None` for an empty grammar.
+    /// declared and defined as a production, otherwise the first rule declared
+    /// directly in the top-level file (see [`own_first_rule`](Self::own_first_rule)),
+    /// or `None` for an empty grammar.
     ///
     /// An `%axiom` naming an undefined rule is treated as absent (graceful
     /// fallback); reporting that case as an error is `axiom_check`'s job.
+    ///
+    /// Axiom resolution is scoped to the top-level file (issue #295): a rule
+    /// contributed by an `%include`d file is never the implicit fallback, even
+    /// when the `%include` is the file's first statement and the included file
+    /// declares its own `%axiom`.
     pub fn root_rule(&self) -> Option<&str> {
         self.axiom
             .as_ref()
             .map(|item| item.name.as_str())
             .filter(|name| self.productions.contains_key(*name))
-            .or_else(|| self.productions.keys().next().map(String::as_str))
+            .or(self.own_first_rule.as_deref())
+    }
+
+    /// Records `name` as the first rule declared directly in this grammar, if none has been
+    /// recorded yet. Must only be called for rules declared in the grammar's own file, never
+    /// for rules merged in from an `%include`d file (see [`own_first_rule`](Self::own_first_rule)).
+    pub(crate) fn record_own_first_rule(&mut self, name: &str) {
+        self.own_first_rule.get_or_insert_with(|| name.to_string());
     }
 
     /// Records the `%axiom` directive, enforcing first-declaration-wins.
@@ -141,11 +163,6 @@ impl Grammar {
     /// Returns a mutable reference to the `%axiom` directive, for rule renaming.
     pub(crate) fn axiom_directive_mut(&mut self) -> Option<&mut DirectiveItem> {
         self.axiom.as_mut()
-    }
-
-    /// Removes and returns the `%axiom` directive, for `%include` merging.
-    pub(crate) fn take_axiom(&mut self) -> Option<DirectiveItem> {
-        self.axiom.take()
     }
 
     /// Removes and returns the `%word` directive, for `%include` merging.

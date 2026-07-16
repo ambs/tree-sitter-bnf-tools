@@ -9,6 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - `make install` target: installs `ts-bnf-tool` locally via `cargo install --path tools`.
 
+### Changed
+- `%axiom` resolution is now scoped to the top-level file (#295). An
+  `%axiom` declared in an `%include`d file no longer conflicts with, or is
+  adopted by, the including file: it is silently ignored, and the composed
+  grammar's start symbol is either the top-level file's own `%axiom` or the
+  first rule declared directly in that file. Previously, two `%axiom`
+  declarations across an include boundary produced an error, and an included
+  file's `%axiom` was adopted when the includer had none — both behaviors are
+  removed. Standalone use of an included file is unaffected.
+
 ## [0.4.0] - 2026-06-28
 
 ### Added

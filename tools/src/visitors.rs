@@ -89,6 +89,7 @@ fn visit_grammar_inner(
                         loc(&prod.filename, prod.line)
                     )));
                 }
+                grammar.record_own_first_rule(&prod.name);
                 grammar.productions.insert(prod.name.clone(), prod);
             }
             "conflictsDirective" => {
@@ -910,22 +911,26 @@ mod tests {
         );
     }
 
-    // ── duplicate %axiom error ────────────────────────────────────────────────
+    // ── %axiom is scoped to the top-level file (#295) ─────────────────────────
 
     #[test]
-    /// Two %axiom declarations across included files produce an error diagnostic.
-    fn include_duplicate_axiom_emits_error() {
+    /// An included file's own %axiom does not conflict with the includer's: %axiom
+    /// resolution is scoped to the top-level file, so no error is raised and the
+    /// includer's own %axiom wins.
+    fn include_own_axiom_is_not_a_duplicate_of_included_axiom() {
         write_tmp("inc_axiom_b.bnf", "%axiom b\nb -> 'y' ;");
         let a = write_tmp(
             "inc_axiom_a.bnf",
             "%axiom a\na -> 'x' ;\n%include \"inc_axiom_b.bnf\"",
         );
-        let (_, diags) = parse_path(&a).unwrap();
+        let (grammar, diags) = parse_path(&a).unwrap();
         assert!(
-            diags.iter().any(|d| d.severity == Severity::Error
-                && d.message.contains("%axiom declared more than once")),
-            "expected duplicate-%axiom error, got {diags:?}"
+            !diags
+                .iter()
+                .any(|d| d.message.contains("%axiom declared more than once")),
+            "included file's own %axiom must not be reported as a duplicate, got {diags:?}"
         );
+        assert_eq!(grammar.root_rule(), Some("a"));
     }
 
     // ── axiom directive bookkeeping ───────────────────────────────────────────
@@ -937,20 +942,38 @@ mod tests {
         assert_eq!(g.axiom_directive().map(|a| a.line), Some(1));
     }
 
-    // ── axiom from included file ──────────────────────────────────────────────
+    // ── axiom from included file is never adopted (#295) ──────────────────────
 
     #[test]
-    /// When the parent has no %axiom but the included file does, the included
-    /// axiom is adopted (the else-branch of merge_from's axiom handling).
-    fn include_adopts_axiom_from_included_file() {
+    /// When the parent has no %axiom, an included file's %axiom is not adopted:
+    /// the parent's start rule falls back to its own first-declared rule, even
+    /// though the %include appears before that rule and the included file
+    /// declares its own %axiom.
+    fn include_does_not_adopt_axiom_from_included_file() {
         write_tmp("inc_ax_b.bnf", "%axiom b\nb -> 'y' ;");
         let a = write_tmp("inc_ax_a.bnf", "%include \"inc_ax_b.bnf\"\na -> b ;");
         let (grammar, _) = parse_path(&a).unwrap();
         assert_eq!(
-            grammar.axiom_directive().map(|ax| ax.name.as_str()),
-            Some("b"),
-            "axiom from included file must be adopted when parent has none"
+            grammar.axiom_directive(),
+            None,
+            "an included file's %axiom must never be adopted by the includer"
         );
+        assert_eq!(
+            grammar.root_rule(),
+            Some("a"),
+            "with no %axiom, the includer's own first rule must be the start rule, \
+             not the included file's %axiom or first rule"
+        );
+    }
+
+    #[test]
+    /// A grammar with its own %axiom resolves that %axiom normally when parsed
+    /// standalone (not included from anywhere) — %include-scoping must not
+    /// affect the ordinary, non-included case.
+    fn axiom_resolves_normally_when_file_is_not_included() {
+        let b = write_tmp("inc_ax_standalone_b.bnf", "%axiom b\nb -> 'y' ;");
+        let (grammar, _) = parse_path(&b).unwrap();
+        assert_eq!(grammar.root_rule(), Some("b"));
     }
 
     // ── syntax error in included file ─────────────────────────────────────────
