@@ -303,8 +303,15 @@ Paths are relative to the including file. Includes may be nested (A includes B
 includes C); circular includes (A includes B includes A) are detected and
 reported as an error. All directives from included files are merged
 additively, except `%axiom` — see [`%axiom` and `%include`](#axiom-and-include)
-above. Duplicate rule names produce a warning (last definition wins).
-`%include` cannot be used when reading from stdin.
+above.
+
+The same file reached more than once — directly or transitively, e.g. A
+includes both B and C, and B also includes C — is only merged the first time;
+later `%include`s of it are silent no-ops. This avoids spurious "defined more
+than once" warnings (or a duplicate-`%word` error) from a diamond of includes
+that all resolve to one file on disk. Two genuinely *different* files that
+happen to declare the same rule name still produce a duplicate-rule warning
+(last definition wins). `%include` cannot be used when reading from stdin.
 
 ---
 

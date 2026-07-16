@@ -21,6 +21,26 @@ pub struct SourceFile<'a> {
     pub path: Option<PathBuf>,
 }
 
+/// Tracks `%include` resolution state across a single top-level parse.
+///
+/// Bundles two canonical-path sets that both grow during recursive descent into
+/// included files but are cleared under different rules:
+/// - `stack`: paths currently being processed (an include-of-an-include chain).
+///   Popped on backtrack (see [`visit_include_directive`]) so that diamond includes
+///   (two files independently including the same third file) aren't misreported as
+///   a cycle. A path already on `stack` when re-encountered is a genuine cycle.
+/// - `merged`: paths that have been fully parsed and merged into the composed
+///   grammar at least once. Never popped, so a second `%include` of the same file —
+///   direct or transitive — is a silent no-op instead of duplicating its rules and
+///   directives into the grammar a second time (issue #301).
+#[derive(Default)]
+struct IncludeState {
+    /// Canonical paths on the current include chain; popped on backtrack.
+    stack: HashSet<PathBuf>,
+    /// Canonical paths already fully parsed and merged; never popped.
+    merged: HashSet<PathBuf>,
+}
+
 /// Parses a BNF source string and returns the [`Grammar`] DOM and any diagnostics.
 pub fn parse_source(src: &str) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
     let mut parser = tree_sitter::Parser::new();
@@ -55,24 +75,24 @@ fn ensure_node_type(node: &Node, node_type: &str) -> Result<(), ParseError> {
 /// Converts the root `grammar` tree-sitter node into a [`Grammar`] DOM.
 ///
 /// Returns the grammar and any diagnostics from cross-reference checks.
-/// Seeds the cycle-detection set with the current file's path before delegating
+/// Seeds the include-cycle stack with the current file's path before delegating
 /// to [`visit_grammar_inner`].
 pub fn visit_grammar(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
 ) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
-    let mut seen = HashSet::new();
+    let mut state = IncludeState::default();
     if let Some(path) = &ctx.path {
-        seen.insert(path.clone());
+        state.stack.insert(path.clone());
     }
-    visit_grammar_inner(node, ctx, &mut seen)
+    visit_grammar_inner(node, ctx, &mut state)
 }
 
-/// Inner implementation of [`visit_grammar`], carrying the cycle-detection set.
+/// Inner implementation of [`visit_grammar`], carrying the `%include` resolution state.
 fn visit_grammar_inner(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
-    seen: &mut HashSet<PathBuf>,
+    state: &mut IncludeState,
 ) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar::new();
@@ -131,7 +151,7 @@ fn visit_grammar_inner(
                 }
             }
             "includeDirective" => {
-                visit_include_directive(&mut grammar, &child, ctx, seen)?;
+                visit_include_directive(&mut grammar, &child, ctx, state)?;
             }
             "reservedDirective" => {
                 grammar
@@ -189,11 +209,19 @@ fn visit_reserved_item(node: &Node<'_>, ctx: &SourceFile<'_>) -> ReservedEntry {
 
 /// Resolves a `%include` directive, parses the referenced file, and merges it into `grammar`.
 ///
-/// `seen` is the set of canonical paths on the current include stack; it is used to detect
-/// cycles (e.g. A includes B which includes A again). After the recursive call returns,
-/// the path is removed from `seen` so that diamond includes (two files independently
-/// including the same third file) are allowed — they produce duplicate-rule warnings
-/// rather than a cycle error.
+/// `state.stack` holds canonical paths on the current include chain and is checked first,
+/// so a genuine cycle (e.g. A includes B which includes A again) is always reported as an
+/// error, even if the disjointness with `state.merged` asserted below were ever broken by
+/// a future change — failing loud beats silently skipping a file and producing an
+/// incomplete grammar.
+///
+/// `state.merged` holds canonical paths already fully parsed and merged, anywhere in this
+/// parse. A path never occupies both sets at once: it enters `stack` before recursing and
+/// the swap to `merged` happens atomically with its removal from `stack` on backtrack (see
+/// below), so at any point during traversal `stack` and `merged` are disjoint. Checking
+/// `merged` lets a diamond include (two files independently including the same third file)
+/// skip re-reading, re-parsing, and re-merging that file a second time, instead of
+/// duplicating its rules and directives into the composed grammar (issue #301).
 ///
 /// Check diagnostics for each included file in isolation are discarded — cross-reference
 /// checks run on the fully-merged grammar once the top-level `visit_grammar` call returns.
@@ -201,7 +229,7 @@ fn visit_include_directive(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
-    seen: &mut HashSet<PathBuf>,
+    state: &mut IncludeState,
 ) -> Result<(), ParseError> {
     let raw = node
         .named_child(0)
@@ -220,13 +248,17 @@ fn visit_include_directive(
     let source = std::fs::read_to_string(&resolved)
         .map_err(|_| ParseError::IncludeNotFound(resolved.display().to_string()))?;
 
-    // Cycle detection: canonicalize after confirming the file exists (read above).
+    // Cycle/dedup detection: canonicalize after confirming the file exists (read above).
     let canonical = resolved.canonicalize().ok();
     if let Some(ref canon) = canonical {
-        if seen.contains(canon) {
+        if state.stack.contains(canon) {
             return Err(ParseError::IncludeCycle(resolved.display().to_string()));
         }
-        seen.insert(canon.clone());
+        if state.merged.contains(canon) {
+            // Already fully included elsewhere in this graph — skip re-merging it.
+            return Ok(());
+        }
+        state.stack.insert(canon.clone());
     }
 
     let mut parser = tree_sitter::Parser::new();
@@ -247,11 +279,13 @@ fn visit_include_directive(
         return Err(ParseError::SyntaxError(diagnostics));
     }
 
-    let (included, _) = visit_grammar_inner(&tree.root_node(), &included_ctx, seen)?;
+    let (included, _) = visit_grammar_inner(&tree.root_node(), &included_ctx, state)?;
 
-    // Backtrack: remove from the stack so diamond includes are not misreported as cycles.
+    // Backtrack the cycle stack, and remember this file as fully merged so any later
+    // %include of it (direct or transitive) is skipped instead of duplicated.
     if let Some(ref canon) = canonical {
-        seen.remove(canon);
+        state.stack.remove(canon);
+        state.merged.insert(canon.clone());
     }
 
     grammar.merge_from(included);
@@ -908,6 +942,59 @@ mod tests {
                 .any(|d| d.severity == Severity::Warning
                     && d.message.contains("defined more than once")),
             "expected duplicate-rule warning, got {diags:?}"
+        );
+    }
+
+    // ── diamond include (#301) ────────────────────────────────────────────────
+
+    #[test]
+    /// A includes B and C directly; B also includes C. C's rule is merged exactly
+    /// once, with no duplicate-rule warning, even though it's reachable via two paths.
+    fn include_diamond_merges_shared_file_once() {
+        write_tmp("inc_diamond_c.bnf", "rule_c -> 'z' ;");
+        write_tmp(
+            "inc_diamond_b.bnf",
+            "%include \"inc_diamond_c.bnf\"\nrule_b -> 'y' ;",
+        );
+        let a = write_tmp(
+            "inc_diamond_a.bnf",
+            "%include \"inc_diamond_b.bnf\"\n%include \"inc_diamond_c.bnf\"\nrule_a -> 'x' ;",
+        );
+        let (grammar, diags) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("rule_a"));
+        assert!(grammar.productions.contains_key("rule_b"));
+        assert!(grammar.productions.contains_key("rule_c"));
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("defined more than once")),
+            "diamond include of the same file must not warn, got {diags:?}"
+        );
+    }
+
+    #[test]
+    /// Diamond include where the doubly-included file declares `%word`: it is merged
+    /// only once, so no duplicate-`%word` error is raised.
+    fn include_diamond_with_word_directive_does_not_duplicate() {
+        write_tmp("inc_diamond_word_c.bnf", "%word ident\nident -> /a/ ;");
+        write_tmp(
+            "inc_diamond_word_b.bnf",
+            "%include \"inc_diamond_word_c.bnf\"\nrule_b -> ident ;",
+        );
+        let a = write_tmp(
+            "inc_diamond_word_a.bnf",
+            "%include \"inc_diamond_word_b.bnf\"\n%include \"inc_diamond_word_c.bnf\"\nrule_a -> ident ;",
+        );
+        let (grammar, diags) = parse_path(&a).unwrap();
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("%word declared more than once")),
+            "diamond include of a %word-declaring file must not error, got {diags:?}"
+        );
+        assert_eq!(
+            grammar.word.as_ref().map(|w| w.name.as_str()),
+            Some("ident")
         );
     }
 
