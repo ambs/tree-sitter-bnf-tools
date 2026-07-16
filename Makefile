@@ -30,8 +30,37 @@ $(GRAPH_PDF): $(GRAMMAR_BNF) $(PARSER_C)
 
 grammar: $(RAILROAD) $(GRAPH_PDF) ## Regenerate grammar/railroad.svg and grammar/graph.pdf from grammar/bnf.bnf
 
-grammar-check: grammar ## Fail if grammar/railroad.svg or grammar/graph.pdf are out of date
-	@git diff --exit-code $(RAILROAD) $(GRAPH_PDF) || \
+# Staleness is checked via git history rather than by unconditionally
+# re-rendering and byte-diffing: Graphviz's PDF backend is not
+# byte-reproducible across `dot` versions, so a fresh render on a different
+# Graphviz version than produced the committed graph.pdf would spuriously
+# fail even when grammar/bnf.bnf never changed (see #296). If bnf.bnf and the
+# generated outputs are all clean and bnf.bnf's last commit is an ancestor of
+# each output's last commit, the committed outputs are presumed current and
+# nothing is re-rendered. Otherwise (bnf.bnf or an output has uncommitted
+# changes, or bnf.bnf changed more recently) fall back to regenerating and
+# byte-diffing, which is deterministic within a single machine/run.
+grammar-check: ## Fail if grammar/railroad.svg or grammar/graph.pdf are stale relative to grammar/bnf.bnf
+	@if git diff --quiet -- $(GRAMMAR_BNF) $(RAILROAD) $(GRAPH_PDF) && \
+	    git diff --cached --quiet -- $(GRAMMAR_BNF) $(RAILROAD) $(GRAPH_PDF); then \
+		bnf_commit=$$(git log -1 --format=%H -- $(GRAMMAR_BNF)); \
+		stale=0; \
+		if [ -n "$$bnf_commit" ]; then \
+			for f in $(RAILROAD) $(GRAPH_PDF); do \
+				f_commit=$$(git log -1 --format=%H -- $$f); \
+				if [ -z "$$f_commit" ] || \
+				   { [ "$$f_commit" != "$$bnf_commit" ] && ! git merge-base --is-ancestor $$bnf_commit $$f_commit; }; then \
+					stale=1; \
+				fi; \
+			done; \
+		fi; \
+		if [ "$$stale" = "0" ]; then \
+			echo "grammar-check: $(GRAMMAR_BNF) unchanged since $(RAILROAD)/$(GRAPH_PDF) were last committed — skipping regeneration"; \
+			exit 0; \
+		fi; \
+	fi; \
+	$(MAKE) grammar; \
+	git diff --exit-code $(RAILROAD) $(GRAPH_PDF) || \
 		(echo "grammar-check: generated files are stale — commit $(RAILROAD) and $(GRAPH_PDF)" >&2; exit 1)
 
 ts-version-check: ## Check that tree-sitter-cli >= TS_MIN is installed
