@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use crate::dom::NameOrLiteral;
 
@@ -378,26 +378,46 @@ impl Grammar {
             .collect()
     }
 
-    /// Returns a warning for every rule that is never referenced by any other rule or directive.
+    /// Returns a warning for every rule that is unreachable from the root.
     ///
-    /// When `%axiom` is set, only that rule is exempt as the entry point.
-    /// Otherwise the first-declared rule is exempt as the implicit root.
-    /// Rules mentioned in `%extras` are also exempt: they are legitimately used
-    /// without appearing in any rule body (e.g. whitespace handlers).
+    /// When `%axiom` is set, that rule is the root. Otherwise the first-declared
+    /// rule is the root. Rules mentioned in `%extras` are additional roots: they
+    /// are legitimately used without appearing in any rule body (e.g. whitespace
+    /// handlers), and anything reachable from their own bodies is exempt too.
+    ///
+    /// Reachability is computed by BFS over each production's own body, not by
+    /// flat "is this name mentioned anywhere" membership — a rule referencing
+    /// only itself, or a cycle disconnected from the root, is still unreachable
+    /// and must still warn (#304).
     fn unreachable_rules_check(&self) -> Vec<Diagnostic> {
-        let mut referenced: std::collections::HashSet<&str> =
-            self.rhs_nonterminals.iter().map(String::as_str).collect();
-        for item in self.extras.iter().filter(|i| !i.name.starts_with('/')) {
-            referenced.insert(&item.name);
-        }
-
         let Some(root) = self.root_rule() else {
             return vec![];
         };
 
+        let mut reachable: HashSet<&str> = HashSet::new();
+        let mut queue: VecDeque<&str> = VecDeque::new();
+
+        reachable.insert(root);
+        queue.push_back(root);
+        for item in self.extras.iter().filter(|i| !i.name.starts_with('/')) {
+            if reachable.insert(&item.name) {
+                queue.push_back(&item.name);
+            }
+        }
+
+        while let Some(current) = queue.pop_front() {
+            if let Some(production) = self.productions.get(current) {
+                for name in production.body.nonterminal_names() {
+                    if reachable.insert(name) {
+                        queue.push_back(name);
+                    }
+                }
+            }
+        }
+
         self.productions
             .keys()
-            .filter(|name| name.as_str() != root && !referenced.contains(name.as_str()))
+            .filter(|name| !reachable.contains(name.as_str()))
             .map(|name| {
                 let (line, filename) = self
                     .productions
@@ -1149,6 +1169,50 @@ mod tests {
         let mut g = Grammar::from_rules([
             p("root", TerminalLiteral("'x'".into())),
             p("ws", TerminalLiteral("' '".into())),
+        ]);
+        g.extras = vec![di("ws", 1)];
+        assert!(g.unreachable_rules_check().is_empty());
+    }
+
+    #[test]
+    /// A rule that only references itself is still unreachable from the root and must
+    /// still warn (#304): a self-reference must not count as being "referenced". Uses
+    /// `parse_source` (not `Grammar::from_rules`) because the bug only manifests through
+    /// the real parser, which is what populated the old flat `rhs_nonterminals` cache.
+    fn unreachable_rules_self_reference_still_warns() {
+        let src = "A -> 'foo' ;\nB -> B ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert_eq!(
+            strs(&g.unreachable_rules_check()),
+            vec!["warning: rule 'B' is never referenced (line 2)"]
+        );
+    }
+
+    #[test]
+    /// A mutual cycle disconnected from the root is still unreachable and must still warn
+    /// (#304): each rule in the cycle references the other, but neither is reachable from
+    /// the root, so both must be flagged.
+    fn unreachable_rules_disconnected_mutual_cycle_still_warns() {
+        let src = "A -> 'foo' ;\nB -> C ;\nC -> B ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert_eq!(
+            strs(&g.unreachable_rules_check()),
+            vec![
+                "warning: rule 'B' is never referenced (line 2)",
+                "warning: rule 'C' is never referenced (line 3)",
+            ]
+        );
+    }
+
+    #[test]
+    /// A rule reachable only through an `%extras` rule's own body must not warn: `%extras`
+    /// rules are themselves additional entry points, not just exempt leaves.
+    fn unreachable_rules_reachable_via_extras_body_not_warned() {
+        use crate::dom::test_utils::nt;
+        let mut g = Grammar::from_rules([
+            p("root", TerminalLiteral("'x'".into())),
+            p("ws", nt("comment")),
+            p("comment", TerminalLiteral("'#'".into())),
         ]);
         g.extras = vec![di("ws", 1)];
         assert!(g.unreachable_rules_check().is_empty());
