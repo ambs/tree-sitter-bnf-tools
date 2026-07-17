@@ -33,6 +33,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rule that only references itself, or a group of rules that only reference
   each other in a cycle disconnected from the root, is correctly flagged as
   unreferenced instead of silently escaping the check (#304).
+- An unreachable rule that references another unreachable rule no longer
+  produces a separate warning for the rule it references (#306). Only the
+  island's own entry point — the rule nothing else in the island points
+  to — is reported; the rules it pulls in are already explained by that
+  warning. An island with no entry point at all, such as a mutual cycle
+  disconnected from the root, still reports every rule in it, since there is
+  no single rule to blame.
 - A file reached more than once via `%include` — directly or transitively,
   e.g. a "diamond" where two included files both include a common third file
   — is now merged only once instead of once per include path (#301). This

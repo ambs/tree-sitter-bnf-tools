@@ -389,6 +389,14 @@ impl Grammar {
     /// flat "is this name mentioned anywhere" membership — a rule referencing
     /// only itself, or a cycle disconnected from the root, is still unreachable
     /// and must still warn (#304).
+    ///
+    /// Rules unreachable from the root can still reference each other — an
+    /// "island" of dead code. Only each island's own entry point(s) are
+    /// reported: a rule pulled in solely by another unreachable rule is
+    /// explained by that rule's warning, so reporting it too would just be
+    /// noise (#306). An island with no entry point at all, e.g. a mutual
+    /// cycle disconnected from the root, has no single rule to blame, so
+    /// every rule in it is still reported.
     fn unreachable_rules_check(&self) -> Vec<Diagnostic> {
         let Some(root) = self.root_rule() else {
             return vec![];
@@ -415,13 +423,56 @@ impl Grammar {
             }
         }
 
-        self.productions
+        let unreachable: Vec<&str> = self
+            .productions
             .keys()
-            .filter(|name| !reachable.contains(name.as_str()))
+            .map(String::as_str)
+            .filter(|name| !reachable.contains(*name))
+            .collect();
+        let unreachable_set: HashSet<&str> = unreachable.iter().copied().collect();
+
+        // Non-terminals `name` refers to that are themselves unreachable.
+        let refs_within = |name: &str| -> Vec<&str> {
+            self.productions
+                .get(name)
+                .into_iter()
+                .flat_map(|p| p.body.nonterminal_names())
+                .filter(|n| unreachable_set.contains(n))
+                .collect()
+        };
+
+        // Entry points: unreachable rules with no incoming reference from any
+        // *other* unreachable rule (self-references don't count).
+        let has_incoming: HashSet<&str> = unreachable
+            .iter()
+            .flat_map(|&name| refs_within(name).into_iter().filter(move |&r| r != name))
+            .collect();
+
+        // Everything reachable from an entry point (other than the entry
+        // point itself) is explained by it and shouldn't be reported again.
+        let mut queue: VecDeque<&str> = unreachable
+            .iter()
+            .copied()
+            .filter(|name| !has_incoming.contains(name))
+            .collect();
+        let mut visited: HashSet<&str> = queue.iter().copied().collect();
+        let mut explained: HashSet<&str> = HashSet::new();
+        while let Some(current) = queue.pop_front() {
+            for next in refs_within(current) {
+                if visited.insert(next) {
+                    explained.insert(next);
+                    queue.push_back(next);
+                }
+            }
+        }
+
+        unreachable
+            .into_iter()
+            .filter(|name| !explained.contains(name))
             .map(|name| {
                 let (line, filename) = self
                     .productions
-                    .get(name.as_str())
+                    .get(name)
                     .map(|p| (p.line, p.filename.as_str()))
                     .unwrap_or((0, ""));
                 Diagnostic::warning(format!(
@@ -1201,6 +1252,19 @@ mod tests {
                 "warning: rule 'B' is never referenced (line 2)",
                 "warning: rule 'C' is never referenced (line 3)",
             ]
+        );
+    }
+
+    #[test]
+    /// A rule referenced only by another unreachable rule is explained by that rule's own
+    /// warning and must not be separately reported (#306): `C` is dead code only because
+    /// `B` is, so only `B` (the island's entry point) should warn.
+    fn unreachable_rules_island_reports_only_entry_point() {
+        let src = "A -> 'foo' ;\nB -> C ;\nC -> 'bar' ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert_eq!(
+            strs(&g.unreachable_rules_check()),
+            vec!["warning: rule 'B' is never referenced (line 2)"]
         );
     }
 

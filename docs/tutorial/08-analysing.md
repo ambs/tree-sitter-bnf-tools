@@ -115,6 +115,28 @@ warning: rule 'b' is never referenced (line 4)
 warning: rule 'c' is never referenced (line 5)
 ```
 
+An island where one unreachable rule simply calls another is different: only
+the rule that actually starts the island is reported, not everything it
+pulls in with it. This matters in practice — if you write a new rule and
+forget to reference it from anywhere reachable, but it calls other rules you
+already wrote, you get a single pointed warning at the rule you forgot to
+wire in, instead of being flooded with one warning per rule underneath it:
+
+```bnf
+root -> item+ ;
+item -> /[a-z]+/ ;
+b    -> c ;    # never referenced — the island's entry point
+c    -> 'x' ;  # referenced by b, so not reported separately
+```
+
+```
+warning: rule 'b' is never referenced (line 3)
+```
+
+An island with no entry point at all — like the mutual cycle above, where
+`b` and `c` only reference each other — has no single rule to blame, so
+every rule in it is still reported.
+
 ## Summarising grammar shape
 
 `check --summary` appends a compact metrics block to stdout after the run.
