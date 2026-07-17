@@ -28,6 +28,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   removed. Standalone use of an included file is unaffected.
 
 ### Fixed
+- The "never referenced" rule warning now checks true reachability from the
+  root rule instead of a flat "is this name mentioned anywhere" test, so a
+  rule that only references itself, or a group of rules that only reference
+  each other in a cycle disconnected from the root, is correctly flagged as
+  unreferenced instead of silently escaping the check (#304).
 - A file reached more than once via `%include` — directly or transitively,
   e.g. a "diamond" where two included files both include a common third file
   — is now merged only once instead of once per include path (#301). This

@@ -82,9 +82,10 @@ Ahead-of-time detection of such conflicts is planned separately
 
 ### Unreferenced rules
 
-A rule that is defined but never referenced by any other rule (and is not the
-root rule) is reported as a warning. The root is either the rule named by
-`%axiom`, or — when `%axiom` is absent — the first-declared rule:
+A rule that is defined but not reachable from the root — directly or
+transitively through other rules' bodies — is reported as a warning. The
+root is either the rule named by `%axiom`, or — when `%axiom` is absent —
+the first-declared rule:
 
 ```bnf
 root   -> item+ ;
@@ -94,6 +95,24 @@ unused -> 'x' ;   # never referenced
 
 ```
 warning: rule 'unused' is never referenced (line 3)
+```
+
+Reachability is transitive, so a rule that only references itself, or a
+group of rules that only reference each other, still counts as unreachable
+if none of them connect back to the root:
+
+```bnf
+root -> item+ ;
+item -> /[a-z]+/ ;
+a    -> a ;        # references only itself
+b    -> c ;        # b and c reference each other, but neither
+c    -> b ;         # connects back to the root
+```
+
+```
+warning: rule 'a' is never referenced (line 3)
+warning: rule 'b' is never referenced (line 4)
+warning: rule 'c' is never referenced (line 5)
 ```
 
 ## Summarising grammar shape
