@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `editors/emacs/bnf-ts-mode.el`: a `treesit`-based Emacs major mode for
+  `.bnf` files (syntax highlighting, structural navigation, imenu, and
+  indentation), with a new "Emacs" section in `docs/editors.md` covering
+  how to build the grammar and install the mode.
 - `make install` target: installs `ts-bnf-tool` locally via `cargo install --path tools`.
 - `railroad --annotate` flag: draws tree-sitter-specific annotations
   (`field`, `token`, `token.immediate`, `alias`, `prec`) as labeled boxes

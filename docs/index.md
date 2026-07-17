@@ -28,8 +28,8 @@ notation.
 
 ## Guides
 
-- [Editor setup](editors.md) — syntax highlighting for `.bnf` files in Neovim
-  and other editors
+- [Editor setup](editors.md) — syntax highlighting for `.bnf` files in Neovim,
+  Helix, and Emacs
 
 ## The BNF dialect's own grammar
 

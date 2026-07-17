@@ -1,7 +1,7 @@
 # Editor Setup
 
 This guide covers how to get syntax highlighting, indentation, and code folding
-for `.bnf` files in Neovim and Helix.
+for `.bnf` files in Neovim, Helix, and Emacs.
 
 ---
 
@@ -180,3 +180,91 @@ source = { path = "<path-to-repo>/tree-sitter-bnf" }
 ```
 
 Open a `.bnf` file and run `:lang-support` to confirm the language is active.
+
+---
+
+## Emacs (treesit)
+
+This targets Emacs 29+, which has `treesit` built in. `treesit-install-language-grammar`
+cannot be used here to clone-and-compile the grammar automatically: this repo's
+generated parser sources (`tree-sitter-bnf/src/`) are gitignored, so a fresh
+clone has no `src/parser.c` until `tree-sitter generate` creates it — build
+the grammar by hand instead.
+
+### 1 — Build the parser
+
+```sh
+git clone https://github.com/ambs/tree-sitter-bnf-tools
+cd tree-sitter-bnf-tools/tree-sitter-bnf
+tree-sitter generate
+```
+
+### 2 — Install the parser
+
+Emacs loads compiled grammars from `~/.emacs.d/tree-sitter/`, and expects the
+filename to match `libtree-sitter-<language>` exactly:
+
+```sh
+mkdir -p ~/.emacs.d/tree-sitter
+
+# Linux
+gcc -shared -fPIC -o ~/.emacs.d/tree-sitter/libtree-sitter-bnf.so \
+    -I./src src/parser.c
+
+# macOS
+gcc -shared -fPIC -o ~/.emacs.d/tree-sitter/libtree-sitter-bnf.dylib \
+    -I./src src/parser.c
+```
+
+Verify Emacs can load it:
+```
+M-: (treesit-language-available-p 'bnf)
+```
+Should return `t`. If it returns `nil`, the `.so`/`.dylib` file is missing or
+misnamed.
+
+### 3 — Install the major mode
+
+This repository ships a ready-made major mode at
+[`editors/emacs/bnf-ts-mode.el`](https://github.com/ambs/tree-sitter-bnf-tools/blob/main/editors/emacs/bnf-ts-mode.el) —
+copy it somewhere on your `load-path` and require it:
+
+```sh
+mkdir -p ~/.emacs.d/lisp
+cp editors/emacs/bnf-ts-mode.el ~/.emacs.d/lisp/
+```
+
+```elisp
+(add-to-list 'load-path "~/.emacs.d/lisp")
+(require 'bnf-ts-mode)
+```
+
+`bnf-ts-mode` provides:
+- Syntax highlighting, translated from `tree-sitter-bnf/queries/highlights.scm`
+  into Emacs font-lock faces
+- Structural navigation (`C-M-a` / `C-M-e` jump between rule definitions)
+- Imenu / `consult-imenu` integration — all rule names as jumpable entries
+- Indentation — `TAB` on a `|` or `;` line aligns it under the `>` of the
+  enclosing `->`
+- `.bnf` files are associated with the mode automatically
+
+### 4 — Try it
+
+Open (or create) a `.bnf` file — the mode name in the modeline should show
+`BNF`. Run `M-x treesit-explore-mode` to see the live syntax tree alongside
+your file, useful if you want to extend the mode's font-lock rules.
+
+### Updating the grammar
+
+When the grammar changes upstream, regenerate and recompile:
+
+```sh
+cd tree-sitter-bnf-tools/tree-sitter-bnf
+git pull
+tree-sitter generate
+gcc -shared -fPIC -o ~/.emacs.d/tree-sitter/libtree-sitter-bnf.so \
+    -I./src src/parser.c
+```
+
+Then restart Emacs (or run `M-x treesit-parser-delete` on the current buffer
+and reopen the file).
