@@ -47,26 +47,13 @@ fn prec_label(kind: &PrecKind, level: &Option<PrecLevel>) -> String {
     }
 }
 
-/// A CSS override appended after the railroad stylesheet whenever `annotate` is set.
-///
-/// The crate's own `g.labeledbox > rect` rule paints the box with
-/// `fill: rgba(90, 90, 150, .1)`, but Inkscape fails to parse `rgba()` fill values in
-/// CSS and falls back to opaque black, turning every annotation box into a black slab
-/// that hides its label and contents. This rule re-states the same faint tint in
-/// Inkscape-safe syntax (`rgb()` plus `fill-opacity`); appended after
-/// [`railroad::DEFAULT_CSS`] it wins the cascade at equal specificity, and browsers
-/// render it identically to the crate's original rule.
-const ANNOTATION_CSS: &str =
-    "svg.railroad g.labeledbox > rect { fill: rgb(90, 90, 150); fill-opacity: .1; }";
-
 /// Wraps `inner` in a [`LabeledBox`] with `text` as a [`Comment`] label above it.
 ///
 /// The railroad stylesheet draws `g.labeledbox > rect` as a grey dashed,
-/// near-transparent box ([`ANNOTATION_CSS`] re-states the fill so Inkscape renders it
-/// correctly too). `kind` is appended as an `annotation-<kind>` class next to the
-/// crate's own `labeledbox` class, giving users a hook to style each annotation kind
-/// differently (e.g. colour-code fields vs aliases) without affecting the default
-/// rendering.
+/// near-transparent box. `kind` is appended as an `annotation-<kind>` class next to
+/// the crate's own `labeledbox` class, giving users a hook to style each annotation
+/// kind differently (e.g. colour-code fields vs aliases) without affecting the
+/// default rendering.
 fn labeled(inner: Box<dyn Node>, text: String, kind: &str) -> Box<dyn Node> {
     let mut boxed = LabeledBox::new(inner, Comment::new(text));
     *boxed.attr("class".to_owned()).or_default() = format!("labeledbox annotation-{kind}");
@@ -333,9 +320,6 @@ pub fn emit_single_file(
     ));
     out.push_str("<style>");
     out.push_str(railroad::DEFAULT_CSS);
-    if annotate {
-        out.push_str(ANNOTATION_CSS);
-    }
     out.push_str("</style>\n");
     out.push_str("<rect width=\"100%\" height=\"100%\" class=\"railroad_canvas\"/>\n");
 
@@ -403,10 +387,7 @@ pub fn emit_split(
     for (name, prod) in &grammar.productions {
         let seq = production_to_sequence(prod, &LinkMode::Split, &defined, &mut warnings, annotate);
         // Each file stands alone, so embed the stylesheet for correct rendering.
-        let mut diagram = railroad::Diagram::new_with_stylesheet(seq, &railroad::Stylesheet::Light);
-        if annotate {
-            diagram.add_css(ANNOTATION_CSS);
-        }
+        let diagram = railroad::Diagram::new_with_stylesheet(seq, &railroad::Stylesheet::Light);
         std::fs::write(output_dir.join(format!("{name}.svg")), diagram.to_string())?;
     }
 
@@ -842,23 +823,6 @@ mod tests {
         assert!(svg.contains("operand:"));
     }
 
-    #[test]
-    /// `emit_single_file` with `annotate: true` embeds the Inkscape-safe fill override:
-    /// Inkscape renders the crate stylesheet's `fill: rgba(...)` as opaque black,
-    /// hiding the annotation label and contents.
-    fn single_file_annotate_true_embeds_inkscape_safe_fill() {
-        let (svg, _) = emit_single_file(&field_rule_grammar(), None, true).unwrap();
-        assert!(svg.contains(ANNOTATION_CSS));
-    }
-
-    #[test]
-    /// Without `annotate`, the override CSS is not embedded and output matches the
-    /// pre-`--annotate` stylesheet exactly.
-    fn single_file_annotate_false_omits_override_css() {
-        let (svg, _) = emit_single_file(&field_rule_grammar(), None, false).unwrap();
-        assert!(!svg.contains("fill-opacity"));
-    }
-
     // ── emit_single_file --rule ───────────────────────────────────────────────
 
     #[test]
@@ -946,10 +910,6 @@ mod tests {
         let svg = std::fs::read_to_string(dir.join("expr.svg")).unwrap();
         assert!(svg.contains("NUM"));
         assert!(svg.contains("operand:"));
-        assert!(
-            svg.contains(ANNOTATION_CSS),
-            "split output must embed the Inkscape-safe fill override"
-        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

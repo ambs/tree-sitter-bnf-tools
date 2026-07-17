@@ -463,9 +463,9 @@ dependencies = [
 
 [[package]]
 name = "railroad"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "813b53dbe6d583f1ac0c3fb394e0ce3b613530adff8265c274fcdfcd82cc6da5"
+checksum = "4bf842ad92d09c4dd1e68be1507189b01898c46fe01916c0467fb405b1f9ee0a"
 dependencies = [
  "resvg",
  "unicode-width",
