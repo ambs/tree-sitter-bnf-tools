@@ -3,10 +3,10 @@ members = ["tree-sitter-bnf", "tools"]
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
-authors = ["Alberto Simões <ambs@cpan.org>"]
+authors = ["Alberto Simões <ambs@zbr.pt>"]
 
 # External tools required for grammar development (not enforced by cargo).
 # Run `make ts-version-check` or install manually: npm install -g tree-sitter-cli
