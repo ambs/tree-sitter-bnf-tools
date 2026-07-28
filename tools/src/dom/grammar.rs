@@ -11,6 +11,15 @@ use super::summary::GrammarSummary;
 use super::types::Grammar;
 
 impl Grammar {
+    /// Returns `true` if a rule named `name` is hidden — invisible in the parse
+    /// tree — either because tree-sitter's naming convention marks names starting
+    /// with `_` as hidden, or because the rule is listed in `%supertypes` (which
+    /// unconditionally hides the underlying rule in favor of its subtype
+    /// alternatives).
+    pub(crate) fn is_hidden_rule(&self, name: &str) -> bool {
+        name.starts_with('_') || self.supertypes.iter().any(|item| item.name == name)
+    }
+
     /// Returns an error when the resolved start rule (via `%axiom`, or the implicit
     /// first-declared rule) is hidden, either because its name starts with `_` or
     /// because it's listed in `%supertypes` (which unconditionally hides a rule).
@@ -23,12 +32,14 @@ impl Grammar {
             return vec![];
         };
 
+        if !self.is_hidden_rule(root) {
+            return vec![];
+        }
+
         let reason = if root.starts_with('_') {
             "rule names starting with '_' are not allowed as the grammar's start symbol"
-        } else if self.supertypes.iter().any(|item| item.name == root) {
-            "rules listed in %supertypes are hidden and cannot be the grammar's start symbol"
         } else {
-            return vec![];
+            "rules listed in %supertypes are hidden and cannot be the grammar's start symbol"
         };
 
         let (line, filename) = match self.axiom_directive() {
@@ -1539,6 +1550,34 @@ mod tests {
             strs(&g.word_check(&g.known_rules())),
             vec!["error: %word rule 'ident' has the same body as rule 'other_name' (test.bnf:1)"]
         );
+    }
+
+    // ── is_hidden_rule ────────────────────────────────────────────────────────
+
+    #[test]
+    /// A rule named with a leading `_` is hidden.
+    fn is_hidden_rule_true_for_underscore_prefixed_name() {
+        let g = Grammar::from_rules([p("_hidden", TerminalLiteral("'x'".into()))]);
+        assert!(g.is_hidden_rule("_hidden"));
+    }
+
+    #[test]
+    /// A rule listed in `%supertypes` is hidden, even without a leading `_`.
+    fn is_hidden_rule_true_for_supertype_membership() {
+        let mut g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+        g.supertypes = vec![di("expr", 0)];
+        assert!(g.is_hidden_rule("expr"));
+    }
+
+    #[test]
+    /// An ordinary rule — no leading `_`, not listed in `%supertypes` — is visible.
+    fn is_hidden_rule_false_for_ordinary_visible_rule() {
+        let mut g = Grammar::from_rules([
+            p("visible", TerminalLiteral("'x'".into())),
+            p("expr", TerminalLiteral("'y'".into())),
+        ]);
+        g.supertypes = vec![di("expr", 0)];
+        assert!(!g.is_hidden_rule("visible"));
     }
 
     // ── hidden_start_rule_check ──────────────────────────────────────────────
