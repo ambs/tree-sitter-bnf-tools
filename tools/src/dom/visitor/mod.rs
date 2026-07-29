@@ -226,6 +226,24 @@ pub(crate) fn check_method_name_collisions(kinds: &IndexSet<String>) -> Result<(
     Ok(())
 }
 
+/// Validates that `grammar` can be safely rendered as a Rust `Visitor`
+/// trait — specifically, that no two visible kinds would generate the same
+/// `visit_<kind>` method name (see [`check_method_name_collisions`]).
+///
+/// This is the crate's one `pub` entry point into the collision check:
+/// [`visible_kinds`] and [`check_method_name_collisions`] are both
+/// `pub(crate)`, internal to how the derivation works, so an external
+/// caller — the `visitor` CLI subcommand in `main.rs`, a separate crate —
+/// has no other way to ask "is this grammar visitor-safe?" without
+/// reaching into derivation internals it has no business depending on.
+/// Callers should run this as a pre-flight check before ever constructing
+/// a [`rust::RustVisitor`]: rendering an invalid trait and only having it
+/// fail later, at `rustc` time in the *user's* own build, would be a much
+/// worse experience than failing here with a clear diagnostic.
+pub fn check_visitor(grammar: &Grammar) -> Result<(), String> {
+    check_method_name_collisions(&visible_kinds(grammar))
+}
+
 /// Returns `true` if `body` has no visible children to recurse into: no
 /// reference to a visible non-terminal reachable from it.
 ///
@@ -785,6 +803,31 @@ mod tests {
     fn collisions_kind_matching_helper_suffix_name_is_not_a_clash() {
         let kinds = IndexSet::from(["children_visitor".to_string()]);
         assert!(check_method_name_collisions(&kinds).is_ok());
+    }
+
+    // ── check_visitor ────────────────────────────────────────────────────
+
+    /// A grammar with no colliding kind names passes.
+    #[test]
+    fn check_visitor_ok_for_distinct_kinds() {
+        let g = Grammar::from_rules([
+            p("fooBar", TerminalLiteral("'x'".into())),
+            p("baz", TerminalLiteral("'y'".into())),
+        ]);
+        assert!(check_visitor(&g).is_ok());
+    }
+
+    /// A grammar whose visible kinds would collide fails, end to end
+    /// through the one `pub` entry point an external caller (the CLI) has,
+    /// not just through the `pub(crate)` pieces it's built from.
+    #[test]
+    fn check_visitor_detects_kind_kind_clash() {
+        let g = Grammar::from_rules([
+            p("fooBar", TerminalLiteral("'x'".into())),
+            p("foo_bar", TerminalLiteral("'y'".into())),
+        ]);
+        let err = check_visitor(&g).unwrap_err();
+        assert!(err.contains("'fooBar'") && err.contains("'foo_bar'"));
     }
 
     // ── is_leaf_body ─────────────────────────────────────────────────────

@@ -47,4 +47,5 @@ pub use rename::rename_grammar;
 pub use scaffold::Scaffold;
 pub use summary::{FirstSetStats, GrammarSummary};
 pub use types::Grammar;
+pub use visitor::check_visitor;
 pub use visitor::rust::RustVisitor;

@@ -18,7 +18,7 @@
 //! This is deliberately a small, self-contained synthetic grammar, not the
 //! dogfood `grammar/bnf.bnf` — that fixture and its own behavior tests
 //! (running a real visitor over a parsed tree, `MISSING`-node handling)
-//! come later (210.31-210.34), once the CLI subcommand exists.
+//! come later (210.31-210.34).
 
 // Compiles `pub trait Visitor<'tree> { ... }` (and everything else the
 // fixture contains) as real items in this test binary.

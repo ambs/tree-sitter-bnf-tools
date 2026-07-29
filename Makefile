@@ -10,7 +10,6 @@ GRAPH_PDF   := grammar/graph.pdf
 
 VISITOR_FIXTURE_BNF := tools/tests/fixtures/visitor_sample.bnf
 VISITOR_FIXTURE_RS  := tools/tests/fixtures/visitor_sample.rs
-GEN_VISITOR_FIXTURE := $(CARGO) run --quiet -p ts-bnf-tool --example gen_visitor_fixture --
 
 .DEFAULT_GOAL := help
 
@@ -73,13 +72,8 @@ grammar-check: ## Fail if grammar/railroad.svg or grammar/graph.pdf are stale re
 # visitor-fixture always regenerates (a `.PHONY` target, not a file rule with
 # mtime-based dependencies, since mtimes are unreliable right after a fresh
 # git checkout); visitor-fixture-check just diffs the result.
-#
-# gen_visitor_fixture (tools/examples/) is an interim stand-in for the
-# `visitor` CLI subcommand (#210), which doesn't exist until 210.24 — delete
-# it then and call `$(BNF_TOOL) visitor` directly, as grammar/railroad/graph
-# already do for their own subcommands.
 visitor-fixture: ## Regenerate tools/tests/fixtures/visitor_sample.rs from visitor_sample.bnf
-	$(GEN_VISITOR_FIXTURE) $(VISITOR_FIXTURE_BNF) sample > $(VISITOR_FIXTURE_RS)
+	$(BNF_TOOL) visitor $(VISITOR_FIXTURE_BNF) --name sample --no-header > $(VISITOR_FIXTURE_RS)
 
 visitor-fixture-check: visitor-fixture ## Fail if tools/tests/fixtures/visitor_sample.rs is stale relative to visitor_sample.bnf
 	@git diff --exit-code $(VISITOR_FIXTURE_RS) || \
