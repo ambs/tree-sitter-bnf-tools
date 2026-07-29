@@ -1,0 +1,5 @@
+program -> decl* ;
+decl -> target: ident '=' value: expr ';' ;
+expr -> ident | num ;
+ident -> /[a-z]+/ ;
+num -> /[0-9]+/ ;

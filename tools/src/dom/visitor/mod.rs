@@ -10,6 +10,18 @@ use indexmap::{IndexMap, IndexSet};
 use super::nodes::GrammarNode;
 use super::types::Grammar;
 
+/// Dependency-free markdown-rendering helpers used by [`rust`]'s generated
+/// doc comments (table alignment, currently) — isolated so it's the one
+/// place to swap in a real markdown crate later, without touching emission
+/// logic that has nothing to do with markdown.
+mod markdown;
+/// The Rust-specific emitter: renders the derivation in this module as a
+/// complete `.rs` file containing the generated `Visitor<'tree>` trait.
+pub mod rust;
+/// Language-agnostic text-shaping helpers (indentation, comment-line
+/// prefixing) shared by every target-language emitter, not just [`rust`].
+mod text;
+
 /// Returns the ordered set of node-kind names that will actually appear in a
 /// parse tree generated from `grammar`.
 ///
@@ -73,6 +85,71 @@ fn collect_alias_targets(grammar: &Grammar, node: &GrammarNode, out: &mut IndexS
         GrammarNode::NonTerminal(_)
         | GrammarNode::TerminalLiteral(_)
         | GrammarNode::TerminalPattern(_) => {}
+    }
+}
+
+/// Returns the `GrammarNode` that determines `kind`'s own visitor shape —
+/// leaf status ([`is_leaf_body`]), fields ([`collect_fields`]), and
+/// anonymous children ([`collect_anonymous_children`]) are all derived from
+/// whatever this function returns for a given kind.
+///
+/// For an ordinary rule, that's simply the production's own body
+/// (`grammar.productions[kind].body`). For a kind that only exists as an
+/// `alias(body, name)` target — e.g. `renamed` in
+/// `expr -> term => renamed ;`, which has no `renamed` production of its
+/// own — it's the aliased `body`, found by scanning every production for
+/// the first matching `alias(_, renamed)` occurrence, in declaration order.
+/// A kind reused as the alias target at more than one call site (uncommon —
+/// an alias target name is usually a one-off rename) takes only the first
+/// occurrence's body; this is a scope decision, not a limitation forced by
+/// anything structural, and matches [`FieldTargetKinds`]'s "resolve one
+/// representative shape per kind" approach rather than unioning across
+/// every occurrence.
+///
+/// Returns `None` only for a kind that isn't in [`visible_kinds`]'s output;
+/// every kind [`visible_kinds`] does produce is guaranteed to resolve here,
+/// since both use the same alias-target condition
+/// (`Alias(_, NonTerminal(n))` with `n` not hidden).
+pub(crate) fn body_for_kind<'g>(grammar: &'g Grammar, kind: &str) -> Option<&'g GrammarNode> {
+    if let Some(production) = grammar.productions.get(kind) {
+        return Some(&production.body);
+    }
+    grammar
+        .productions
+        .values()
+        .find_map(|production| find_alias_body_for_target(grammar, &production.body, kind))
+}
+
+/// Recursive worker for [`body_for_kind`]'s alias-target search.
+fn find_alias_body_for_target<'g>(
+    grammar: &Grammar,
+    node: &'g GrammarNode,
+    target: &str,
+) -> Option<&'g GrammarNode> {
+    match node {
+        GrammarNode::Alias(body, name) => {
+            if let GrammarNode::NonTerminal(n) = name.as_ref()
+                && n == target
+                && !grammar.is_hidden_rule(n)
+            {
+                return Some(body);
+            }
+            find_alias_body_for_target(grammar, body, target)
+        }
+        GrammarNode::Sequence(children) | GrammarNode::Choice(children) => children
+            .iter()
+            .find_map(|child| find_alias_body_for_target(grammar, child, target)),
+        GrammarNode::Optional(inner)
+        | GrammarNode::ZeroOrMore(inner)
+        | GrammarNode::OneOrMore(inner)
+        | GrammarNode::Token(inner)
+        | GrammarNode::TokenImmediate(inner)
+        | GrammarNode::Field(_, inner)
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => find_alias_body_for_target(grammar, inner, target),
+        GrammarNode::NonTerminal(_)
+        | GrammarNode::TerminalLiteral(_)
+        | GrammarNode::TerminalPattern(_) => None,
     }
 }
 
@@ -438,10 +515,103 @@ fn collect_anonymous_children_into(
     }
 }
 
+/// Collects every field declared directly under a kind's `body`, each
+/// mapped to its fully resolved [`FieldTargetKinds`] union.
+///
+/// Given:
+///
+/// ```bnf
+/// assign -> target: ident '=' value: expr ;
+/// ```
+///
+/// `collect_fields(grammar, body)` on `assign`'s body returns two entries:
+/// `"target"` → `{named: {"ident"}, anonymous_token: false}` and `"value"` →
+/// `{named: {"expr"}, anonymous_token: false}`.
+///
+/// The walk is transparent through hidden ([`Grammar::is_hidden_rule`]) and
+/// `%inline` ([`Grammar::is_inline_rule`]) rule bodies — same as
+/// [`is_leaf_body`] and [`collect_anonymous_children`] — since neither
+/// produces a node of its own, so a field declared inside one still belongs
+/// to the enclosing kind. A reference to an ordinary *visible* rule stops
+/// the walk: any fields inside it belong to *that* rule's own node, not this
+/// one. `Alias` is resolved by its name child the same way: a visible-named
+/// or literal target is a distinct node (stop); a hidden-named target
+/// produces no node, so the walk continues into the aliased body instead.
+///
+/// A field name repeated at multiple positions within the same body (e.g.
+/// `item (',' item)*`, both labeled `field:`) merges into one entry whose
+/// target-kind union covers every occurrence — this mirrors how
+/// tree-sitter's own `children_by_field_name` enumerates every match under
+/// one field name, not just the first.
+pub(crate) fn collect_fields(
+    grammar: &Grammar,
+    body: &GrammarNode,
+) -> IndexMap<String, FieldTargetKinds> {
+    let mut out = IndexMap::new();
+    collect_fields_into(grammar, body, &mut HashSet::new(), &mut out);
+    out
+}
+
+/// Recursive worker for [`collect_fields`]; `in_progress` holds the
+/// hidden/inline rule names currently being resolved, for cycle protection.
+fn collect_fields_into(
+    grammar: &Grammar,
+    node: &GrammarNode,
+    in_progress: &mut HashSet<String>,
+    out: &mut IndexMap<String, FieldTargetKinds>,
+) {
+    match node {
+        GrammarNode::Field(name, inner) => {
+            let resolved = resolve_field_target_kinds(grammar, inner);
+            let entry = out.entry(name.clone()).or_default();
+            entry.named.extend(resolved.named);
+            entry.anonymous_token |= resolved.anonymous_token;
+            // A field's own content could, in principle, contain another
+            // field nested inside it; recursing keeps that case correct
+            // without needing to special-case it.
+            collect_fields_into(grammar, inner, in_progress, out);
+        }
+        GrammarNode::NonTerminal(name) => {
+            if !grammar.is_hidden_rule(name) && !grammar.is_inline_rule(name) {
+                return;
+            }
+            if !in_progress.insert(name.clone()) {
+                return;
+            }
+            if let Some(production) = grammar.productions.get(name) {
+                collect_fields_into(grammar, &production.body, in_progress, out);
+            }
+            in_progress.remove(name);
+        }
+        GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => {}
+        GrammarNode::Sequence(children) | GrammarNode::Choice(children) => {
+            for child in children {
+                collect_fields_into(grammar, child, in_progress, out);
+            }
+        }
+        GrammarNode::Optional(inner)
+        | GrammarNode::ZeroOrMore(inner)
+        | GrammarNode::OneOrMore(inner)
+        | GrammarNode::Token(inner)
+        | GrammarNode::TokenImmediate(inner)
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => {
+            collect_fields_into(grammar, inner, in_progress, out);
+        }
+        GrammarNode::Alias(body, name) => match name.as_ref() {
+            GrammarNode::NonTerminal(n) if !grammar.is_hidden_rule(n) => {}
+            GrammarNode::NonTerminal(_) => {
+                collect_fields_into(grammar, body, in_progress, out);
+            }
+            _ => {}
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::GrammarNode::{Alias, TerminalLiteral, TerminalPattern};
+    use crate::dom::GrammarNode::{Alias, Field, TerminalLiteral, TerminalPattern};
     use crate::dom::test_utils::{di, nt, p};
 
     /// An ordinary production with no exclusions is visible.
@@ -1086,5 +1256,132 @@ mod tests {
         );
         let result = collect_anonymous_children(&g, &node);
         assert_eq!(result, IndexSet::from(["'y'".to_string()]));
+    }
+
+    // ── collect_fields ───────────────────────────────────────────────────
+
+    /// The doc example: `assign -> target: ident '=' value: expr ;` yields
+    /// two fields, each resolved to its single visible target kind.
+    #[test]
+    fn collect_fields_two_fields_each_a_single_kind() {
+        let g = Grammar::from_rules([
+            p("ident", TerminalLiteral("'i'".into())),
+            p("expr", TerminalLiteral("'e'".into())),
+        ]);
+        let body = Sequence(vec![
+            Field("target".into(), Box::new(nt("ident"))),
+            TerminalLiteral("'='".into()),
+            Field("value".into(), Box::new(nt("expr"))),
+        ]);
+        let result = collect_fields(&g, &body);
+        assert_eq!(
+            result.get("target").unwrap().named,
+            IndexSet::from(["ident".to_string()])
+        );
+        assert_eq!(
+            result.get("value").unwrap().named,
+            IndexSet::from(["expr".to_string()])
+        );
+    }
+
+    /// A field with no counterpart in the body is simply absent from the map.
+    #[test]
+    fn collect_fields_body_with_no_fields_is_empty() {
+        let g = Grammar::from_rules([p("kind", TerminalLiteral("'x'".into()))]);
+        let result = collect_fields(&g, &TerminalLiteral("'x'".into()));
+        assert!(result.is_empty());
+    }
+
+    /// The same field name repeated at two positions in the same body
+    /// merges into one entry whose target-kind union covers both.
+    #[test]
+    fn collect_fields_repeated_field_name_merges_into_one_union() {
+        let g = Grammar::from_rules([
+            p("num", TerminalLiteral("'0'".into())),
+            p("str", TerminalLiteral("'\"\"'".into())),
+        ]);
+        let body = Sequence(vec![
+            Field("item".into(), Box::new(nt("num"))),
+            Field("item".into(), Box::new(nt("str"))),
+        ]);
+        let result = collect_fields(&g, &body);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get("item").unwrap().named,
+            IndexSet::from(["num".to_string(), "str".to_string()])
+        );
+    }
+
+    /// A field declared inside a hidden rule's body is transparent: it
+    /// still belongs to the enclosing kind, same as a leaf's or anonymous
+    /// child's hidden-rule transparency.
+    #[test]
+    fn collect_fields_transparent_through_hidden_rule() {
+        let g = Grammar::from_rules([
+            p("kind", nt("_wrapper")),
+            p("_wrapper", Field("value".into(), Box::new(nt("expr")))),
+            p("expr", TerminalLiteral("'e'".into())),
+        ]);
+        let result = collect_fields(&g, &nt("_wrapper"));
+        assert_eq!(
+            result.get("value").unwrap().named,
+            IndexSet::from(["expr".to_string()])
+        );
+    }
+
+    /// A field declared inside a *visible* referenced rule's body does not
+    /// belong to the referencing kind: that reference is a distinct child
+    /// node with its own fields, not this one's.
+    #[test]
+    fn collect_fields_does_not_cross_into_visible_nonterminal_reference() {
+        let g = Grammar::from_rules([
+            p("outer", nt("inner")),
+            p("inner", Field("value".into(), Box::new(nt("expr")))),
+            p("expr", TerminalLiteral("'e'".into())),
+        ]);
+        let result = collect_fields(&g, &nt("inner"));
+        assert!(result.is_empty());
+    }
+
+    // ── body_for_kind ────────────────────────────────────────────────────
+
+    /// An ordinary rule's kind resolves to its own production body.
+    #[test]
+    fn body_for_kind_ordinary_rule_is_its_own_production_body() {
+        let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+        let body = body_for_kind(&g, "expr").unwrap();
+        assert!(matches!(body, TerminalLiteral(s) if s == "'x'"));
+    }
+
+    /// The doc example: `expr -> term => renamed ;` has no `renamed`
+    /// production, so `renamed`'s body is the alias's own aliased body.
+    #[test]
+    fn body_for_kind_alias_target_is_the_aliased_body() {
+        let g = Grammar::from_rules([p(
+            "expr",
+            Alias(Box::new(nt("term")), Box::new(nt("renamed"))),
+        )]);
+        let body = body_for_kind(&g, "renamed").unwrap();
+        assert!(matches!(body, crate::dom::GrammarNode::NonTerminal(n) if n == "term"));
+    }
+
+    /// A kind that's neither a production name nor any alias target
+    /// resolves to nothing.
+    #[test]
+    fn body_for_kind_unknown_kind_is_none() {
+        let g = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+        assert!(body_for_kind(&g, "nope").is_none());
+    }
+
+    /// A kind used as an alias target at more than one call site takes only
+    /// the first occurrence's body, in declaration order.
+    #[test]
+    fn body_for_kind_alias_target_reused_takes_first_occurrence() {
+        let g = Grammar::from_rules([
+            p("a", Alias(Box::new(nt("first")), Box::new(nt("shared")))),
+            p("b", Alias(Box::new(nt("second")), Box::new(nt("shared")))),
+        ]);
+        let body = body_for_kind(&g, "shared").unwrap();
+        assert!(matches!(body, crate::dom::GrammarNode::NonTerminal(n) if n == "first"));
     }
 }
