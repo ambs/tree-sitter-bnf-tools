@@ -31,6 +31,10 @@ pub mod summary;
 pub mod test_utils;
 /// The [`Grammar`] struct and its basic impls.
 mod types;
+/// Derives a `Visitor` trait's shape from a [`Grammar`] (visible node-kind set,
+/// per-kind fields and leaf status, method-name collisions); target-language
+/// emitters live in submodules.
+pub mod visitor;
 
 pub use diagnostic::{Diagnostic, Severity};
 pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup, ReservedEntry};

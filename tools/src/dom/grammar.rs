@@ -20,6 +20,15 @@ impl Grammar {
         name.starts_with('_') || self.supertypes.iter().any(|item| item.name == name)
     }
 
+    /// Returns `true` if a rule named `name` is listed in `%inline`.
+    ///
+    /// An inlined rule's body splices into every call site during grammar
+    /// generation, so — like a hidden rule — it never appears as its own node
+    /// in the parse tree, even when its name has no leading `_`.
+    pub(crate) fn is_inline_rule(&self, name: &str) -> bool {
+        self.inline.iter().any(|item| item.name == name)
+    }
+
     /// Returns an error when the resolved start rule (via `%axiom`, or the implicit
     /// first-declared rule) is hidden, either because its name starts with `_` or
     /// because it's listed in `%supertypes` (which unconditionally hides a rule).
@@ -1578,6 +1587,27 @@ mod tests {
         ]);
         g.supertypes = vec![di("expr", 0)];
         assert!(!g.is_hidden_rule("visible"));
+    }
+
+    // ── is_inline_rule ────────────────────────────────────────────────────────
+
+    #[test]
+    /// A rule listed in `%inline` is inline.
+    fn is_inline_rule_true_for_listed_name() {
+        let mut g = Grammar::from_rules([p("helper", TerminalLiteral("'x'".into()))]);
+        g.inline = vec![di("helper", 0)];
+        assert!(g.is_inline_rule("helper"));
+    }
+
+    #[test]
+    /// An ordinary rule not listed in `%inline` is not inline.
+    fn is_inline_rule_false_for_unlisted_name() {
+        let mut g = Grammar::from_rules([
+            p("helper", TerminalLiteral("'x'".into())),
+            p("main", TerminalLiteral("'y'".into())),
+        ]);
+        g.inline = vec![di("helper", 0)];
+        assert!(!g.is_inline_rule("main"));
     }
 
     // ── hidden_start_rule_check ──────────────────────────────────────────────
