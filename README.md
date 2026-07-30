@@ -93,8 +93,7 @@ ts-bnf-tool <SUBCOMMAND> [OPTIONS] <file.bnf>   # pass - to read from stdin
 | `rename` | Rename a rule and all its references | [Formatting and refactoring](docs/tutorial/09-refactoring.md#renaming-a-rule) |
 | `railroad` | Generate railroad / syntax diagrams as SVG | [Visualising a grammar](docs/tutorial/10-visualising.md) |
 | `graph` | Emit a rule-dependency graph (DOT / Mermaid / SVG / PDF / PNG) | [Visualising a grammar](docs/tutorial/10-visualising.md#rule-dependency-graph) |
-| `visitor` | Generate an ANTLR-style `Visitor<'tree>` trait (Rust) | [Generating visitors](docs/tutorial/11-generating-visitors.md) |
-| `library` | Scaffold a complete Rust library crate (parser + Visitor trait + runnable example) | [Generating a processing library](docs/tutorial/12-generating-a-library.md) |
+| `library` | Scaffold a complete Rust library crate (parser + ANTLR-style Visitor trait + runnable example) | [Generating a processing library](docs/tutorial/11-generating-a-library.md) |
 
 ## Visualising grammars
 

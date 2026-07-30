@@ -145,20 +145,6 @@ enum Subcommands {
         #[arg(long)]
         start: Option<String>,
     },
-    /// Generate an ANTLR-style Visitor<'tree> trait from a BNF grammar.
-    Visitor {
-        /// Input BNF file, or `-` to read from stdin
-        filename: String,
-        /// Write output to this file instead of stdout
-        #[arg(long, short = 'o')]
-        output: Option<String>,
-        /// Grammar name used in the generated trait's doc comment (default: filename stem)
-        #[arg(long)]
-        name: Option<String>,
-        /// Suppress the generated-file header comment at the top of the output
-        #[arg(long)]
-        no_header: bool,
-    },
     /// Scaffold a complete Rust library crate for processing a BNF-described
     /// language: the tree-sitter parser, an ANTLR-style Visitor<'tree> trait,
     /// and a runnable example that traverses a file with no code edits needed.
@@ -815,23 +801,6 @@ fn run() -> Result<(), Box<dyn Error>> {
                     )
                     .into());
                 }
-            }
-        }
-
-        Subcommands::Visitor {
-            filename,
-            output,
-            name,
-            no_header,
-        } => {
-            let (grammar, _) = parse_file(&filename, false)?;
-            let name = grammar_name(&filename, name.as_deref());
-            let rendered = RustVisitor::new(&grammar, &name, source_label(&filename), no_header)
-                .map_err(|msg| -> Box<dyn Error> { msg.into() })?
-                .to_string();
-            match output {
-                Some(path) => fs::write(&path, &rendered)?,
-                None => print!("{}", rendered),
             }
         }
 
