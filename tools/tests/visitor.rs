@@ -210,13 +210,9 @@ fn compile_generated_visitor(
     extra_source: &str,
     run: bool,
 ) -> Output {
-    let trait_source = RustVisitor {
-        grammar,
-        name: rust_name,
-        source: "<test>",
-        no_header: true,
-    }
-    .to_string();
+    let trait_source = RustVisitor::new(grammar, rust_name, "<test>", true)
+        .expect("grammar must be visitor-safe")
+        .to_string();
 
     let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     fs::create_dir_all(&examples_dir)

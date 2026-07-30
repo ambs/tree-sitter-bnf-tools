@@ -57,6 +57,39 @@ pub fn visible_kinds(grammar: &Grammar) -> IndexSet<String> {
     kinds
 }
 
+/// Returns the inner node of a "transparent" wrapper variant — one that
+/// doesn't change which kind(s) a traversal reaches, only how the wrapped
+/// text is annotated (precedence, tokenization, a field label, a
+/// reserved-word-set membership...). Every recursive walk below that treats
+/// these variants identically (just "recurse into the one child") shares
+/// this classification rather than re-listing all eight variants itself.
+///
+/// Returns `None` for every other variant: `Sequence`/`Choice` (multiple
+/// children, not one), `NonTerminal`/`TerminalLiteral`/`TerminalPattern` (no
+/// child at all), and `Alias` (its two children mean different things — body
+/// vs. display name — so no single "the" inner node applies). Callers that
+/// need to treat one of *those* differently from the rest still match it
+/// explicitly; this only replaces the transparent-wrapper arm they'd
+/// otherwise repeat.
+fn transparent_inner(node: &GrammarNode) -> Option<&GrammarNode> {
+    match node {
+        GrammarNode::Optional(inner)
+        | GrammarNode::ZeroOrMore(inner)
+        | GrammarNode::OneOrMore(inner)
+        | GrammarNode::Token(inner)
+        | GrammarNode::TokenImmediate(inner)
+        | GrammarNode::Field(_, inner)
+        | GrammarNode::Prec(_, _, inner)
+        | GrammarNode::Reserved(_, inner) => Some(inner),
+        GrammarNode::Sequence(_)
+        | GrammarNode::Choice(_)
+        | GrammarNode::NonTerminal(_)
+        | GrammarNode::TerminalLiteral(_)
+        | GrammarNode::TerminalPattern(_)
+        | GrammarNode::Alias(_, _) => None,
+    }
+}
+
 /// Recursively collects visible alias-target names from `node` into `out`.
 ///
 /// Only `Alias(_, NonTerminal(name))` contributes a kind, and only when `name`
@@ -79,17 +112,14 @@ fn collect_alias_targets(grammar: &Grammar, node: &GrammarNode, out: &mut IndexS
                 collect_alias_targets(grammar, child, out);
             }
         }
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner)
-        | GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => collect_alias_targets(grammar, inner, out),
         GrammarNode::NonTerminal(_)
         | GrammarNode::TerminalLiteral(_)
         | GrammarNode::TerminalPattern(_) => {}
+        _ => {
+            if let Some(inner) = transparent_inner(node) {
+                collect_alias_targets(grammar, inner, out);
+            }
+        }
     }
 }
 
@@ -144,17 +174,11 @@ fn find_alias_body_for_target<'g>(
         GrammarNode::Sequence(children) | GrammarNode::Choice(children) => children
             .iter()
             .find_map(|child| find_alias_body_for_target(grammar, child, target)),
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner)
-        | GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => find_alias_body_for_target(grammar, inner, target),
         GrammarNode::NonTerminal(_)
         | GrammarNode::TerminalLiteral(_)
         | GrammarNode::TerminalPattern(_) => None,
+        _ => transparent_inner(node)
+            .and_then(|inner| find_alias_body_for_target(grammar, inner, target)),
     }
 }
 
@@ -235,16 +259,18 @@ pub(crate) fn check_method_name_collisions(kinds: &IndexSet<String>) -> Result<(
 /// trait — specifically, that no two visible kinds would generate the same
 /// `visit_<kind>` method name (see [`check_method_name_collisions`]).
 ///
-/// This is the crate's one `pub` entry point into the collision check:
+/// This is the crate's `pub` entry point into the collision check:
 /// [`visible_kinds`] and [`check_method_name_collisions`] are both
 /// `pub(crate)`, internal to how the derivation works, so an external
 /// caller — the `visitor` CLI subcommand in `main.rs`, a separate crate —
 /// has no other way to ask "is this grammar visitor-safe?" without
 /// reaching into derivation internals it has no business depending on.
-/// Callers should run this as a pre-flight check before ever constructing
-/// a [`rust::RustVisitor`]: rendering an invalid trait and only having it
-/// fail later, at `rustc` time in the *user's* own build, would be a much
-/// worse experience than failing here with a clear diagnostic.
+/// [`rust::RustVisitor::new`] already runs this before a `RustVisitor` can
+/// exist at all, so most callers never call it directly; it's exposed on
+/// its own for anything that wants the answer to "is this grammar
+/// visitor-safe?" without also wanting a `RustVisitor` — e.g. a future
+/// non-Rust emitter's own precondition, or a caller checking several
+/// candidate grammars before rendering any of them.
 pub fn check_visitor(grammar: &Grammar) -> Result<(), String> {
     check_method_name_collisions(&visible_kinds(grammar))
 }
@@ -292,17 +318,9 @@ fn references_visible_nonterminal(
         GrammarNode::Sequence(children) | GrammarNode::Choice(children) => children
             .iter()
             .any(|c| references_visible_nonterminal(grammar, c, in_progress)),
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner)
-        | GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => {
-            references_visible_nonterminal(grammar, inner, in_progress)
-        }
         GrammarNode::Alias(body, _) => references_visible_nonterminal(grammar, body, in_progress),
+        _ => transparent_inner(node)
+            .is_some_and(|inner| references_visible_nonterminal(grammar, inner, in_progress)),
     }
 }
 
@@ -427,16 +445,6 @@ fn resolve_field_target_kinds_into(
                 resolve_field_target_kinds_into(grammar, child, in_progress, out);
             }
         }
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner)
-        | GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => {
-            resolve_field_target_kinds_into(grammar, inner, in_progress, out);
-        }
         GrammarNode::Alias(body, name) => match name.as_ref() {
             GrammarNode::NonTerminal(n) if !grammar.is_hidden_rule(n) => {
                 out.named.insert(n.clone());
@@ -448,6 +456,11 @@ fn resolve_field_target_kinds_into(
                 out.anonymous_token = true;
             }
         },
+        _ => {
+            if let Some(inner) = transparent_inner(node) {
+                resolve_field_target_kinds_into(grammar, inner, in_progress, out);
+            }
+        }
     }
 }
 
@@ -517,16 +530,6 @@ fn collect_anonymous_children_into(
                 collect_anonymous_children_into(grammar, child, in_progress, out);
             }
         }
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner)
-        | GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => {
-            collect_anonymous_children_into(grammar, inner, in_progress, out);
-        }
         GrammarNode::Alias(body, name) => match name.as_ref() {
             GrammarNode::NonTerminal(n) if !grammar.is_hidden_rule(n) => {}
             GrammarNode::NonTerminal(_) => {
@@ -537,6 +540,11 @@ fn collect_anonymous_children_into(
             }
             _ => {}
         },
+        _ => {
+            if let Some(inner) = transparent_inner(node) {
+                collect_anonymous_children_into(grammar, inner, in_progress, out);
+            }
+        }
     }
 }
 
@@ -614,15 +622,6 @@ fn collect_fields_into(
                 collect_fields_into(grammar, child, in_progress, out);
             }
         }
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => {
-            collect_fields_into(grammar, inner, in_progress, out);
-        }
         GrammarNode::Alias(body, name) => match name.as_ref() {
             GrammarNode::NonTerminal(n) if !grammar.is_hidden_rule(n) => {}
             GrammarNode::NonTerminal(_) => {
@@ -630,6 +629,13 @@ fn collect_fields_into(
             }
             _ => {}
         },
+        _ => {
+            // `Field` is matched above, so `transparent_inner` never sees
+            // it here — only the other seven wrapper variants reach this arm.
+            if let Some(inner) = transparent_inner(node) {
+                collect_fields_into(grammar, inner, in_progress, out);
+            }
+        }
     }
 }
 
@@ -638,6 +644,48 @@ mod tests {
     use super::*;
     use crate::dom::GrammarNode::{Alias, Field, TerminalLiteral, TerminalPattern};
     use crate::dom::test_utils::{di, nt, p};
+
+    // ── transparent_inner ───────────────────────────────────────────────
+
+    /// Every one of the eight transparent-wrapper variants unwraps to its
+    /// inner node.
+    #[test]
+    fn transparent_inner_unwraps_every_wrapper_variant() {
+        use crate::dom::PrecKind;
+        fn is_inner_x(inner: Option<&GrammarNode>) -> bool {
+            matches!(inner, Some(TerminalLiteral(s)) if s == "'x'")
+        }
+        let x = || Box::new(TerminalLiteral("'x'".into()));
+        assert!(is_inner_x(transparent_inner(&GrammarNode::Optional(x()))));
+        assert!(is_inner_x(transparent_inner(&GrammarNode::ZeroOrMore(x()))));
+        assert!(is_inner_x(transparent_inner(&GrammarNode::OneOrMore(x()))));
+        assert!(is_inner_x(transparent_inner(&GrammarNode::Token(x()))));
+        assert!(is_inner_x(transparent_inner(&GrammarNode::TokenImmediate(
+            x()
+        ))));
+        assert!(is_inner_x(transparent_inner(&Field("f".into(), x()))));
+        assert!(is_inner_x(transparent_inner(&GrammarNode::Prec(
+            PrecKind::Plain,
+            None,
+            x()
+        ))));
+        assert!(is_inner_x(transparent_inner(&GrammarNode::Reserved(
+            "kw".into(),
+            x()
+        ))));
+    }
+
+    /// Every non-wrapper variant — including `Alias`, whose two children
+    /// mean different things — returns `None`.
+    #[test]
+    fn transparent_inner_none_for_non_wrapper_variants() {
+        assert!(transparent_inner(&GrammarNode::Sequence(vec![])).is_none());
+        assert!(transparent_inner(&GrammarNode::Choice(vec![])).is_none());
+        assert!(transparent_inner(&nt("a")).is_none());
+        assert!(transparent_inner(&TerminalLiteral("'x'".into())).is_none());
+        assert!(transparent_inner(&TerminalPattern("/x/".into())).is_none());
+        assert!(transparent_inner(&Alias(Box::new(nt("a")), Box::new(nt("b")))).is_none());
+    }
 
     /// An ordinary production with no exclusions is visible.
     #[test]

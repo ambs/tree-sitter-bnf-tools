@@ -591,16 +591,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             no_header,
         } => {
             let (grammar, _) = parse_file(&filename, false)?;
-            ts_bnf_tool::dom::check_visitor(&grammar)
-                .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
             let name = grammar_name(&filename, name.as_deref());
-            let rendered = RustVisitor {
-                grammar: &grammar,
-                name: &name,
-                source: source_label(&filename),
-                no_header,
-            }
-            .to_string();
+            let rendered = RustVisitor::new(&grammar, &name, source_label(&filename), no_header)
+                .map_err(|msg| -> Box<dyn Error> { msg.into() })?
+                .to_string();
             match output {
                 Some(path) => fs::write(&path, &rendered)?,
                 None => print!("{}", rendered),

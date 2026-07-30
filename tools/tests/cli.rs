@@ -1100,6 +1100,33 @@ fn visitor_no_header_suppresses_comment() {
     );
 }
 
+#[test]
+/// Two rules whose kind names would generate the same `visit_*` method
+/// (e.g. `fooBar` and `foo_bar`, both snake_casing to `visit_foo_bar`) exit
+/// non-zero with a diagnostic naming both offending kinds, rather than
+/// emitting Rust source with two colliding method definitions.
+fn visitor_colliding_kind_names_exits_nonzero() {
+    let path = write_tmp(
+        "ts_bnf_visitor_collision.bnf",
+        indoc! {"
+            fooBar -> 'x' ;
+            foo_bar -> 'y' ;
+        "},
+    );
+    let out = tool().args(["visitor"]).arg(&path).output().unwrap();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty(), "no output on the collision path");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("'fooBar'") && stderr.contains("'foo_bar'"),
+        "stderr must name both offending kinds: {stderr}"
+    );
+    assert!(
+        stderr.contains("visit_foo_bar"),
+        "stderr must name the shared method: {stderr}"
+    );
+}
+
 // ── check --summary ───────────────────────────────────────────────────────────
 
 #[test]
