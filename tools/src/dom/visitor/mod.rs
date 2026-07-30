@@ -727,6 +727,26 @@ mod tests {
         assert_eq!(kinds, vec!["b", "a", "aliased"]);
     }
 
+    /// `token.immediate(…)` and `prec(…)` are transparent wrappers, same as
+    /// every other annotation: an alias nested inside either still
+    /// contributes its target as a visible kind.
+    #[test]
+    fn visible_kinds_includes_alias_name_target_through_token_immediate_and_prec() {
+        use crate::dom::{PrecKind, PrecLevel};
+        let g = Grammar::from_rules([p(
+            "expr",
+            GrammarNode::TokenImmediate(Box::new(GrammarNode::Prec(
+                PrecKind::Plain,
+                Some(PrecLevel::Integer(1)),
+                Box::new(Alias(Box::new(nt("term")), Box::new(nt("renamed")))),
+            ))),
+        )]);
+        assert_eq!(
+            visible_kinds(&g),
+            IndexSet::from(["expr".to_string(), "renamed".to_string()])
+        );
+    }
+
     // ── to_snake_case ────────────────────────────────────────────────────
 
     /// A single lowercase word is unchanged.
@@ -957,6 +977,27 @@ mod tests {
         ));
     }
 
+    /// `token.immediate(…)`, `prec(…)`, and `reserved(…)` are transparent
+    /// wrappers, same as the other annotations already covered above: a
+    /// visible non-terminal reachable through any of them is not a leaf.
+    #[test]
+    fn is_leaf_body_false_through_token_immediate_prec_and_reserved() {
+        use crate::dom::{PrecKind, PrecLevel};
+        let g = Grammar::from_rules([
+            p("kind", TerminalLiteral("'x'".into())),
+            p("child", TerminalLiteral("'y'".into())),
+        ]);
+        let body = GrammarNode::TokenImmediate(Box::new(GrammarNode::Prec(
+            PrecKind::Plain,
+            Some(PrecLevel::Integer(1)),
+            Box::new(GrammarNode::Reserved(
+                "kw".to_string(),
+                Box::new(nt("child")),
+            )),
+        )));
+        assert!(!is_leaf_body(&g, &body));
+    }
+
     // ── resolve_field_target_kinds ──────────────────────────────────────
 
     /// A choice of visible rules resolves to the union of their names, with
@@ -1151,6 +1192,38 @@ mod tests {
         );
     }
 
+    /// Every transparent wrapper variant (`Optional`, `ZeroOrMore`,
+    /// `OneOrMore`, `Token`, `TokenImmediate`, `Field`, `Prec`, `Reserved`)
+    /// is resolved through, not just the handful exercised elsewhere.
+    #[test]
+    fn resolve_field_target_kinds_transparent_through_nested_wrappers() {
+        use crate::dom::PrecKind;
+        let g = Grammar::from_rules([p("kind", TerminalLiteral("'x'".into()))]);
+        let node = GrammarNode::Reserved(
+            "kw".to_string(),
+            Box::new(GrammarNode::Prec(
+                PrecKind::Plain,
+                None,
+                Box::new(Field(
+                    "f".to_string(),
+                    Box::new(GrammarNode::TokenImmediate(Box::new(GrammarNode::Token(
+                        Box::new(GrammarNode::OneOrMore(Box::new(GrammarNode::ZeroOrMore(
+                            Box::new(GrammarNode::Optional(Box::new(nt("target")))),
+                        )))),
+                    )))),
+                )),
+            )),
+        );
+        let result = resolve_field_target_kinds(&g, &node);
+        assert_eq!(
+            result,
+            FieldTargetKinds {
+                named: IndexSet::from(["target".to_string()]),
+                anonymous_token: false,
+            }
+        );
+    }
+
     // ── collect_anonymous_children ──────────────────────────────────────
 
     /// The doc example: `paren_expr -> '(' expr ')' ;` collects the two
@@ -1308,6 +1381,22 @@ mod tests {
         assert_eq!(result, IndexSet::from(["'y'".to_string()]));
     }
 
+    /// `token.immediate(…)` and `prec(…)` are transparent wrappers, same as
+    /// every other annotation: a literal nested inside either is still
+    /// collected.
+    #[test]
+    fn collect_anonymous_children_transparent_through_token_immediate_and_prec() {
+        use crate::dom::{PrecKind, PrecLevel};
+        let g = Grammar::from_rules([p("kind", TerminalLiteral("'x'".into()))]);
+        let node = GrammarNode::TokenImmediate(Box::new(GrammarNode::Prec(
+            PrecKind::Plain,
+            Some(PrecLevel::Integer(1)),
+            Box::new(TerminalLiteral("';'".into())),
+        )));
+        let result = collect_anonymous_children(&g, &node);
+        assert_eq!(result, IndexSet::from(["';'".to_string()]));
+    }
+
     // ── collect_fields ───────────────────────────────────────────────────
 
     /// The doc example: `assign -> target: ident '=' value: expr ;` yields
@@ -1393,6 +1482,76 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    /// A mutually-recursive pair of hidden rules that never reaches a field
+    /// terminates via cycle protection with an empty result, rather than
+    /// looping forever, same as [`is_leaf_body`] and
+    /// [`collect_anonymous_children`]'s cycle protection.
+    #[test]
+    fn collect_fields_cycle_protection_terminates_with_no_result() {
+        let g = Grammar::from_rules([p("_a", nt("_b")), p("_b", nt("_a"))]);
+        let result = collect_fields(&g, &nt("_a"));
+        assert!(result.is_empty());
+    }
+
+    /// `token.immediate(…)` and `prec(…)` are transparent wrappers, same as
+    /// every other annotation: a field nested inside either still belongs
+    /// to the enclosing kind.
+    #[test]
+    fn collect_fields_transparent_through_token_immediate_and_prec() {
+        use crate::dom::{PrecKind, PrecLevel};
+        let g = Grammar::from_rules([
+            p("kind", TerminalLiteral("'x'".into())),
+            p("expr", TerminalLiteral("'e'".into())),
+        ]);
+        let node = GrammarNode::TokenImmediate(Box::new(GrammarNode::Prec(
+            PrecKind::Plain,
+            Some(PrecLevel::Integer(1)),
+            Box::new(Field("value".into(), Box::new(nt("expr")))),
+        )));
+        let result = collect_fields(&g, &node);
+        assert_eq!(
+            result.get("value").unwrap().named,
+            IndexSet::from(["expr".to_string()])
+        );
+    }
+
+    /// An `Alias` node reached directly (not just at a production's own
+    /// top level, e.g. nested inside a `Sequence`) whose target name is
+    /// itself hidden produces no node, so field collection falls through
+    /// to the aliased body instead of stopping at the alias.
+    #[test]
+    fn collect_fields_alias_to_hidden_name_falls_through_to_body() {
+        let g = Grammar::from_rules([
+            p("kind", TerminalLiteral("'x'".into())),
+            p("expr", TerminalLiteral("'e'".into())),
+        ]);
+        let node = Alias(
+            Box::new(Field("value".into(), Box::new(nt("expr")))),
+            Box::new(nt("_hidden_alias")),
+        );
+        let result = collect_fields(&g, &node);
+        assert_eq!(
+            result.get("value").unwrap().named,
+            IndexSet::from(["expr".to_string()])
+        );
+    }
+
+    /// An `Alias` to a literal target produces an anonymous node with no
+    /// fields of its own: the aliased body's fields are not collected.
+    #[test]
+    fn collect_fields_alias_to_literal_contributes_no_field() {
+        let g = Grammar::from_rules([
+            p("kind", TerminalLiteral("'x'".into())),
+            p("expr", TerminalLiteral("'e'".into())),
+        ]);
+        let node = Alias(
+            Box::new(Field("value".into(), Box::new(nt("expr")))),
+            Box::new(TerminalLiteral("'x'".into())),
+        );
+        let result = collect_fields(&g, &node);
+        assert!(result.is_empty());
+    }
+
     // ── body_for_kind ────────────────────────────────────────────────────
 
     /// An ordinary rule's kind resolves to its own production body.
@@ -1433,5 +1592,49 @@ mod tests {
         ]);
         let body = body_for_kind(&g, "shared").unwrap();
         assert!(matches!(body, crate::dom::GrammarNode::NonTerminal(n) if n == "first"));
+    }
+
+    /// A `Sequence` child whose alias name doesn't match the target falls
+    /// through to a recursive search of *that* alias's own body (finding
+    /// nothing there), and the search continues to later `Sequence`
+    /// children until the real match turns up.
+    #[test]
+    fn body_for_kind_alias_target_found_through_nested_sequence_after_non_matching_alias() {
+        let g = Grammar::from_rules([p(
+            "expr",
+            Sequence(vec![
+                Alias(Box::new(nt("skip")), Box::new(nt("not_target"))),
+                Alias(Box::new(nt("num")), Box::new(nt("target"))),
+            ]),
+        )]);
+        let body = body_for_kind(&g, "target").unwrap();
+        assert!(matches!(body, crate::dom::GrammarNode::NonTerminal(n) if n == "num"));
+    }
+
+    /// Every transparent wrapper variant (`Optional`, `ZeroOrMore`,
+    /// `OneOrMore`, `Token`, `TokenImmediate`, `Field`, `Prec`, `Reserved`)
+    /// is searched through, not just the handful exercised elsewhere.
+    #[test]
+    fn body_for_kind_alias_target_found_through_nested_transparent_wrappers() {
+        use crate::dom::PrecKind;
+        let alias = Alias(Box::new(nt("num")), Box::new(nt("target")));
+        let wrapped = GrammarNode::Reserved(
+            "kw".to_string(),
+            Box::new(GrammarNode::Prec(
+                PrecKind::Plain,
+                None,
+                Box::new(Field(
+                    "f".to_string(),
+                    Box::new(GrammarNode::TokenImmediate(Box::new(GrammarNode::Token(
+                        Box::new(GrammarNode::OneOrMore(Box::new(GrammarNode::ZeroOrMore(
+                            Box::new(GrammarNode::Optional(Box::new(alias))),
+                        )))),
+                    )))),
+                )),
+            )),
+        );
+        let g = Grammar::from_rules([p("expr", wrapped)]);
+        let body = body_for_kind(&g, "target").unwrap();
+        assert!(matches!(body, crate::dom::GrammarNode::NonTerminal(n) if n == "num"));
     }
 }
