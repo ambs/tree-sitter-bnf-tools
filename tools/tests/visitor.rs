@@ -24,9 +24,9 @@
 //! Two grammars feed this:
 //!
 //! - `visitor_sample.bnf` — a small, self-contained synthetic grammar
-//!   (round 2 finding 4) exercising fields, a multi-arm dispatcher, and
-//!   leaf/non-leaf bodies. No compiled tree-sitter parser exists for this
-//!   made-up grammar, so its trait is compile-checked only, never run.
+//!   exercising fields, a multi-arm dispatcher, and leaf/non-leaf bodies.
+//!   No compiled tree-sitter parser exists for this made-up grammar, so its
+//!   trait is compile-checked only, never run.
 //! - `grammar/bnf.bnf` — the real grammar this dialect uses to describe
 //!   itself. Because `tree_sitter_bnf::LANGUAGE` is a real compiled parser
 //!   *for exactly this grammar*, its generated trait can also be run: fed a
@@ -121,7 +121,7 @@ fn node_types_field_types(
         .collect()
 }
 
-/// Dogfood sync test (210.29): the kind set [`visible_kinds`] derives for
+/// Dogfood sync test: the kind set [`visible_kinds`] derives for
 /// `grammar/bnf.bnf` must exactly match `tree-sitter-bnf/src/node-types.json`'s
 /// named, non-supertype kinds — the two are supposed to describe the exact
 /// same tree, one from our own derivation, the other from tree-sitter's
@@ -141,8 +141,8 @@ fn dogfood_visible_kinds_match_node_types_json() {
     );
 }
 
-/// Dogfood spot-check (210.30): the real 9-way field-kind union that
-/// motivated round 2 finding 3's "fully resolve the union" decision.
+/// Dogfood spot-check: the real 9-way field-kind union that motivated fully
+/// resolving a field's target-kind union rather than picking a single kind.
 ///
 /// `grammar/bnf.bnf` documents its own limitation (see its header comment):
 /// field-name annotations like `content:` are omitted throughout for
@@ -178,7 +178,7 @@ fn dogfood_symbol_content_field_union_matches_node_types_json() {
     assert_eq!(
         expected.len(),
         9,
-        "sanity check: this is meant to be the real 9-way union case from round 2 finding 3"
+        "sanity check: this is the real 9-way field-kind union that motivated fully resolving unions"
     );
 }
 
@@ -248,14 +248,14 @@ fn compile_generated_visitor(
     output
 }
 
-/// Compile-check (round 2 finding 4): the small synthetic
-/// `visitor_sample.bnf` fixture exercises fields (`target:`/`value:`), a
-/// leaf kind, and a multi-arm dispatcher — coverage the dogfood grammar
-/// can't provide on its own, since `grammar/bnf.bnf` deliberately has zero
-/// `field:` annotations. No compiled tree-sitter parser exists for this
-/// made-up grammar, so [`compile_generated_visitor`] is asked only to
-/// `cargo build` it (`run: false`), proving the emitted trait type-checks
-/// against the real `tree_sitter` crate; it can't be executed.
+/// Compile-check: the small synthetic `visitor_sample.bnf` fixture
+/// exercises fields (`target:`/`value:`), a leaf kind, and a multi-arm
+/// dispatcher — coverage the dogfood grammar can't provide on its own,
+/// since `grammar/bnf.bnf` deliberately has zero `field:` annotations. No
+/// compiled tree-sitter parser exists for this made-up grammar, so
+/// [`compile_generated_visitor`] is asked only to `cargo build` it
+/// (`run: false`), proving the emitted trait type-checks against the real
+/// `tree_sitter` crate; it can't be executed.
 #[test]
 fn sample_grammar_visitor_trait_compiles() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/visitor_sample.bnf");
@@ -351,7 +351,7 @@ fn main() {{
 /// Compile + behavior test: confirms a synthetically `MISSING` node reaches
 /// [`Visitor::missing_visitor`] rather than silently flowing through normal
 /// kind dispatch (`node.kind()` reports the *expected* kind on a `MISSING`
-/// node, not a distinct missing kind — round 2 finding 7). `"start -> ;\n"`
+/// node, not a distinct missing kind). `"start -> ;\n"`
 /// (a rule body with nothing at all after `->`) makes tree-sitter's own
 /// error recovery insert a `MISSING pattern` node as `symbol`'s `content`
 /// value; since `pattern` is a named kind, that node surfaces through

@@ -1026,7 +1026,7 @@ mod tests {
     /// A reference to a hidden rule is transparent: resolution continues
     /// into its body, collecting each visible kind reachable through it —
     /// the small-scale version of this grammar's own 9-way `symbol.content`
-    /// case (round 2 finding 3).
+    /// case.
     #[test]
     fn resolve_field_target_kinds_transparent_through_hidden_rule() {
         let g = Grammar::from_rules([

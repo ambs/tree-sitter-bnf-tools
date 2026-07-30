@@ -156,12 +156,11 @@ impl RustVisitor<'_> {
     /// `error_visitor`, `missing_visitor` — see [`RustVisitor::fmt_trait_doc`]'s
     /// ANTLR correspondence table for what each one maps to).
     ///
-    /// Every kind-derived `visit_<kind>` method (210.21) is exactly
-    /// `visit_<kind>`, and none of these five helpers start with `visit_` —
-    /// the round-3 renaming from a `visit_` *prefix* to a `_visitor`
-    /// *suffix* — so a kind name can never collide with one of them;
-    /// [`super::check_method_name_collisions`] only has to guard against
-    /// kind/kind collisions, not kind/helper ones.
+    /// Every kind-derived `visit_<kind>` method is exactly `visit_<kind>`,
+    /// and none of these five helpers start with `visit_` (they use a
+    /// `_visitor` suffix instead) — so a kind name can never collide with
+    /// one of them; [`super::check_method_name_collisions`] only has to
+    /// guard against kind/kind collisions, not kind/helper ones.
     ///
     /// Each member is written flush-left here (readable to write and
     /// review), `trim_end`-ed to drop indoc's own trailing newline, joined
@@ -281,11 +280,7 @@ impl RustVisitor<'_> {
     /// One match arm per visible kind derived from the grammar (per
     /// [`visible_kinds`]), in the same order, each calling that kind's
     /// `visit_<kind>` method (per [`to_snake_case`]) — those per-kind
-    /// methods themselves don't exist until [`RustVisitor::fmt_visit_methods`]
-    /// (210.21) emits them; until then this dispatcher compiles but its
-    /// arms reference methods that aren't there yet, the same forward
-    /// reference `children_visitor`/`field_visitor` already make to
-    /// `visit()` itself since 210.18.
+    /// methods are emitted by [`RustVisitor::fmt_visit_methods`].
     fn fmt_dispatcher(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let arms = visible_kinds(self.grammar)
             .iter()
@@ -388,7 +383,7 @@ impl RustVisitor<'_> {
 
         let doc_comment = prefix_lines(doc.trim_end(), "///");
         // A leaf's default body never touches `node` — same situation
-        // `missing_visitor` (210.18) already has, fixed the same way:
+        // `missing_visitor` has, fixed the same way:
         // `let _ = node;` suppresses the unused-variable warning without
         // renaming the parameter to `_node`, so it reads the same as every
         // other method here and an override can still just use `node`.
