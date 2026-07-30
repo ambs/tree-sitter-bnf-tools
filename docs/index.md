@@ -26,6 +26,7 @@ notation.
    `rename`
 10. [Visualising a grammar](tutorial/10-visualising.md) — `railroad`, `graph`
 11. [Generating visitors](tutorial/11-generating-visitors.md) — `visitor`
+12. [Generating a processing library](tutorial/12-generating-a-library.md) — `library`
 
 ## Guides
 

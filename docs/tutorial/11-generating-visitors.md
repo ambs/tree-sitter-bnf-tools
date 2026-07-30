@@ -147,4 +147,4 @@ construct type-sitter's typed wrappers from the `Node` it's handed, combining
 
 ---
 
-Previous: [Visualising a grammar](10-visualising.md) · Back to the [index](../index.md)
+Previous: [Visualising a grammar](10-visualising.md) · Next: [Generating a processing library](12-generating-a-library.md)

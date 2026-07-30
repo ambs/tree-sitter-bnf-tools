@@ -13,6 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dedicated hooks for tree-sitter's `ERROR` and `MISSING` recovery nodes
   (`error_visitor`/`missing_visitor`). See
   [Generating visitors](docs/tutorial/11-generating-visitors.md) (#210).
+- `library` subcommand: scaffolds a complete, self-contained Rust crate for
+  parsing and traversing a BNF-described language — the tree-sitter parser,
+  the same generated `Visitor<'tree>` trait `visitor` produces, and a
+  runnable `examples/walk.rs` that works with no code changes. See
+  [Generating a processing library](docs/tutorial/12-generating-a-library.md)
+  (#210).
 
 ## [0.5.0] - 2026-07-28
 

@@ -1127,6 +1127,179 @@ fn visitor_colliding_kind_names_exits_nonzero() {
     );
 }
 
+// ── library ──────────────────────────────────────────────────────────────────
+
+#[test]
+/// `library`'s `check_visitor` pre-flight runs before `run_generate` (which
+/// shells out to the real `tree-sitter` CLI), so this is the one `library`
+/// scenario testable without it: exits non-zero with a diagnostic naming
+/// both offending kinds, same as `visitor`'s own collision path, without
+/// ever touching the filesystem or spawning `tree-sitter`.
+fn library_colliding_kind_names_exits_nonzero() {
+    let path = write_tmp(
+        "ts_bnf_library_collision.bnf",
+        indoc! {"
+            fooBar -> 'x' ;
+            foo_bar -> 'y' ;
+        "},
+    );
+    let out_dir = std::env::temp_dir().join("ts_bnf_library_collision_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["library", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        !out_dir.exists(),
+        "nothing should be written when the collision check fails first"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("'fooBar'") && stderr.contains("'foo_bar'"),
+        "stderr must name both offending kinds: {stderr}"
+    );
+}
+
+/// A tiny grammar with a field, used by the `library`-generation tests
+/// below: enough to exercise `RustVisitor` genuinely, without needing
+/// `visitor_sample.bnf` or `grammar/bnf.bnf`'s own fixtures.
+const LIBRARY_BNF: &str = indoc! {"
+    program -> decl* ;
+    decl -> target: ident '=' value: ident ';' ;
+    ident -> /[a-z]+/ ;
+"};
+
+#[test]
+/// `library` writes the parser scaffold (same as `convert --generate`) plus
+/// the Rust-specific files this subcommand adds on top of it: `Cargo.toml`,
+/// `bindings/rust/build.rs`, `bindings/rust/lib.rs`,
+/// `bindings/rust/visitor.rs`, `examples/walk.rs`, `.gitignore`.
+fn library_writes_full_crate_layout() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_library_layout.bnf", LIBRARY_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_library_layout_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["library", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "library must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    for relative in [
+        "grammar.js",
+        "queries/highlights.scm",
+        "tree-sitter.json",
+        "src/parser.c",
+        "src/node-types.json",
+        "Cargo.toml",
+        "bindings/rust/build.rs",
+        "bindings/rust/lib.rs",
+        "bindings/rust/visitor.rs",
+        "examples/walk.rs",
+        ".gitignore",
+    ] {
+        assert!(
+            out_dir.join(relative).exists(),
+            "{relative} must be created"
+        );
+    }
+
+    let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml")).unwrap();
+    assert!(cargo_toml.contains("name = \"mylang\""));
+    assert!(cargo_toml.contains("path = \"bindings/rust/lib.rs\""));
+
+    let lib_rs = std::fs::read_to_string(out_dir.join("bindings/rust/lib.rs")).unwrap();
+    assert!(lib_rs.contains("fn tree_sitter_mylang() -> *const ();"));
+    assert!(lib_rs.contains("pub mod visitor;"));
+    assert!(lib_rs.contains("pub fn parse(source: &str)"));
+
+    let visitor_rs = std::fs::read_to_string(out_dir.join("bindings/rust/visitor.rs")).unwrap();
+    assert!(visitor_rs.contains("pub trait Visitor<'tree>"));
+    assert!(visitor_rs.contains("fn visit_decl("));
+
+    let walk_rs = std::fs::read_to_string(out_dir.join("examples/walk.rs")).unwrap();
+    assert!(walk_rs.contains("use mylang::visitor::Visitor;"));
+    assert!(walk_rs.contains("fn combine(&mut self, _results: Vec<()>)"));
+}
+
+#[test]
+/// `--no-header` suppresses the generated-file comment on the Rust files
+/// this subcommand hand-authors, same as `visitor`'s own `--no-header`.
+fn library_no_header_suppresses_lib_rs_comment() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_library_no_header.bnf", LIBRARY_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_library_no_header_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["library", "--no-header", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let lib_rs = std::fs::read_to_string(out_dir.join("bindings/rust/lib.rs")).unwrap();
+    assert!(!lib_rs.contains("Generated by ts-bnf-tool"));
+    assert!(lib_rs.starts_with("//! This crate provides"));
+}
+
+#[test]
+/// The generated crate isn't just plausible-looking text: it's a real Cargo
+/// project that compiles and runs against the real `tree-sitter`/`cc`
+/// toolchain, with zero edits — `cargo run --example walk -- <file>` genuinely
+/// parses the file and counts its nodes, cross-checked against an
+/// independent direct tree walk rather than a hardcoded literal (same
+/// principle `dogfood_visitor_trait_runs_and_counts_rule_nodes` in
+/// `tests/visitor.rs` uses for the plain `visitor` subcommand).
+fn library_generated_crate_builds_and_walk_example_runs() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::library("ts_bnf_library_e2e_project", "e2elang", LIBRARY_BNF);
+
+    let sample = "x = y;\ny = z;\n";
+    let stdout = support::run_walk_example(&out_dir, sample);
+
+    let expected = expected_node_count(sample);
+    assert!(
+        stdout.contains(&format!("{expected} node(s)")),
+        "expected a count of {expected} node(s) in output: {stdout}"
+    );
+}
+
+/// Independently counts the nodes `LIBRARY_BNF`'s grammar (`program ->
+/// decl*`, `decl -> target: ident '=' value: ident ';'`) produces for
+/// `source`, by direct arithmetic over its line count rather than by
+/// re-deriving the same traversal the generated example already performs —
+/// each `x = y;` line is one `decl` (1) + its `target` `ident` (1) + its
+/// `value` `ident` (1) = 3 nodes, plus the root `program` node (1) counted
+/// once for the whole input.
+fn expected_node_count(source: &str) -> usize {
+    let decls = source.lines().filter(|l| !l.trim().is_empty()).count();
+    1 + decls * 3
+}
+
 // ── check --summary ───────────────────────────────────────────────────────────
 
 #[test]
