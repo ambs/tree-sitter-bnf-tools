@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `visitor` subcommand: generates an ANTLR-style `Visitor<'tree>` trait
+  (Rust) from a BNF grammar — one documented `visit_*` method per visible
+  node kind, a `visit()` dispatcher, and a `combine`-based fold, with
+  dedicated hooks for tree-sitter's `ERROR` and `MISSING` recovery nodes
+  (`error_visitor`/`missing_visitor`). See
+  [Generating visitors](docs/tutorial/11-generating-visitors.md) (#210).
+
 ## [0.5.0] - 2026-07-28
 
 ### Added

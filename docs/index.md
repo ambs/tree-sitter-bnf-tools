@@ -25,6 +25,7 @@ notation.
 9. [Formatting and refactoring](tutorial/09-refactoring.md) — `format`,
    `rename`
 10. [Visualising a grammar](tutorial/10-visualising.md) — `railroad`, `graph`
+11. [Generating visitors](tutorial/11-generating-visitors.md) — `visitor`
 
 ## Guides
 

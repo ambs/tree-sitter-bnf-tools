@@ -8,12 +8,9 @@ GRAMMAR_BNF := grammar/bnf.bnf
 RAILROAD    := grammar/railroad.svg
 GRAPH_PDF   := grammar/graph.pdf
 
-VISITOR_FIXTURE_BNF := tools/tests/fixtures/visitor_sample.bnf
-VISITOR_FIXTURE_RS  := tools/tests/fixtures/visitor_sample.rs
-
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish install grammar grammar-check audit visitor-fixture visitor-fixture-check
+.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish install grammar grammar-check audit
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -66,19 +63,6 @@ grammar-check: ## Fail if grammar/railroad.svg or grammar/graph.pdf are stale re
 	git diff --exit-code $(RAILROAD) $(GRAPH_PDF) || \
 		(echo "grammar-check: generated files are stale — commit $(RAILROAD) and $(GRAPH_PDF)" >&2; exit 1)
 
-# Unlike grammar-check's Graphviz output, this generator is pure Rust string
-# formatting — fully deterministic, no cross-version reproducibility concerns
-# — so there's no need for grammar-check's git-history staleness shortcut.
-# visitor-fixture always regenerates (a `.PHONY` target, not a file rule with
-# mtime-based dependencies, since mtimes are unreliable right after a fresh
-# git checkout); visitor-fixture-check just diffs the result.
-visitor-fixture: ## Regenerate tools/tests/fixtures/visitor_sample.rs from visitor_sample.bnf
-	$(BNF_TOOL) visitor $(VISITOR_FIXTURE_BNF) --name sample --no-header > $(VISITOR_FIXTURE_RS)
-
-visitor-fixture-check: visitor-fixture ## Fail if tools/tests/fixtures/visitor_sample.rs is stale relative to visitor_sample.bnf
-	@git diff --exit-code $(VISITOR_FIXTURE_RS) || \
-		(echo "visitor-fixture-check: $(VISITOR_FIXTURE_RS) is stale — run 'make visitor-fixture' and commit it" >&2; exit 1)
-
 ts-version-check: ## Check that tree-sitter-cli >= TS_MIN is installed
 	@TS_VER=$$($(TS) --version 2>/dev/null | sed 's/tree-sitter //'); \
 	if [ -z "$$TS_VER" ]; then \
@@ -105,7 +89,7 @@ test: $(PARSER_C) ## Run all Rust tests
 typecheck: $(PARSER_C) ## Fast type-check without linking
 	$(CARGO) check
 
-check: fmt-check lint typecheck test test-grammar grammar-check visitor-fixture-check audit ## Run all checks (fmt, lint, typecheck, tests, corpus, audit)
+check: fmt-check lint typecheck test test-grammar grammar-check audit ## Run all checks (fmt, lint, typecheck, tests, corpus, audit)
 
 lint: $(PARSER_C) ## Run clippy
 	$(CARGO) clippy -- -D warnings

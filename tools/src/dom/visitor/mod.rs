@@ -35,7 +35,12 @@ mod text;
 /// Order follows rule declaration order, with alias targets appended in the
 /// order their `alias(…)` occurrences are encountered — this keeps generated
 /// output deterministic across runs.
-pub(crate) fn visible_kinds(grammar: &Grammar) -> IndexSet<String> {
+///
+/// `pub`, not `pub(crate)`: this is the one piece of the derivation layer
+/// worth exposing for introspection on its own — e.g. a dogfood test that
+/// checks the kind set against `tree-sitter-bnf/src/node-types.json`
+/// without needing to render (or parse back out of) a full `RustVisitor`.
+pub fn visible_kinds(grammar: &Grammar) -> IndexSet<String> {
     let mut kinds = IndexSet::new();
 
     for name in grammar.productions.keys() {
@@ -324,8 +329,13 @@ fn references_visible_nonterminal(
 /// is sometimes a bare token" and "this field is a `foo` node" are different
 /// facts a caller needs to tell apart (e.g. to know whether a `match` over
 /// named kinds needs a fallback arm).
+///
+/// `pub`, not `pub(crate)`: exposed alongside [`resolve_field_target_kinds`]
+/// for the same introspection reasons [`visible_kinds`] is — e.g. a dogfood
+/// test spot-checking a real multi-kind union against
+/// `tree-sitter-bnf/src/node-types.json`.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct FieldTargetKinds {
+pub struct FieldTargetKinds {
     /// Visible kind names the field's value may take, in first-encountered order.
     pub named: IndexSet<String>,
     /// `true` when some branch bottoms out at a bare terminal (literal or
@@ -351,10 +361,7 @@ pub(crate) struct FieldTargetKinds {
 /// and an empty cycle-tracking set — and hands off to
 /// [`resolve_field_target_kinds_into`], which does the actual per-variant
 /// walk.
-pub(crate) fn resolve_field_target_kinds(
-    grammar: &Grammar,
-    node: &GrammarNode,
-) -> FieldTargetKinds {
+pub fn resolve_field_target_kinds(grammar: &Grammar, node: &GrammarNode) -> FieldTargetKinds {
     let mut out = FieldTargetKinds::default();
     resolve_field_target_kinds_into(grammar, node, &mut HashSet::new(), &mut out);
     out
