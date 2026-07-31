@@ -491,7 +491,11 @@ fn resolve_field_target_kinds_into(
 /// node becomes that literal's anonymous node) or itself hidden (no node
 /// produced, so resolution falls through to the aliased body); an alias to a
 /// visible name stops the walk for the same reason a plain visible reference
-/// does.
+/// does. A `token(...)`/`token.immediate(...)` wrapper is the one exception
+/// to "transparent wrapper, recurse": tree-sitter compiles its entire body
+/// into a single opaque token, so the walk stops there and contributes
+/// nothing, rather than listing that body's inner literals as if they were
+/// separate sibling children.
 pub(crate) fn collect_anonymous_children(
     grammar: &Grammar,
     body: &GrammarNode,
@@ -540,6 +544,13 @@ fn collect_anonymous_children_into(
             }
             _ => {}
         },
+        // tree-sitter collapses a `token(...)`/`token.immediate(...)` body
+        // into a single opaque token with no children of its own, so the
+        // literals/patterns inside it can never surface as separate
+        // anonymous children the way they would in a plain `Sequence`/
+        // `Choice` — unlike every other transparent wrapper below, this one
+        // must not recurse.
+        GrammarNode::Token(_) | GrammarNode::TokenImmediate(_) => {}
         _ => {
             if let Some(inner) = transparent_inner(node) {
                 collect_anonymous_children_into(grammar, inner, in_progress, out);
@@ -1429,11 +1440,28 @@ mod tests {
         assert_eq!(result, IndexSet::from(["'y'".to_string()]));
     }
 
-    /// `token.immediate(…)` and `prec(…)` are transparent wrappers, same as
-    /// every other annotation: a literal nested inside either is still
-    /// collected.
+    /// `prec(…)` alone is a transparent wrapper, same as every other plain
+    /// annotation: a literal nested inside it is still collected.
     #[test]
-    fn collect_anonymous_children_transparent_through_token_immediate_and_prec() {
+    fn collect_anonymous_children_transparent_through_prec() {
+        use crate::dom::{PrecKind, PrecLevel};
+        let g = Grammar::from_rules([p("kind", TerminalLiteral("'x'".into()))]);
+        let node = GrammarNode::Prec(
+            PrecKind::Plain,
+            Some(PrecLevel::Integer(1)),
+            Box::new(TerminalLiteral("';'".into())),
+        );
+        let result = collect_anonymous_children(&g, &node);
+        assert_eq!(result, IndexSet::from(["';'".to_string()]));
+    }
+
+    /// Unlike every other wrapper, `token.immediate(…)` (and `token(…)`) is
+    /// *not* transparent here: tree-sitter compiles its entire body into one
+    /// opaque token with no children of its own, so literals nested inside —
+    /// even through further wrappers like `prec(…)` — must not be collected
+    /// as if they were separate anonymous children.
+    #[test]
+    fn collect_anonymous_children_stops_at_token_immediate() {
         use crate::dom::{PrecKind, PrecLevel};
         let g = Grammar::from_rules([p("kind", TerminalLiteral("'x'".into()))]);
         let node = GrammarNode::TokenImmediate(Box::new(GrammarNode::Prec(
@@ -1442,7 +1470,21 @@ mod tests {
             Box::new(TerminalLiteral("';'".into())),
         )));
         let result = collect_anonymous_children(&g, &node);
-        assert_eq!(result, IndexSet::from(["';'".to_string()]));
+        assert_eq!(result, IndexSet::new());
+    }
+
+    /// `token(…)`'s non-immediate counterpart gets the same treatment: a
+    /// multi-literal sequence wrapped in `token(...)` collapses into one
+    /// opaque token, so none of its inner literals surface individually.
+    #[test]
+    fn collect_anonymous_children_stops_at_token() {
+        let g = Grammar::from_rules([p("kind", TerminalLiteral("'x'".into()))]);
+        let node = GrammarNode::Token(Box::new(Sequence(vec![
+            TerminalLiteral("'i'".into()),
+            TerminalLiteral("'f'".into()),
+        ])));
+        let result = collect_anonymous_children(&g, &node);
+        assert_eq!(result, IndexSet::new());
     }
 
     // ── collect_fields ───────────────────────────────────────────────────

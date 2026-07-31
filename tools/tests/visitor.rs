@@ -41,6 +41,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 
 use ts_bnf_tool::dom::{Grammar, RustVisitor, resolve_field_target_kinds, visible_kinds};
 use ts_bnf_tool::visitors::parse_source;
@@ -192,6 +193,18 @@ impl Drop for HarnessGuard {
     }
 }
 
+/// Serializes every [`compile_generated_visitor`] call in this test binary.
+/// All three callers write into the *shared* `tools/examples/` directory,
+/// and `tools/Cargo.toml` autodiscovers example targets there (unlike
+/// `tree-sitter-bnf/Cargo.toml`, which opts out) — so cargo enumerates
+/// every file under `examples/` whenever any invocation loads the manifest,
+/// including whichever harness file a concurrently-running call currently
+/// has on disk. Held for the harness file's whole lifetime, not just the
+/// `cargo` subprocess call (see its declaration order relative to
+/// [`HarnessGuard`] below), so the window between one call's cleanup and
+/// the next call's manifest read never opens.
+static HARNESS_MUTEX: Mutex<()> = Mutex::new(());
+
 /// Renders `grammar` via [`RustVisitor`] and writes the result, plus
 /// whatever `extra_source` supplies (typically a `struct`/`impl Visitor`
 /// and a `fn main`), into a real `cargo` example of this package named
@@ -210,6 +223,13 @@ fn compile_generated_visitor(
     extra_source: &str,
     run: bool,
 ) -> Output {
+    // Declared before `_guard` so it's dropped *after* it (Rust drops
+    // locals in reverse declaration order): the lock isn't released until
+    // the harness file is gone, not merely until `cargo` exits.
+    let _lock = HARNESS_MUTEX
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+
     let trait_source = RustVisitor::new(grammar, rust_name, "<test>", true)
         .expect("grammar must be visitor-safe")
         .to_string();

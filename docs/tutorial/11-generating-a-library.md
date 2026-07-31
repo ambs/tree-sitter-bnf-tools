@@ -103,12 +103,12 @@ fn visit_decl(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error>
 }
 ```
 
-`ident` and `num` have no visible children of their own, so they're leaves:
+`ident` and `num` have no visible children of their own, so they're leaves —
+each is a single token with no substructure at all, so there's no "Anonymous
+children" section either:
 
 ```rust
 /// Visits a `ident` node.
-///
-/// **Anonymous children** (not visited by default): `/[a-z][a-zA-Z0-9_]*/`
 ///
 /// **Leaf node**: no visible children; defaults to [`Visitor::default_result`].
 fn visit_ident(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {
@@ -167,7 +167,9 @@ impl<'t> Visitor<'t> for Counter {
 `combine` runs exactly once per node visited — every default `visit_*`
 method eventually calls it, whether through `children_visitor`'s fold or
 `default_result`'s `combine(vec![])` — so counting `combine` calls counts
-every node in the tree without touching a single per-kind method.
+every named node in the tree without touching a single per-kind method.
+(`children_visitor` iterates `named_children`, so anonymous tokens like
+`'='`/`';'` are never visited and never counted.)
 
 ## Running it
 

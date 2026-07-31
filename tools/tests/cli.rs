@@ -1000,8 +1000,8 @@ fn highlights_output_file_flag() {
 /// `library`'s `check_visitor` pre-flight runs before `run_generate` (which
 /// shells out to the real `tree-sitter` CLI), so this is the one `library`
 /// scenario testable without it: exits non-zero with a diagnostic naming
-/// both offending kinds, same as `visitor`'s own collision path, without
-/// ever touching the filesystem or spawning `tree-sitter`.
+/// both offending kinds, without ever touching the filesystem or spawning
+/// `tree-sitter`.
 fn library_colliding_kind_names_exits_nonzero() {
     let path = write_tmp(
         "ts_bnf_library_collision.bnf",
@@ -1027,6 +1027,34 @@ fn library_colliding_kind_names_exits_nonzero() {
     assert!(
         stderr.contains("'fooBar'") && stderr.contains("'foo_bar'"),
         "stderr must name both offending kinds: {stderr}"
+    );
+}
+
+#[test]
+/// A grammar name that isn't a valid JavaScript identifier (e.g. a filename
+/// stem with a dash, no `--name` override) must fail with `check_grammar_name`'s
+/// own diagnostic before anything is written — same as `convert`'s check —
+/// rather than reaching `tree-sitter generate` and dying as a raw Node.js
+/// stack trace with a partial crate left on disk.
+fn library_invalid_grammar_name_exits_nonzero_before_writing() {
+    let path = write_tmp("my-lang.bnf", "expr -> 'x' ;\n");
+    let out_dir = std::env::temp_dir().join("ts_bnf_library_invalid_name_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["library", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        !out_dir.exists(),
+        "nothing should be written when the grammar-name check fails first"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("'my-lang'") && stderr.contains("not a valid JavaScript identifier"),
+        "stderr must carry check_grammar_name's own diagnostic: {stderr}"
     );
 }
 
@@ -1104,8 +1132,82 @@ fn library_writes_full_crate_layout() {
 }
 
 #[test]
+/// Re-running `library` over an existing generated directory must not
+/// destroy hand-edits to the two files the tutorial invites users to edit
+/// (`Cargo.toml`, `examples/walk.rs`) — but `bindings/rust/visitor.rs` is
+/// genuinely derived from the grammar and must still be regenerated every
+/// time, since it's meant to track grammar changes automatically.
+fn library_rerun_preserves_user_edits_but_regenerates_visitor() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_library_rerun.bnf", LIBRARY_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_library_rerun_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let run = || {
+        tool()
+            .args(["library", "--name", "mylang", "--output-dir"])
+            .arg(&out_dir)
+            .arg(&path)
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert!(
+        first.status.success(),
+        "first library run must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let cargo_toml_path = out_dir.join("Cargo.toml");
+    let walk_rs_path = out_dir.join("examples/walk.rs");
+    let visitor_rs_path = out_dir.join("bindings/rust/visitor.rs");
+
+    let mut cargo_toml = std::fs::read_to_string(&cargo_toml_path).unwrap();
+    cargo_toml.push_str("\n# user-added-marker\n");
+    std::fs::write(&cargo_toml_path, &cargo_toml).unwrap();
+
+    let mut walk_rs = std::fs::read_to_string(&walk_rs_path).unwrap();
+    walk_rs.push_str("\n// user-added-marker\n");
+    std::fs::write(&walk_rs_path, &walk_rs).unwrap();
+
+    std::fs::write(&visitor_rs_path, "GARBAGE").unwrap();
+
+    let second = run();
+    assert!(
+        second.status.success(),
+        "second library run must succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let cargo_toml_after = std::fs::read_to_string(&cargo_toml_path).unwrap();
+    assert!(
+        cargo_toml_after.contains("user-added-marker"),
+        "Cargo.toml must not be clobbered on rerun: {cargo_toml_after}"
+    );
+
+    let walk_rs_after = std::fs::read_to_string(&walk_rs_path).unwrap();
+    assert!(
+        walk_rs_after.contains("user-added-marker"),
+        "examples/walk.rs must not be clobbered on rerun: {walk_rs_after}"
+    );
+
+    let visitor_rs_after = std::fs::read_to_string(&visitor_rs_path).unwrap();
+    assert!(
+        !visitor_rs_after.contains("GARBAGE")
+            && visitor_rs_after.contains("pub trait Visitor<'tree>"),
+        "bindings/rust/visitor.rs must still be regenerated on rerun: {visitor_rs_after}"
+    );
+}
+
+#[test]
 /// `--no-header` suppresses the generated-file comment on the Rust files
-/// this subcommand hand-authors, same as `visitor`'s own `--no-header`.
+/// this subcommand hand-authors.
 fn library_no_header_suppresses_lib_rs_comment() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
@@ -1135,7 +1237,7 @@ fn library_no_header_suppresses_lib_rs_comment() {
 /// parses the file and counts its nodes, cross-checked against an
 /// independent direct tree walk rather than a hardcoded literal (same
 /// principle `dogfood_visitor_trait_runs_and_counts_rule_nodes` in
-/// `tests/visitor.rs` uses for the plain `visitor` subcommand).
+/// `tests/visitor.rs` uses for the underlying derivation/emission engine).
 fn library_generated_crate_builds_and_walk_example_runs() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
@@ -1165,6 +1267,58 @@ fn library_generated_crate_builds_and_walk_example_runs() {
 fn expected_node_count(source: &str) -> usize {
     let decls = source.lines().filter(|l| !l.trim().is_empty()).count();
     1 + decls * 3
+}
+
+#[test]
+/// The generated crate must build standing alone even when it lands inside
+/// an existing Cargo workspace (the natural "run `ts-bnf-tool library`
+/// inside my Rust project" workflow) — `library_cargo_toml`'s `[workspace]`
+/// table (added for this reason) stops cargo from walking up to the
+/// enclosing workspace root and rejecting the generated crate for not being
+/// listed as one of its members.
+fn library_generated_crate_builds_inside_an_enclosing_workspace() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+
+    let workspace_root = std::env::temp_dir().join("ts_bnf_library_enclosing_workspace");
+    let _ = std::fs::remove_dir_all(&workspace_root);
+    std::fs::create_dir_all(&workspace_root).unwrap();
+    std::fs::write(
+        workspace_root.join("Cargo.toml"),
+        indoc! {r#"
+            [workspace]
+            members = []
+        "#},
+    )
+    .unwrap();
+
+    let bnf_path = workspace_root.join("crate.bnf");
+    std::fs::write(&bnf_path, LIBRARY_BNF).unwrap();
+    let out_dir = workspace_root.join("generated-crate");
+
+    let out = tool()
+        .args(["library", "--name", "wslang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "library must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let sample = "x = y;\n";
+    let stdout = support::run_walk_example(&out_dir, sample);
+    let expected = expected_node_count(sample);
+    assert!(
+        stdout.contains(&format!("{expected} node(s)")),
+        "expected a count of {expected} node(s) in output: {stdout}"
+    );
 }
 
 // ── check --summary ───────────────────────────────────────────────────────────

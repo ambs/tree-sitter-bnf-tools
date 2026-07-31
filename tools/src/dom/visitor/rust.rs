@@ -275,7 +275,11 @@ impl RustVisitor<'_> {
                 /// parse-recovery nodes.
                 ///
                 /// ANTLR's `visitErrorNode`. Defaults to recursing into its
-                /// children.
+                /// children via [`Visitor::children_visitor`], which only
+                /// visits *named* children — so recovered content that
+                /// parsed as anonymous tokens yields nothing by default.
+                /// Override this method directly (e.g. to inspect
+                /// [`Node::utf8_text`]) if that matters for your use case.
                 fn error_visitor(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {
                     self.children_visitor(node)
                 }
@@ -372,6 +376,13 @@ impl RustVisitor<'_> {
     /// for a leaf kind ([`is_leaf_body`]), [`Visitor::children_visitor`]
     /// otherwise.
     ///
+    /// The anonymous-children list is suppressed for a leaf kind even when
+    /// [`collect_anonymous_children`] finds terminals in its body: a leaf's
+    /// entire body collapses into that one node's own text at the
+    /// tree-sitter level (it has no children, visible or anonymous), so
+    /// listing those terminals as "children" would contradict the
+    /// "**Leaf node**" note right below it.
+    ///
     /// `body_for_kind(self.grammar, kind)` is expected to resolve for every
     /// `kind` this is called with: every caller sources `kind` from
     /// [`visible_kinds`], and [`body_for_kind`] is guaranteed to resolve
@@ -402,7 +413,7 @@ impl RustVisitor<'_> {
                 ));
             }
         }
-        if !anonymous.is_empty() {
+        if !leaf && !anonymous.is_empty() {
             let tokens = anonymous
                 .iter()
                 .map(|t| format!("`{t}`"))
@@ -449,7 +460,10 @@ impl Display for RustVisitor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::GrammarNode::{Alias, Choice, Field, Sequence, TerminalLiteral};
+    use crate::dom::GrammarNode;
+    use crate::dom::GrammarNode::{
+        Alias, Choice, Field, Sequence, TerminalLiteral, TerminalPattern,
+    };
     use crate::dom::test_utils::{nt, p};
 
     fn rv<'a>(grammar: &'a Grammar, name: &'a str) -> RustVisitor<'a> {
@@ -788,15 +802,54 @@ mod tests {
 
     #[test]
     fn visit_method_documents_anonymous_children() {
-        let g = Grammar::from_rules([p(
-            "decl",
-            Sequence(vec![
-                TerminalLiteral("'('".into()),
-                TerminalLiteral("')'".into()),
-            ]),
-        )]);
+        // Non-leaf (references the visible `expr` rule), so the literal
+        // parens are genuine sibling anonymous children in the parse tree,
+        // not the entirety of a leaf node's own text — the case the
+        // "Anonymous children" section is meant to document.
+        let g = Grammar::from_rules([
+            p(
+                "paren_expr",
+                Sequence(vec![
+                    TerminalLiteral("'('".into()),
+                    nt("expr"),
+                    TerminalLiteral("')'".into()),
+                ]),
+            ),
+            p("expr", TerminalLiteral("'x'".into())),
+        ]);
         let out = rv(&g, "g").to_string();
         assert!(out.contains("**Anonymous children** (not visited by default): `'('`, `')'`"));
+        assert!(!out.contains("fn visit_paren_expr(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {\n    let _ = node;"));
+    }
+
+    #[test]
+    /// A leaf whose body is a bare terminal (no `Sequence`/`Choice` at all)
+    /// has no children whatsoever — the terminal's match *is* the node's own
+    /// text, not a distinct child — so no "Anonymous children" section
+    /// should appear alongside the "Leaf node" note.
+    fn visit_method_leaf_bare_terminal_omits_anonymous_children_section() {
+        let g = Grammar::from_rules([p("ident", TerminalPattern("/[a-z]+/".into()))]);
+        let out = rv(&g, "g").to_string();
+        assert!(out.contains("**Leaf node**"));
+        assert!(!out.contains("**Anonymous children**"));
+    }
+
+    #[test]
+    /// A leaf whose body is `token(...)`-wrapped collapses into one opaque
+    /// token at the tree-sitter level, same as the bare-terminal case above:
+    /// no "Anonymous children" section, even though the wrapped body itself
+    /// is a multi-literal `Sequence`.
+    fn visit_method_leaf_token_wrapped_omits_anonymous_children_section() {
+        let g = Grammar::from_rules([p(
+            "keyword",
+            GrammarNode::Token(Box::new(Sequence(vec![
+                TerminalLiteral("'i'".into()),
+                TerminalLiteral("'f'".into()),
+            ]))),
+        )]);
+        let out = rv(&g, "g").to_string();
+        assert!(out.contains("**Leaf node**"));
+        assert!(!out.contains("**Anonymous children**"));
     }
 
     #[test]
