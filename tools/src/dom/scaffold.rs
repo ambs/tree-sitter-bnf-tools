@@ -1,7 +1,15 @@
+use std::error::Error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use indoc::formatdoc;
 
 use crate::dom::NameOrLiteral;
+use crate::dom::highlights::Highlights;
+use crate::util::to_camelcase;
 
 use super::types::Grammar;
 
@@ -219,12 +227,98 @@ impl Display for Scaffold<'_> {
     }
 }
 
+/// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
+pub fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
+    output_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(grammar_name))
+}
+
+/// Writes a minimal `tree-sitter.json` to `dir` if one does not already exist.
+///
+/// Satisfies tree-sitter ≥ 0.25's requirement for ABI 15 generation.
+/// An existing file is never overwritten.
+fn write_tree_sitter_json(dir: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+    let path = dir.join("tree-sitter.json");
+    if path.exists() {
+        return Ok(());
+    }
+    let camel = to_camelcase(name);
+    fs::write(
+        &path,
+        formatdoc! {r#"
+            {{
+              "grammars": [
+                {{
+                  "name": "{name}",
+                  "camelcase": "{camel}",
+                  "scope": "source.{name}",
+                  "file-types": []
+                }}
+              ],
+              "metadata": {{
+                "version": "0.1.0",
+                "license": "MIT"
+              }}
+            }}
+        "#},
+    )?;
+    Ok(())
+}
+
+/// Writes `grammar.js` and a skeleton `queries/highlights.scm` to the output directory,
+/// then runs `tree-sitter generate` inside it.
+pub fn run_generate(
+    scaffold: &Scaffold<'_>,
+    output_dir: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let dir = resolve_output_dir(output_dir, scaffold.name);
+    fs::create_dir_all(&dir)?;
+    fs::write(dir.join("grammar.js"), scaffold.to_string())?;
+    let queries_dir = dir.join("queries");
+    fs::create_dir_all(&queries_dir)?;
+    fs::write(
+        queries_dir.join("highlights.scm"),
+        Highlights {
+            grammar: scaffold.grammar,
+            no_todos: false,
+        }
+        .to_string(),
+    )?;
+    write_tree_sitter_json(&dir, scaffold.name)?;
+    let status = Command::new("tree-sitter")
+        .arg("generate")
+        .current_dir(&dir)
+        .status()
+        .map_err(|e| -> Box<dyn Error> { format!("failed to run tree-sitter: {}", e).into() })?;
+    if !status.success() {
+        return Err("tree-sitter generate failed".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dom::GrammarNode::TerminalLiteral;
     use crate::dom::test_utils::{cg, di, p, p_named};
     use crate::dom::{Grammar, GrammarNode};
+
+    #[test]
+    fn resolve_output_dir_uses_explicit_path() {
+        assert_eq!(
+            resolve_output_dir(Some("/my/dir"), "grammar"),
+            PathBuf::from("/my/dir")
+        );
+    }
+
+    #[test]
+    fn resolve_output_dir_defaults_to_grammar_name() {
+        assert_eq!(
+            resolve_output_dir(None, "mygrammar"),
+            PathBuf::from("mygrammar")
+        );
+    }
 
     fn s<'a>(grammar: &'a Grammar, name: &'a str) -> Scaffold<'a> {
         Scaffold {

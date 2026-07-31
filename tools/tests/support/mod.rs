@@ -70,6 +70,56 @@ pub fn generate(dir_name: &str, name: Option<&str>, bnf_source: &str) -> PathBuf
     out_dir
 }
 
+/// Runs `ts-bnf-tool library` on `bnf_source` into a freshly-cleared
+/// directory named `dir_name` under the system temp dir, passing `--name`.
+/// Panics if generation does not exit successfully. Returns the output
+/// directory so callers can build/run the generated crate themselves.
+pub fn library(dir_name: &str, name: &str, bnf_source: &str) -> PathBuf {
+    let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+    std::fs::write(&bnf_path, bnf_source).unwrap();
+
+    let out_dir = std::env::temp_dir().join(dir_name);
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
+        .args(["library", "--name", name, "--output-dir"])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "ts-bnf-tool library failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out_dir
+}
+
+/// Writes `input` to a file under `crate_dir` and runs `cargo run --example
+/// walk -- <that file>` with `crate_dir` as the working directory — the
+/// generated `library` crate's own example, compiled and run fresh, not a
+/// checked-in fixture. Panics if the subprocess does not exit successfully.
+/// Returns the captured stdout.
+pub fn run_walk_example(crate_dir: &Path, input: &str) -> String {
+    let input_path = crate_dir.join("sample-input.txt");
+    std::fs::write(&input_path, input).unwrap();
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let out = Command::new(&cargo)
+        .args(["run", "--quiet", "--example", "walk", "--"])
+        .arg(&input_path)
+        .current_dir(crate_dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "generated crate's `cargo run --example walk` failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
 /// Writes `input` to a file under `out_dir` and runs `tree-sitter parse` on it
 /// with `out_dir` as the working directory, so the CLI picks up the grammar
 /// generated there. Panics if the parse subprocess does not exit successfully.

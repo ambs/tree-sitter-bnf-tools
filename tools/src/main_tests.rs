@@ -118,22 +118,6 @@ fn js_identifier_validation() {
 }
 
 #[test]
-fn resolve_output_dir_uses_explicit_path() {
-    assert_eq!(
-        resolve_output_dir(Some("/my/dir"), "grammar"),
-        PathBuf::from("/my/dir")
-    );
-}
-
-#[test]
-fn resolve_output_dir_defaults_to_grammar_name() {
-    assert_eq!(
-        resolve_output_dir(None, "mygrammar"),
-        PathBuf::from("mygrammar")
-    );
-}
-
-#[test]
 /// `--split` without `--output-dir` is rejected at parse time (R-15).
 fn railroad_split_requires_output_dir() {
     assert!(parse_railroad(&["--split", "f.bnf"]).is_err());

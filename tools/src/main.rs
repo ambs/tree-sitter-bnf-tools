@@ -1,21 +1,20 @@
 //! CLI tool for converting BNF grammars to tree-sitter `grammar.js` notation.
 
 use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use clap::{Parser, Subcommand};
-use indoc::formatdoc;
 
 use ts_bnf_tool::dom::analysis::{FirstTerminal, first_sets};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
-use ts_bnf_tool::dom::{Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity};
-use ts_bnf_tool::util::{syntax_error_diagnostics, to_camelcase};
+use ts_bnf_tool::dom::{
+    Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity, run_generate, run_library,
+};
+use ts_bnf_tool::util::syntax_error_diagnostics;
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -143,6 +142,22 @@ enum Subcommands {
         #[arg(long)]
         start: Option<String>,
     },
+    /// Scaffold a complete Rust library crate for processing a BNF-described
+    /// language: the tree-sitter parser, an ANTLR-style Visitor<'tree> trait,
+    /// and a runnable example that traverses a file with no code edits needed.
+    Library {
+        /// Input BNF file, or `-` to read from stdin
+        filename: String,
+        /// Output directory for the generated crate (default: ./<name>)
+        #[arg(long)]
+        output_dir: Option<String>,
+        /// Grammar/crate name (default: filename stem)
+        #[arg(long)]
+        name: Option<String>,
+        /// Suppress generated-file header comments
+        #[arg(long)]
+        no_header: bool,
+    },
     /// Pretty-print a BNF file in canonical style.
     Format {
         /// Input BNF file, or `-` to read from stdin
@@ -163,85 +178,6 @@ enum Subcommands {
         #[arg(long, overrides_with = "strip_comments")]
         no_strip_comments: bool,
     },
-}
-
-/// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
-fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
-    output_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(grammar_name))
-}
-
-/// An error produced when an external command (e.g. `tree-sitter generate`) fails.
-#[derive(Debug)]
-struct CommandError(String);
-
-impl fmt::Display for CommandError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Error for CommandError {}
-
-/// Writes `grammar.js` and a skeleton `queries/highlights.scm` to the output directory,
-/// then runs `tree-sitter generate` inside it.
-fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(), Box<dyn Error>> {
-    let dir = resolve_output_dir(output_dir, scaffold.name);
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join("grammar.js"), scaffold.to_string())?;
-    let queries_dir = dir.join("queries");
-    fs::create_dir_all(&queries_dir)?;
-    fs::write(
-        queries_dir.join("highlights.scm"),
-        Highlights {
-            grammar: scaffold.grammar,
-            no_todos: false,
-        }
-        .to_string(),
-    )?;
-    write_tree_sitter_json(&dir, scaffold.name)?;
-    let status = Command::new("tree-sitter")
-        .arg("generate")
-        .current_dir(&dir)
-        .status()
-        .map_err(|e| CommandError(format!("failed to run tree-sitter: {}", e)))?;
-    if !status.success() {
-        return Err(CommandError("tree-sitter generate failed".into()).into());
-    }
-    Ok(())
-}
-
-/// Writes a minimal `tree-sitter.json` to `dir` if one does not already exist.
-///
-/// Satisfies tree-sitter ≥ 0.25's requirement for ABI 15 generation.
-/// An existing file is never overwritten.
-fn write_tree_sitter_json(dir: &Path, name: &str) -> Result<(), Box<dyn Error>> {
-    let path = dir.join("tree-sitter.json");
-    if path.exists() {
-        return Ok(());
-    }
-    let camel = to_camelcase(name);
-    fs::write(
-        &path,
-        formatdoc! {r#"
-            {{
-              "grammars": [
-                {{
-                  "name": "{name}",
-                  "camelcase": "{camel}",
-                  "scope": "source.{name}",
-                  "file-types": []
-                }}
-              ],
-              "metadata": {{
-                "version": "0.1.0",
-                "license": "MIT"
-              }}
-            }}
-        "#},
-    )?;
-    Ok(())
 }
 
 /// Renames rule `from` to `to` in the grammar at `filename` and writes the result.
@@ -566,6 +502,33 @@ fn run() -> Result<(), Box<dyn Error>> {
                     .into());
                 }
             }
+        }
+
+        Subcommands::Library {
+            filename,
+            output_dir,
+            name,
+            no_header,
+        } => {
+            let (grammar, _) = parse_file(&filename, false)?;
+            let name = grammar_name(&filename, name.as_deref());
+            let name_diagnostics = check_grammar_name(&name);
+            if !name_diagnostics.is_empty() {
+                for d in &name_diagnostics {
+                    eprintln!("{d}");
+                }
+                return Err(
+                    "grammar name is not a valid JavaScript identifier; library generation aborted"
+                        .into(),
+                );
+            }
+            run_library(
+                &grammar,
+                &name,
+                source_label(&filename),
+                output_dir.as_deref(),
+                no_header,
+            )?;
         }
 
         Subcommands::Format {

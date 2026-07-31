@@ -9,3 +9,8 @@ tree-sitter-bnf/src/
 tree-sitter-bnf/tree-sitter-bnf.pc
 tree-sitter-bnf/binding.gyp
 .envrc
+
+# Written at test-time by tools/tests/visitor.rs's compile/behavior tests
+# (a freshly generated Visitor trait + a small runner, compiled via
+# `cargo build`/`cargo run --example` so it's never a stale, checked-in copy).
+tools/examples/visitor_*_harness.rs

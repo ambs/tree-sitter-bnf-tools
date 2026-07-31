@@ -14,6 +14,10 @@ mod grammar;
 pub mod graph;
 /// Skeleton `highlights.scm` generator with naming-convention heuristics.
 pub mod highlights;
+/// Scaffolding for the `library` subcommand's generated crate
+/// (`Cargo.toml`/`build.rs`/`lib.rs`/`examples/walk.rs`); target-language
+/// emitters live in submodules.
+pub mod library;
 /// Core grammar node types and their Display representations.
 mod nodes;
 /// A single named grammar rule.
@@ -31,15 +35,23 @@ pub mod summary;
 pub mod test_utils;
 /// The [`Grammar`] struct and its basic impls.
 mod types;
+/// Derives a `Visitor` trait's shape from a [`Grammar`] (visible node-kind set,
+/// per-kind fields and leaf status, method-name collisions); target-language
+/// emitters live in submodules.
+pub mod visitor;
 
 pub use diagnostic::{Diagnostic, Severity};
 pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup, ReservedEntry};
 pub use error::ParseError;
 pub use format::format_grammar;
 pub use highlights::Highlights;
+pub use library::{LibraryCrate, LibraryFile, render_library, run_library};
 pub use nodes::{GrammarNode, PrecKind, PrecLevel};
 pub use production::Production;
 pub use rename::rename_grammar;
-pub use scaffold::Scaffold;
+pub use scaffold::{Scaffold, run_generate};
 pub use summary::{FirstSetStats, GrammarSummary};
 pub use types::Grammar;
+pub use visitor::check_visitor;
+pub use visitor::render_visitor;
+pub use visitor::{FieldTargetKinds, resolve_field_target_kinds, visible_kinds};

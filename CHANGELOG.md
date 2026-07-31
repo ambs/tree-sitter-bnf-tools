@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `library` subcommand: scaffolds a complete, self-contained Rust crate for
+  parsing and traversing a BNF-described language — the tree-sitter parser,
+  a generated ANTLR-style `Visitor<'tree>` trait (one documented `visit_*`
+  method per visible node kind, a `visit()` dispatcher, and a
+  `combine`-based fold, with dedicated hooks for tree-sitter's `ERROR` and
+  `MISSING` recovery nodes), and a runnable `examples/walk.rs` that works
+  with no code changes. The generated crate builds standalone even inside
+  an existing Cargo workspace, and re-running `library` after a grammar
+  change regenerates the parser and `Visitor` trait without touching
+  hand-edited `Cargo.toml`/`examples/walk.rs`. See
+  [Generating a processing library](docs/tutorial/11-generating-a-library.md)
+  (#210).
+
 ## [0.5.0] - 2026-07-28
 
 ### Added
