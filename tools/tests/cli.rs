@@ -1272,7 +1272,7 @@ fn expected_node_count(source: &str) -> usize {
 #[test]
 /// The generated crate must build standing alone even when it lands inside
 /// an existing Cargo workspace (the natural "run `ts-bnf-tool library`
-/// inside my Rust project" workflow) — `library_cargo_toml`'s `[workspace]`
+/// inside my Rust project" workflow) — `dom::library::rust::cargo_toml`'s `[workspace]`
 /// table (added for this reason) stops cargo from walking up to the
 /// enclosing workspace root and rejecting the generated crate for not being
 /// listed as one of its members.

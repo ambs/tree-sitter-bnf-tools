@@ -14,6 +14,10 @@ mod grammar;
 pub mod graph;
 /// Skeleton `highlights.scm` generator with naming-convention heuristics.
 pub mod highlights;
+/// Scaffolding for the `library` subcommand's generated crate
+/// (`Cargo.toml`/`build.rs`/`lib.rs`/`examples/walk.rs`); target-language
+/// emitters live in submodules.
+pub mod library;
 /// Core grammar node types and their Display representations.
 mod nodes;
 /// A single named grammar rule.
@@ -41,6 +45,7 @@ pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup
 pub use error::ParseError;
 pub use format::format_grammar;
 pub use highlights::Highlights;
+pub use library::{LibraryCrate, LibraryFile, render_library};
 pub use nodes::{GrammarNode, PrecKind, PrecLevel};
 pub use production::Production;
 pub use rename::rename_grammar;
