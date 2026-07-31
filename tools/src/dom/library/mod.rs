@@ -7,10 +7,13 @@
 // are just as target-language-specific as the Rust source text itself, so
 // callers outside this module must never hardcode them.
 
-use std::path::PathBuf;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
 
+use super::scaffold::{Scaffold, resolve_output_dir, run_generate};
 use super::types::Grammar;
-use super::visitor::render_visitor;
+use super::visitor::{check_visitor, render_visitor};
 
 /// The Rust-specific emitter: renders the generated crate's
 /// `Cargo.toml`/`build.rs`/`lib.rs`/`examples/walk.rs`/`.gitignore` files,
@@ -57,4 +60,70 @@ pub fn render_library(
     Ok(LibraryCrate {
         files: rust::render(name, no_header, visitor_source),
     })
+}
+
+/// Scaffolds a complete Rust library crate: the parser (via [`run_generate`]),
+/// plus every hand-authored file [`render_library`] produces
+/// (`Cargo.toml`/`build.rs`/`bindings/rust/lib.rs`/`visitor.rs` matching this
+/// repo's own `tree-sitter-bnf` crate's shape, and a runnable
+/// `examples/walk.rs` that counts every parsed node using only the trait's
+/// default methods) — proof the crate works before the user writes a line
+/// of their own code.
+///
+/// The Rust bindings are hand-authored here rather than produced by shelling
+/// out to `tree-sitter init`: that command also scaffolds Node/Python/Go/
+/// Swift bindings this Rust-only feature has no use for, and its exact
+/// output isn't something this tool controls across `tree-sitter` CLI
+/// versions — [`run_generate`]'s existing `tree-sitter generate` step already
+/// covers everything the Rust binding needs (`src/parser.c`,
+/// `src/node-types.json`).
+pub fn run_library(
+    grammar: &Grammar,
+    name: &str,
+    source: &str,
+    output_dir: Option<&str>,
+    no_header: bool,
+) -> Result<(), Box<dyn Error>> {
+    check_visitor(grammar).map_err(|msg| -> Box<dyn Error> { msg.into() })?;
+
+    let scaffold = Scaffold {
+        grammar,
+        name,
+        source,
+        no_header,
+    };
+    run_generate(&scaffold, output_dir)?;
+
+    let dir = resolve_output_dir(output_dir, name);
+    let library = render_library(grammar, name, source, no_header)
+        .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
+    for file in library.files {
+        let path = dir.join(&file.path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if file.preserve_existing {
+            write_if_absent(&path, &file.content)?;
+        } else {
+            fs::write(&path, &file.content)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Writes `content` to `path` unless a file already exists there — same
+/// never-clobber guard `run_generate`'s `tree-sitter.json` write already
+/// uses, applied here to the files [`render_library`] generates that the
+/// tutorial invites users to hand-edit afterwards (`Cargo.toml`,
+/// `examples/walk.rs`). Re-running `library` after a grammar change must not
+/// destroy those edits, unlike `bindings/rust/visitor.rs` and the parser
+/// scaffold, which are genuinely derived and are meant to be regenerated
+/// every time.
+fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
+    if path.exists() {
+        return Ok(());
+    }
+    fs::write(path, content)?;
+    Ok(())
 }

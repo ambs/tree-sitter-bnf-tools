@@ -1,23 +1,20 @@
 //! CLI tool for converting BNF grammars to tree-sitter `grammar.js` notation.
 
 use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use clap::{Parser, Subcommand};
-use indoc::formatdoc;
 
 use ts_bnf_tool::dom::analysis::{FirstTerminal, first_sets};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{
-    Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity, render_library,
+    Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity, run_generate, run_library,
 };
-use ts_bnf_tool::util::{syntax_error_diagnostics, to_camelcase};
+use ts_bnf_tool::util::syntax_error_diagnostics;
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -181,150 +178,6 @@ enum Subcommands {
         #[arg(long, overrides_with = "strip_comments")]
         no_strip_comments: bool,
     },
-}
-
-/// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
-fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
-    output_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(grammar_name))
-}
-
-/// An error produced when an external command (e.g. `tree-sitter generate`) fails.
-#[derive(Debug)]
-struct CommandError(String);
-
-impl fmt::Display for CommandError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Error for CommandError {}
-
-/// Writes `grammar.js` and a skeleton `queries/highlights.scm` to the output directory,
-/// then runs `tree-sitter generate` inside it.
-fn run_generate(scaffold: &Scaffold<'_>, output_dir: Option<&str>) -> Result<(), Box<dyn Error>> {
-    let dir = resolve_output_dir(output_dir, scaffold.name);
-    fs::create_dir_all(&dir)?;
-    fs::write(dir.join("grammar.js"), scaffold.to_string())?;
-    let queries_dir = dir.join("queries");
-    fs::create_dir_all(&queries_dir)?;
-    fs::write(
-        queries_dir.join("highlights.scm"),
-        Highlights {
-            grammar: scaffold.grammar,
-            no_todos: false,
-        }
-        .to_string(),
-    )?;
-    write_tree_sitter_json(&dir, scaffold.name)?;
-    let status = Command::new("tree-sitter")
-        .arg("generate")
-        .current_dir(&dir)
-        .status()
-        .map_err(|e| CommandError(format!("failed to run tree-sitter: {}", e)))?;
-    if !status.success() {
-        return Err(CommandError("tree-sitter generate failed".into()).into());
-    }
-    Ok(())
-}
-
-/// Scaffolds a complete Rust library crate: the parser (via [`run_generate`]),
-/// plus every hand-authored file [`ts_bnf_tool::dom::render_library`]
-/// produces (`Cargo.toml`/`build.rs`/`bindings/rust/lib.rs`/`visitor.rs`
-/// matching this repo's own `tree-sitter-bnf` crate's shape, and a runnable
-/// `examples/walk.rs` that counts every parsed node using only the trait's
-/// default methods) — proof the crate works before the user writes a line
-/// of their own code.
-///
-/// The Rust bindings are hand-authored here rather than produced by shelling
-/// out to `tree-sitter init`: that command also scaffolds Node/Python/Go/
-/// Swift bindings this Rust-only feature has no use for, and its exact
-/// output isn't something this tool controls across `tree-sitter` CLI
-/// versions — `run_generate`'s existing `tree-sitter generate` step already
-/// covers everything the Rust binding needs (`src/parser.c`,
-/// `src/node-types.json`).
-fn run_library(
-    grammar: &Grammar,
-    name: &str,
-    source: &str,
-    output_dir: Option<&str>,
-    no_header: bool,
-) -> Result<(), Box<dyn Error>> {
-    ts_bnf_tool::dom::check_visitor(grammar).map_err(|msg| -> Box<dyn Error> { msg.into() })?;
-
-    let scaffold = Scaffold {
-        grammar,
-        name,
-        source,
-        no_header,
-    };
-    run_generate(&scaffold, output_dir)?;
-
-    let dir = resolve_output_dir(output_dir, name);
-    let library = render_library(grammar, name, source, no_header)
-        .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
-    for file in library.files {
-        let path = dir.join(&file.path);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        if file.preserve_existing {
-            write_if_absent(&path, &file.content)?;
-        } else {
-            fs::write(&path, &file.content)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Writes `content` to `path` unless a file already exists there — same
-/// never-clobber guard [`write_tree_sitter_json`] already uses, applied here
-/// to the files `library` generates that the tutorial invites users to
-/// hand-edit afterwards (`Cargo.toml`, `examples/walk.rs`). Re-running
-/// `library` after a grammar change must not destroy those edits, unlike
-/// `bindings/rust/visitor.rs` and the parser scaffold, which are genuinely
-/// derived and are meant to be regenerated every time.
-fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
-    if path.exists() {
-        return Ok(());
-    }
-    fs::write(path, content)?;
-    Ok(())
-}
-
-/// Writes a minimal `tree-sitter.json` to `dir` if one does not already exist.
-///
-/// Satisfies tree-sitter ≥ 0.25's requirement for ABI 15 generation.
-/// An existing file is never overwritten.
-fn write_tree_sitter_json(dir: &Path, name: &str) -> Result<(), Box<dyn Error>> {
-    let path = dir.join("tree-sitter.json");
-    if path.exists() {
-        return Ok(());
-    }
-    let camel = to_camelcase(name);
-    fs::write(
-        &path,
-        formatdoc! {r#"
-            {{
-              "grammars": [
-                {{
-                  "name": "{name}",
-                  "camelcase": "{camel}",
-                  "scope": "source.{name}",
-                  "file-types": []
-                }}
-              ],
-              "metadata": {{
-                "version": "0.1.0",
-                "license": "MIT"
-              }}
-            }}
-        "#},
-    )?;
-    Ok(())
 }
 
 /// Renames rule `from` to `to` in the grammar at `filename` and writes the result.

@@ -45,11 +45,11 @@ pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup
 pub use error::ParseError;
 pub use format::format_grammar;
 pub use highlights::Highlights;
-pub use library::{LibraryCrate, LibraryFile, render_library};
+pub use library::{LibraryCrate, LibraryFile, render_library, run_library};
 pub use nodes::{GrammarNode, PrecKind, PrecLevel};
 pub use production::Production;
 pub use rename::rename_grammar;
-pub use scaffold::Scaffold;
+pub use scaffold::{Scaffold, run_generate};
 pub use summary::{FirstSetStats, GrammarSummary};
 pub use types::Grammar;
 pub use visitor::check_visitor;
