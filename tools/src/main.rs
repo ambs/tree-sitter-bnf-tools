@@ -15,7 +15,7 @@ use ts_bnf_tool::dom::analysis::{FirstTerminal, first_sets};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{
-    Diagnostic, Grammar, Highlights, ParseError, RustVisitor, Scaffold, Severity,
+    Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity, render_visitor,
 };
 use ts_bnf_tool::util::{syntax_error_diagnostics, to_camelcase};
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
@@ -269,9 +269,8 @@ fn run_library(
     fs::write(bindings_dir.join("build.rs"), library_build_rs(name))?;
     fs::write(bindings_dir.join("lib.rs"), library_lib_rs(name, no_header))?;
 
-    let visitor_source = RustVisitor::new(grammar, name, source, no_header)
-        .map_err(|msg| -> Box<dyn Error> { msg.into() })?
-        .to_string();
+    let visitor_source = render_visitor(grammar, name, source, no_header)
+        .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
     fs::write(bindings_dir.join("visitor.rs"), visitor_source)?;
 
     let examples_dir = dir.join("examples");

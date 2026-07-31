@@ -48,5 +48,5 @@ pub use scaffold::Scaffold;
 pub use summary::{FirstSetStats, GrammarSummary};
 pub use types::Grammar;
 pub use visitor::check_visitor;
-pub use visitor::rust::RustVisitor;
+pub use visitor::render_visitor;
 pub use visitor::{FieldTargetKinds, resolve_field_target_kinds, visible_kinds};

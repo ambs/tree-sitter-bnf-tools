@@ -275,6 +275,30 @@ pub fn check_visitor(grammar: &Grammar) -> Result<(), String> {
     check_method_name_collisions(&visible_kinds(grammar))
 }
 
+/// Renders `grammar`'s derived `Visitor` trait as complete generated source
+/// in the tool's target language.
+///
+/// This is the one entry point callers outside this module (`main.rs`, and
+/// eventually other crates) go through to render a visitor: it, not any
+/// individual emitter type, is what `dom` re-exports. Adding a second target
+/// language means adding a match arm here, not a new `pub use` in `dom`'s
+/// root and a new import at every call site — those call sites don't need
+/// to know `rust::RustVisitor` (or a future `python::PythonVisitor`) exists
+/// at all.
+///
+/// Rust is currently the only target, so there's nothing to select between
+/// yet. Once a second language emitter exists, this signature will need a
+/// target-language parameter (e.g. an enum) to dispatch on, alongside the
+/// added match arm.
+pub fn render_visitor(
+    grammar: &Grammar,
+    name: &str,
+    source: &str,
+    no_header: bool,
+) -> Result<String, String> {
+    Ok(rust::RustVisitor::new(grammar, name, source, no_header)?.to_string())
+}
+
 /// Returns `true` if `body` has no visible children to recurse into: no
 /// reference to a visible non-terminal reachable from it.
 ///

@@ -43,7 +43,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Mutex;
 
-use ts_bnf_tool::dom::{Grammar, RustVisitor, resolve_field_target_kinds, visible_kinds};
+use ts_bnf_tool::dom::visitor::rust::RustVisitor;
+use ts_bnf_tool::dom::{Grammar, resolve_field_target_kinds, visible_kinds};
 use ts_bnf_tool::visitors::parse_source;
 
 /// Reads `grammar/bnf.bnf`'s raw source text.
