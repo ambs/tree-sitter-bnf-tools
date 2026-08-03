@@ -532,28 +532,34 @@ fn visit_symbol(
             .expect("symbol has content field"),
         ctx,
     )?;
+    let label = node.child_by_field_name("label").map(|label_node| {
+        label_node
+            .utf8_text(ctx.source.as_bytes())
+            .expect("valid UTF-8")
+            .trim_end_matches(':')
+            .to_string()
+    });
     let kleene = node
         .child_by_field_name("kleene")
         .as_ref()
         .map(|n| n.kind())
         .unwrap_or("");
-    let with_kleene = match kleene {
-        "plus" => OneOrMore(Box::new(symbol)),
-        "asterisk" => ZeroOrMore(Box::new(symbol)),
-        "questionMark" => Optional(Box::new(symbol)),
-        _ => symbol,
-    };
-    Ok(
-        if let Some(label_node) = node.child_by_field_name("label") {
-            let text = label_node
-                .utf8_text(ctx.source.as_bytes())
-                .expect("valid UTF-8");
-            let name = text.trim_end_matches(':').to_string();
-            Field(name, Box::new(with_kleene))
-        } else {
-            with_kleene
-        },
-    )
+    // For `+`/`*`, Field wraps the repeat — `field(name, repeat(x))` — tagging
+    // every repetition with the same field name. For `?`, Kleene wraps the
+    // Field instead — `optional(field(name, x))`, not `field(name,
+    // optional(x))` — matching the idiom tree-sitter grammars use themselves
+    // (see tree-sitter-bnf/grammar.js): the field should be entirely absent,
+    // not merely empty, when the optional symbol doesn't appear.
+    Ok(match (kleene, label) {
+        ("plus", Some(name)) => Field(name, Box::new(OneOrMore(Box::new(symbol)))),
+        ("plus", None) => OneOrMore(Box::new(symbol)),
+        ("asterisk", Some(name)) => Field(name, Box::new(ZeroOrMore(Box::new(symbol)))),
+        ("asterisk", None) => ZeroOrMore(Box::new(symbol)),
+        ("questionMark", Some(name)) => Optional(Box::new(Field(name, Box::new(symbol)))),
+        ("questionMark", None) => Optional(Box::new(symbol)),
+        (_, Some(name)) => Field(name, Box::new(symbol)),
+        (_, None) => symbol,
+    })
 }
 
 /// Extracts the precedence kind and optional level (integer or name) from a `precAnnotation` node.

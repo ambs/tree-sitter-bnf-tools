@@ -7,10 +7,11 @@ BNF_TOOL    := $(CARGO) run --quiet -p ts-bnf-tool --
 GRAMMAR_BNF := grammar/bnf.bnf
 RAILROAD    := grammar/railroad.svg
 GRAPH_PDF   := grammar/graph.pdf
+BNF_SELFCHECK_DIR := target/bnf-selfcheck
 
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish install grammar grammar-check audit
+.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish install grammar grammar-check bnf-self-check audit
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -63,6 +64,20 @@ grammar-check: ## Fail if grammar/railroad.svg or grammar/graph.pdf are stale re
 	git diff --exit-code $(RAILROAD) $(GRAPH_PDF) || \
 		(echo "grammar-check: generated files are stale — commit $(RAILROAD) and $(GRAPH_PDF)" >&2; exit 1)
 
+# Compares grammars via tree-sitter's own canonical grammar.json rather than
+# diffing generated JS text against grammar.js: that text differs in
+# formatting, comments, and arrow-function style even when the grammars are
+# structurally identical. grammar.json strips all of that away.
+bnf-self-check: $(GRAMMAR_BNF) $(PARSER_C) ## Verify grammar/bnf.bnf compiles to the same grammar as tree-sitter-bnf/grammar.js
+	@rm -rf $(BNF_SELFCHECK_DIR)
+	@mkdir -p $(BNF_SELFCHECK_DIR)
+	$(BNF_TOOL) convert $(GRAMMAR_BNF) --no-header > $(BNF_SELFCHECK_DIR)/grammar.js
+	cd $(BNF_SELFCHECK_DIR) && $(TS) generate --no-parser grammar.js
+	@python3 -c "import json; d = json.load(open('$(BNF_SELFCHECK_DIR)/src/grammar.json')); d.pop('\$$schema', None); json.dump(d, open('$(BNF_SELFCHECK_DIR)/actual.json', 'w'), indent=2, sort_keys=True)"
+	@python3 -c "import json; d = json.load(open('$(GRAMMAR_DIR)/src/grammar.json')); d.pop('\$$schema', None); json.dump(d, open('$(BNF_SELFCHECK_DIR)/expected.json', 'w'), indent=2, sort_keys=True)"
+	@diff -u $(BNF_SELFCHECK_DIR)/expected.json $(BNF_SELFCHECK_DIR)/actual.json || \
+		(echo "bnf-self-check: $(GRAMMAR_BNF) no longer compiles to the same grammar as $(GRAMMAR_DIR)/grammar.js — see diff above" >&2; exit 1)
+
 ts-version-check: ## Check that tree-sitter-cli >= TS_MIN is installed
 	@TS_VER=$$($(TS) --version 2>/dev/null | sed 's/tree-sitter //'); \
 	if [ -z "$$TS_VER" ]; then \
@@ -89,7 +104,7 @@ test: $(PARSER_C) ## Run all Rust tests
 typecheck: $(PARSER_C) ## Fast type-check without linking
 	$(CARGO) check
 
-check: fmt-check lint typecheck test test-grammar grammar-check audit ## Run all checks (fmt, lint, typecheck, tests, corpus, audit)
+check: fmt-check lint typecheck test test-grammar grammar-check bnf-self-check audit ## Run all checks (fmt, lint, typecheck, tests, corpus, audit)
 
 lint: $(PARSER_C) ## Run clippy
 	$(CARGO) clippy -- -D warnings
