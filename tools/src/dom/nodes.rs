@@ -403,6 +403,30 @@ mod tests {
     }
 
     #[test]
+    /// repeat(…) propagates the check into its inner node.
+    fn zero_or_more_nonterminal_contains_nonterminal() {
+        assert!(ZeroOrMore(Box::new(NonTerminal("a".into()))).contains_nonterminal());
+    }
+
+    #[test]
+    /// repeat1(…) propagates the check into its inner node.
+    fn one_or_more_nonterminal_contains_nonterminal() {
+        assert!(OneOrMore(Box::new(NonTerminal("a".into()))).contains_nonterminal());
+    }
+
+    #[test]
+    /// token.immediate(…) propagates the check into its inner node.
+    fn token_immediate_nonterminal_contains_nonterminal() {
+        assert!(TokenImmediate(Box::new(NonTerminal("a".into()))).contains_nonterminal());
+    }
+
+    #[test]
+    /// field(…) propagates the check into its inner node.
+    fn field_wrapping_nonterminal_contains_nonterminal() {
+        assert!(Field("f".into(), Box::new(NonTerminal("a".into()))).contains_nonterminal());
+    }
+
+    #[test]
     /// prec(…) propagates the check into its inner node.
     fn prec_wrapping_nonterminal_contains_nonterminal() {
         assert!(
