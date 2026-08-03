@@ -4,12 +4,11 @@
 # accepted by ts-bnf-tool.  It mirrors tree-sitter-bnf/grammar.js and must
 # be kept in sync with it: any grammar change must be reflected here.
 #
-# Limitations of the self-description:
-#   - Rules whose names begin with _ are hidden nodes in tree-sitter (they
-#     never appear in the concrete syntax tree).  That distinction is not
-#     representable in this dialect; they are listed as regular rules.
-#   - Field-name annotations (name: symbol) are omitted for readability.
-#     They do not affect the language, only the AST.
+# Conformance is checked automatically: `make bnf-self-check` compiles this
+# file with `ts-bnf-tool convert`, runs the result through
+# `tree-sitter generate --no-parser`, and diffs the resulting grammar.json
+# against tree-sitter-bnf/src/grammar.json — the two must be structurally
+# identical (field names, rule bodies, directives). `make check` runs this.
 #
 # Run:  ts-bnf-tool grammar/bnf.bnf
 
@@ -45,7 +44,7 @@ conflictsDirective  -> '%conflicts' conflictGroup (',' conflictGroup)* ;
 conflictGroup       -> '[' nonTerminal (',' nonTerminal)* ']' ;
 
 reservedDirective   -> '%reserved' reservedEntry (',' reservedEntry)* ;
-reservedEntry       -> nonTerminal ':' '[' (nonTerminalOrLiteral (',' nonTerminalOrLiteral)*)? ']' ;
+reservedEntry       -> set: nonTerminal ':' '[' (nonTerminalOrLiteral (',' nonTerminalOrLiteral)*)? ']' ;
 
 precedencesDirective -> '%precedences' precedenceGroup (',' precedenceGroup)* ;
 precedenceGroup      -> '[' nonTerminalOrLiteral (',' nonTerminalOrLiteral)* ']' ;
@@ -63,14 +62,14 @@ extrasItem          -> pattern | nonTerminal ;
 
 # ── Rules and bodies ─────────────────────────────────────────────────────────
 
-rule                -> nonTerminal '->' ruleBody ';' ;
+rule                -> name: nonTerminal '->' body: ruleBody ';' ;
 ruleBody            -> symbolSeq ('|' symbolSeq)* ;
-symbolSeq           -> symbol+ precAnnotation? ;
+symbolSeq           -> symbol+ prec: precAnnotation? ;
 
 ruleBodyInner       -> symbolSeqInner ('|' symbolSeqInner)* ;
 symbolSeqInner      -> symbol+ ;
 
-symbol              -> fieldLabel? _symbolContent _kleeneOp? ;
+symbol              -> label: fieldLabel? content: _symbolContent kleene: _kleeneOp? ;
 _symbolContent      -> nonTerminal
                      | _terminal
                      | subSeq
@@ -83,13 +82,13 @@ _symbolContent      -> nonTerminal
 
 # ── Grouping constructs ───────────────────────────────────────────────────────
 
-subSeq              -> '(' ruleBodyInner ')' ;
-aliasGroup          -> '(' ruleBody '=>' aliasName ')' ;
+subSeq              -> '(' body: ruleBodyInner ')' ;
+aliasGroup          -> '(' body: ruleBody '=>' alias: aliasName ')' ;
 aliasName           -> nonTerminal | literal ;
-tokenExpr           -> '<<' ruleBody '>>' ;
-tokenImmediateExpr  -> '<<!' ruleBody '>>' ;
-precGroup           -> '(' ruleBodyInner precAnnotation ')' ;
-reservedGroup       -> '(' ruleBodyInner '%reserved' nonTerminal ')' ;
+tokenExpr           -> '<<' body: ruleBody '>>' ;
+tokenImmediateExpr  -> '<<!' body: ruleBody '>>' ;
+precGroup           -> '(' body: ruleBodyInner annotation: precAnnotation ')' ;
+reservedGroup       -> '(' body: ruleBodyInner '%reserved' set: nonTerminal ')' ;
 
 # ── Kleene operators and field labels ─────────────────────────────────────────
 
@@ -101,7 +100,7 @@ questionMark        -> '?' ;
 
 # ── Precedence annotations ────────────────────────────────────────────────────
 
-precAnnotation      -> '%' precKind (integer | literal)? ;
+precAnnotation      -> '%' kind: precKind (level: integer | name: literal)? ;
 precKind            -> 'prec.dynamic' | 'prec.left' | 'prec.right' | 'prec' ;
 integer             -> /-?[0-9]+/ ;
 
@@ -111,7 +110,7 @@ _terminal           -> pattern | literal ;
 
 # Matches /…/ — a regex delimited by slashes, allowing character classes and
 # escape sequences inside.
-pattern             -> /\/([^\/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/ ;
+pattern             -> /\/([^/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/ ;
 
 # Single- or double-quoted string, forced into a single lexer token.
 # The content is copied verbatim into grammar.js as a JavaScript string

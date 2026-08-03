@@ -20,6 +20,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   [Generating a processing library](docs/tutorial/11-generating-a-library.md)
   (#210).
 
+### Fixed
+- `convert`: a symbol combining a field label with a `?` Kleene operator
+  (e.g. `name: symbol?`) now emits `optional(field("name", ...))` instead of
+  `field("name", optional(...))`, matching the idiom tree-sitter grammars
+  use themselves — the field is now absent, not merely unset, when the
+  optional symbol doesn't appear. `+`/`*` combined with a field label are
+  unaffected (#331).
+
 ## [0.5.0] - 2026-07-28
 
 ### Added

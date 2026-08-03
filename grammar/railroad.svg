@@ -45,7 +45,8 @@ svg.railroad g.labeledbox > rect {
 stroke-width: 1px;
 stroke: grey;
 stroke-dasharray: 5px;
-fill:rgba(90, 90, 150, .1);
+fill: rgb(90, 90, 150);
+fill-opacity: .1;
 }
 </style>
 <rect width="100%" height="100%" class="railroad_canvas"/>
@@ -1676,13 +1677,13 @@ literal</text>
 <g class="sequence">
 <path d=" M 10 21 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5 m 10 0 h 5"/>
 <g class="terminal">
-<rect x="35" y="10" height="22" width="340" rx="10" ry="10"/>
-<text x="205" y="26">
-/\/([^\/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/</text>
+<rect x="35" y="10" height="22" width="332" rx="10" ry="10"/>
+<text x="201" y="26">
+/\/([^/\[\\]|\[[^\]]*\]|\\.)+\/[a-z]*/</text>
 </g>
-<path d=" M 385 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
+<path d=" M 377 21 h 5 a 5 5 0 0 1 5 -5 a 5 5 0 0 1 5 5 a 5 5 0 0 1 -5 5 a 5 5 0 0 1 -5 -5"/>
 <path d=" M 25 21 h 10"/>
-<path d=" M 375 21 h 10"/>
+<path d=" M 367 21 h 10"/>
 </g>
 </g>
 </g>
