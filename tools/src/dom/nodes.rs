@@ -725,6 +725,22 @@ mod tests {
         assert!(!node.single_choice_options());
     }
 
+    #[test]
+    /// `token(…)`, `token.immediate(…)`, `field(…)`, and `alias(…)` all
+    /// propagate the check into their inner node, same as `prec(…)`.
+    fn other_annotations_wrapping_atomic_alternative_have_single_step() {
+        assert!(Token(Box::new(NonTerminal("term".into()))).single_choice_options());
+        assert!(TokenImmediate(Box::new(NonTerminal("term".into()))).single_choice_options());
+        assert!(Field("f".into(), Box::new(NonTerminal("term".into()))).single_choice_options());
+        assert!(
+            Alias(
+                Box::new(NonTerminal("term".into())),
+                Box::new(NonTerminal("label".into()))
+            )
+            .single_choice_options()
+        );
+    }
+
     // ── transparent_inner / transparent_inner_mut ───────────────────────────
 
     /// Every one of the eight transparent-wrapper variants unwraps to its
@@ -776,6 +792,28 @@ mod tests {
         assert!(
             matches!(node, Optional(inner) if matches!(*inner, NonTerminal(ref n) if n == "a"))
         );
+    }
+
+    /// Every one of the eight transparent-wrapper variants exposes its inner
+    /// node mutably, matching the immutable variant's coverage.
+    #[test]
+    fn transparent_inner_mut_unwraps_every_wrapper_variant() {
+        fn is_inner_x(inner: Option<&mut GrammarNode>) -> bool {
+            matches!(inner, Some(TerminalLiteral(s)) if s == "'x'")
+        }
+        let x = || Box::new(TerminalLiteral("'x'".into()));
+        assert!(is_inner_x(Optional(x()).transparent_inner_mut()));
+        assert!(is_inner_x(ZeroOrMore(x()).transparent_inner_mut()));
+        assert!(is_inner_x(OneOrMore(x()).transparent_inner_mut()));
+        assert!(is_inner_x(Token(x()).transparent_inner_mut()));
+        assert!(is_inner_x(TokenImmediate(x()).transparent_inner_mut()));
+        assert!(is_inner_x(Field("f".into(), x()).transparent_inner_mut()));
+        assert!(is_inner_x(
+            Prec(PrecKind::Plain, None, x()).transparent_inner_mut()
+        ));
+        assert!(is_inner_x(
+            Reserved("kw".into(), x()).transparent_inner_mut()
+        ));
     }
 
     /// `transparent_inner_mut` returns `None` for `Alias`, matching the immutable variant.

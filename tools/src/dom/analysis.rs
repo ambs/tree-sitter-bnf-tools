@@ -146,10 +146,9 @@ fn collect_first<'g>(
         // inner expression. repeat1 requires at least one occurrence, so it
         // is nullable iff the inner expression is (unusual, but correct by
         // definition).
-        _ => match node.transparent_inner() {
-            Some(inner) => collect_first(inner, first, nullable, result),
-            None => false,
-        },
+        _ => node
+            .transparent_inner()
+            .is_some_and(|inner| collect_first(inner, first, nullable, result)),
     }
 }
 
@@ -204,10 +203,9 @@ fn collect_leading_nts<'g>(
             true
         }
         GrammarNode::Alias(body, _) => collect_leading_nts(body, nullable, result),
-        _ => match node.transparent_inner() {
-            Some(inner) => collect_leading_nts(inner, nullable, result),
-            None => false,
-        },
+        _ => node
+            .transparent_inner()
+            .is_some_and(|inner| collect_leading_nts(inner, nullable, result)),
     }
 }
 
