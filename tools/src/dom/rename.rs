@@ -109,19 +109,15 @@ fn rename_node(node: &mut GrammarNode, old: &str, new: &str) {
                 rename_node(item, old, new);
             }
         }
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner) => rename_node(inner, old, new),
         GrammarNode::Alias(body, name_node) => {
             rename_node(body, old, new);
             rename_node(name_node, old, new);
         }
-        GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Field(_, inner)
-        | GrammarNode::Reserved(_, inner) => rename_node(inner, old, new),
-        _ => {}
+        _ => {
+            if let Some(inner) = node.transparent_inner_mut() {
+                rename_node(inner, old, new);
+            }
+        }
     }
 }
 
@@ -436,8 +432,9 @@ mod tests {
         assert_eq!(g.reserved_set_refs[0].name, "expr");
     }
 
-    /// `rename_node`'s `Reserved` arm has no compiler safety net (wildcard fallback) —
-    /// this is the only test guarding that the body is actually traversed.
+    /// `rename_node` reaches `Reserved` only through its `transparent_inner_mut`
+    /// catch-all, which has no compiler safety net (wildcard fallback) — this is
+    /// the only test guarding that the body is actually traversed.
     #[test]
     fn renames_nonterminal_in_reserved_body() {
         use crate::dom::GrammarNode::Reserved;

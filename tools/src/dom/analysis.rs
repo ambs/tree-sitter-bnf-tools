@@ -54,13 +54,10 @@ fn is_nullable(node: &GrammarNode, nullable: &HashSet<&str>) -> bool {
         GrammarNode::Choice(children) => children.iter().any(|c| is_nullable(c, nullable)),
         GrammarNode::NonTerminal(name) => nullable.contains(name.as_str()),
         GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => false,
-        GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner) => is_nullable(inner, nullable),
         GrammarNode::Alias(body, _) => is_nullable(body, nullable),
-        GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => is_nullable(inner, nullable),
+        _ => node
+            .transparent_inner()
+            .is_some_and(|inner| is_nullable(inner, nullable)),
     }
 }
 
@@ -140,20 +137,18 @@ fn collect_first<'g>(
             true
         }
 
-        // repeat1 / token / token.immediate are transparent to FIRST: the
-        // first token is determined solely by the inner expression.
-        // repeat1 requires at least one occurrence, so it is nullable iff the
-        // inner expression is (unusual, but correct by definition).
-        GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner) => collect_first(inner, first, nullable, result),
-
         // field, alias, prec are purely structural annotations that do not
         // change which terminal appears first.
         GrammarNode::Alias(body, _) => collect_first(body, first, nullable, result),
-        GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => collect_first(inner, first, nullable, result),
+
+        // repeat1 / token / token.immediate / field / prec / reserved are
+        // transparent to FIRST: the first token is determined solely by the
+        // inner expression. repeat1 requires at least one occurrence, so it
+        // is nullable iff the inner expression is (unusual, but correct by
+        // definition).
+        _ => node
+            .transparent_inner()
+            .is_some_and(|inner| collect_first(inner, first, nullable, result)),
     }
 }
 
@@ -207,13 +202,10 @@ fn collect_leading_nts<'g>(
             collect_leading_nts(inner, nullable, result);
             true
         }
-        GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner) => collect_leading_nts(inner, nullable, result),
         GrammarNode::Alias(body, _) => collect_leading_nts(body, nullable, result),
-        GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => collect_leading_nts(inner, nullable, result),
+        _ => node
+            .transparent_inner()
+            .is_some_and(|inner| collect_leading_nts(inner, nullable, result)),
     }
 }
 
@@ -443,15 +435,12 @@ fn collect_terminals<'g>(
                 collect_terminals(child, literals, patterns);
             }
         }
-        GrammarNode::Optional(inner)
-        | GrammarNode::ZeroOrMore(inner)
-        | GrammarNode::OneOrMore(inner)
-        | GrammarNode::Token(inner)
-        | GrammarNode::TokenImmediate(inner) => collect_terminals(inner, literals, patterns),
         GrammarNode::Alias(body, _) => collect_terminals(body, literals, patterns),
-        GrammarNode::Field(_, inner)
-        | GrammarNode::Prec(_, _, inner)
-        | GrammarNode::Reserved(_, inner) => collect_terminals(inner, literals, patterns),
+        _ => {
+            if let Some(inner) = node.transparent_inner() {
+                collect_terminals(inner, literals, patterns);
+            }
+        }
     }
 }
 
