@@ -97,15 +97,12 @@ impl GrammarNode {
                     c.collect_names(out);
                 }
             }
-            GrammarNode::Optional(inner)
-            | GrammarNode::ZeroOrMore(inner)
-            | GrammarNode::OneOrMore(inner)
-            | GrammarNode::Token(inner)
-            | GrammarNode::TokenImmediate(inner) => inner.collect_names(out),
-            GrammarNode::Field(_, inner) => inner.collect_names(out),
             GrammarNode::Alias(body, _) => body.collect_names(out),
-            GrammarNode::Prec(_, _, inner) => inner.collect_names(out),
-            GrammarNode::Reserved(_, inner) => inner.collect_names(out),
+            _ => {
+                if let Some(inner) = self.transparent_inner() {
+                    inner.collect_names(out);
+                }
+            }
         }
     }
 
@@ -117,15 +114,10 @@ impl GrammarNode {
             GrammarNode::Sequence(children) | GrammarNode::Choice(children) => {
                 children.iter().any(|c| c.contains_nonterminal())
             }
-            GrammarNode::Optional(inner)
-            | GrammarNode::ZeroOrMore(inner)
-            | GrammarNode::OneOrMore(inner)
-            | GrammarNode::Token(inner)
-            | GrammarNode::TokenImmediate(inner) => inner.contains_nonterminal(),
-            GrammarNode::Field(_, inner) => inner.contains_nonterminal(),
             GrammarNode::Alias(body, _) => body.contains_nonterminal(),
-            GrammarNode::Prec(_, _, inner) => inner.contains_nonterminal(),
-            GrammarNode::Reserved(_, inner) => inner.contains_nonterminal(),
+            _ => self
+                .transparent_inner()
+                .is_some_and(|inner| inner.contains_nonterminal()),
         }
     }
 
@@ -189,6 +181,61 @@ impl GrammarNode {
             GrammarNode::Choice(children) => children.iter().all(|c| c.is_atomic_node()),
             node if node.is_atomic_node() => true,
             _ => false,
+        }
+    }
+
+    /// Returns the inner node of a "transparent" wrapper variant — one that
+    /// doesn't change which kind(s) a traversal reaches, only how the wrapped
+    /// text is annotated (precedence, tokenization, a field label, a
+    /// reserved-word-set membership...). Every recursive walk that treats
+    /// these variants identically (just "recurse into the one child") shares
+    /// this classification rather than re-listing all eight variants itself.
+    ///
+    /// Returns `None` for every other variant: `Sequence`/`Choice` (multiple
+    /// children, not one), `NonTerminal`/`TerminalLiteral`/`TerminalPattern`
+    /// (no child at all), and `Alias` (its two children mean different
+    /// things — body vs. display name — so no single "the" inner node
+    /// applies). Callers that need to treat one of *those* differently from
+    /// the rest still match it explicitly; this only replaces the
+    /// transparent-wrapper arm they'd otherwise repeat.
+    pub fn transparent_inner(&self) -> Option<&GrammarNode> {
+        match self {
+            GrammarNode::Optional(inner)
+            | GrammarNode::ZeroOrMore(inner)
+            | GrammarNode::OneOrMore(inner)
+            | GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner)
+            | GrammarNode::Field(_, inner)
+            | GrammarNode::Prec(_, _, inner)
+            | GrammarNode::Reserved(_, inner) => Some(inner),
+            GrammarNode::Sequence(_)
+            | GrammarNode::Choice(_)
+            | GrammarNode::NonTerminal(_)
+            | GrammarNode::TerminalLiteral(_)
+            | GrammarNode::TerminalPattern(_)
+            | GrammarNode::Alias(_, _) => None,
+        }
+    }
+
+    /// Mutable counterpart of [`GrammarNode::transparent_inner`], for callers
+    /// that need to rewrite or recurse into the inner node of a transparent
+    /// wrapper in place.
+    pub fn transparent_inner_mut(&mut self) -> Option<&mut GrammarNode> {
+        match self {
+            GrammarNode::Optional(inner)
+            | GrammarNode::ZeroOrMore(inner)
+            | GrammarNode::OneOrMore(inner)
+            | GrammarNode::Token(inner)
+            | GrammarNode::TokenImmediate(inner)
+            | GrammarNode::Field(_, inner)
+            | GrammarNode::Prec(_, _, inner)
+            | GrammarNode::Reserved(_, inner) => Some(inner),
+            GrammarNode::Sequence(_)
+            | GrammarNode::Choice(_)
+            | GrammarNode::NonTerminal(_)
+            | GrammarNode::TerminalLiteral(_)
+            | GrammarNode::TerminalPattern(_)
+            | GrammarNode::Alias(_, _) => None,
         }
     }
 }
@@ -652,5 +699,68 @@ mod tests {
             ]),
         ]);
         assert!(!node.single_choice_options());
+    }
+
+    // ── transparent_inner / transparent_inner_mut ───────────────────────────
+
+    /// Every one of the eight transparent-wrapper variants unwraps to its
+    /// inner node.
+    #[test]
+    fn transparent_inner_unwraps_every_wrapper_variant() {
+        fn is_inner_x(inner: Option<&GrammarNode>) -> bool {
+            matches!(inner, Some(TerminalLiteral(s)) if s == "'x'")
+        }
+        let x = || Box::new(TerminalLiteral("'x'".into()));
+        assert!(is_inner_x(Optional(x()).transparent_inner()));
+        assert!(is_inner_x(ZeroOrMore(x()).transparent_inner()));
+        assert!(is_inner_x(OneOrMore(x()).transparent_inner()));
+        assert!(is_inner_x(Token(x()).transparent_inner()));
+        assert!(is_inner_x(TokenImmediate(x()).transparent_inner()));
+        assert!(is_inner_x(Field("f".into(), x()).transparent_inner()));
+        assert!(is_inner_x(
+            Prec(PrecKind::Plain, None, x()).transparent_inner()
+        ));
+        assert!(is_inner_x(Reserved("kw".into(), x()).transparent_inner()));
+    }
+
+    /// Every non-wrapper variant — including `Alias`, whose two children
+    /// mean different things — returns `None`.
+    #[test]
+    fn transparent_inner_none_for_non_wrapper_variants() {
+        assert!(Sequence(vec![]).transparent_inner().is_none());
+        assert!(Choice(vec![]).transparent_inner().is_none());
+        assert!(NonTerminal("a".into()).transparent_inner().is_none());
+        assert!(TerminalLiteral("'x'".into()).transparent_inner().is_none());
+        assert!(TerminalPattern("/x/".into()).transparent_inner().is_none());
+        assert!(
+            Alias(
+                Box::new(NonTerminal("a".into())),
+                Box::new(NonTerminal("b".into()))
+            )
+            .transparent_inner()
+            .is_none()
+        );
+    }
+
+    /// `transparent_inner_mut` unwraps to a mutable reference that can rewrite the inner node.
+    #[test]
+    fn transparent_inner_mut_allows_rewriting_inner_node() {
+        let mut node = Optional(Box::new(TerminalLiteral("'x'".into())));
+        if let Some(inner) = node.transparent_inner_mut() {
+            *inner = NonTerminal("a".into());
+        }
+        assert!(
+            matches!(node, Optional(inner) if matches!(*inner, NonTerminal(ref n) if n == "a"))
+        );
+    }
+
+    /// `transparent_inner_mut` returns `None` for `Alias`, matching the immutable variant.
+    #[test]
+    fn transparent_inner_mut_none_for_alias() {
+        let mut node = Alias(
+            Box::new(NonTerminal("a".into())),
+            Box::new(NonTerminal("b".into())),
+        );
+        assert!(node.transparent_inner_mut().is_none());
     }
 }
