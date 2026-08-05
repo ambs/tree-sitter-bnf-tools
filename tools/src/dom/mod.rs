@@ -10,14 +10,12 @@ mod error;
 pub mod format;
 /// Cross-reference and structural validation checks on a [`Grammar`].
 mod grammar;
+/// Renders a [`Grammar`] as a complete `grammar.js` file.
+mod grammar_js;
 /// Rule-dependency graph builder and DOT/Mermaid/Graphviz emitters.
 pub mod graph;
 /// Skeleton `highlights.scm` generator with naming-convention heuristics.
 pub mod highlights;
-/// Scaffolding for the `library` subcommand's generated crate
-/// (`Cargo.toml`/`build.rs`/`lib.rs`/`examples/walk.rs`); target-language
-/// emitters live in submodules.
-pub mod library;
 /// Core grammar node types and their Display representations.
 mod nodes;
 /// A single named grammar rule.
@@ -26,8 +24,10 @@ mod production;
 pub mod railroad;
 /// Safe mechanical rename of a rule throughout a [`Grammar`].
 pub mod rename;
-/// Renders a [`Grammar`] as a complete `grammar.js` file.
-mod scaffold;
+/// Scaffolding for the `scaffold` subcommand's generated crate
+/// (`Cargo.toml`/`build.rs`/`lib.rs`/`examples/walk.rs`); target-language
+/// emitters live in submodules.
+pub mod scaffold;
 /// Grammar shape metrics produced by `check --summary`.
 pub mod summary;
 /// Shared helpers for constructing test fixtures.
@@ -44,12 +44,12 @@ pub use diagnostic::{Diagnostic, Severity};
 pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup, ReservedEntry};
 pub use error::ParseError;
 pub use format::format_grammar;
+pub use grammar_js::{GrammarJs, run_generate};
 pub use highlights::Highlights;
-pub use library::{LibraryCrate, LibraryFile, render_library, run_library};
 pub use nodes::{GrammarNode, PrecKind, PrecLevel};
 pub use production::Production;
 pub use rename::rename_grammar;
-pub use scaffold::{Scaffold, run_generate};
+pub use scaffold::{ScaffoldCrate, ScaffoldFile, render_scaffold, run_scaffold};
 pub use summary::{FirstSetStats, GrammarSummary};
 pub use types::Grammar;
 pub use visitor::check_visitor;

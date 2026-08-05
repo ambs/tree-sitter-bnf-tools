@@ -1,27 +1,35 @@
-# Generating a processing library
+# Generating a processing scaffold
 
-`ts-bnf-tool library` scaffolds a complete, self-contained Rust crate for
+`ts-bnf-tool scaffold` scaffolds a complete, self-contained Rust crate for
 parsing and traversing a BNF-described language: the tree-sitter parser, an
 ANTLR-style `Visitor<'tree>` trait — one `visit_*` method per node kind, a
 central `visit()` dispatcher, and a `combine`-based fold so you only write
 the bodies you care about — and a runnable example. `cd` into the output
 directory and `cargo run --example walk -- <file>` works immediately, with
-no edits. This is a Rust-only feature for now; the design deliberately
-leaves room for other target languages later.
+no edits. This is a Rust-only feature for now — the subcommand's name is
+deliberately target-language-neutral, since a future target might scaffold
+a module or package instead of a crate.
 
 ```sh
-ts-bnf-tool library grammar.bnf                # crate in ./<name>
-ts-bnf-tool library -o out/decls grammar.bnf   # crate in out/decls
-ts-bnf-tool library --name decls grammar.bnf   # override the crate/grammar name
-ts-bnf-tool library --no-header grammar.bnf    # suppress generated-file comments
+ts-bnf-tool scaffold grammar.bnf                # crate in ./<name>
+ts-bnf-tool scaffold -o out/decls grammar.bnf   # crate in out/decls
+ts-bnf-tool scaffold --name decls grammar.bnf   # override the crate/grammar name
+ts-bnf-tool scaffold --no-header grammar.bnf    # suppress generated-file comments
 ```
 
 `--name` also affects wording in the generated trait's own doc comment; it
 defaults to the input filename's stem. Like `railroad` and `graph`,
-`library` runs no static checks before generating — diagnostics never gate
+`scaffold` runs no static checks before generating — diagnostics never gate
 output — but it does check that no two rules would generate the same
 `visit_*` method (see below): a grammar that fails this check is rejected
 with a clear diagnostic before anything is written to disk.
+
+Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
+`src/*`, `queries/`, and `bindings/rust/visitor.rs` are regenerated every
+time so they always track the current grammar, but `Cargo.toml`,
+`bindings/rust/lib.rs`, and `examples/walk.rs` are only ever written once —
+if they already exist, `scaffold` leaves them alone, so hand-written code
+there survives a grammar change.
 
 ## What gets generated
 
@@ -36,7 +44,7 @@ ident -> /[a-z][a-zA-Z0-9_]*/ ;
 num -> /[0-9]+/ ;
 ```
 
-`ts-bnf-tool library --name decls decls.bnf` creates a `decls/` directory:
+`ts-bnf-tool scaffold --name decls decls.bnf` creates a `decls/` directory:
 
 ```
 decls/
@@ -58,12 +66,14 @@ decls/
 
 The `grammar.js`/`queries/`/`tree-sitter.json`/`src/` files are exactly what
 `convert --generate` already produces — the real `tree-sitter generate`
-output, unchanged. `library` adds the `bindings/rust/` and `examples/`
+output, unchanged. `scaffold` adds the `bindings/rust/` and `examples/`
 directories on top:
 
 - **`bindings/rust/lib.rs`** — the parser bindings (`LANGUAGE`, `NODE_TYPES`,
   same shape as any `tree-sitter generate`-produced crate), a `pub mod
-  visitor;`, and a `parse` convenience function:
+  visitor;`, and a `parse` convenience function. This file is only ever
+  scaffolded once — it's where to add `pub mod` declarations for your own
+  hand-written `Visitor` implementations, and a rerun won't touch them:
 
   ```rust
   pub fn parse(source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Error>> {

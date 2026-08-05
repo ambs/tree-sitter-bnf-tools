@@ -14,7 +14,7 @@ use crate::util::to_camelcase;
 use super::types::Grammar;
 
 /// A wrapper that renders a [`Grammar`] as a complete `grammar.js` file.
-pub struct Scaffold<'a> {
+pub struct GrammarJs<'a> {
     /// The grammar to render.
     pub grammar: &'a Grammar,
     /// The grammar name passed to tree-sitter's `grammar({ name: … })`.
@@ -25,7 +25,7 @@ pub struct Scaffold<'a> {
     pub no_header: bool,
 }
 
-impl Scaffold<'_> {
+impl GrammarJs<'_> {
     /// Emits the generated-file header comment, unless suppressed by `no_header`.
     fn fmt_header(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.no_header {
@@ -208,7 +208,7 @@ impl Scaffold<'_> {
     }
 }
 
-impl Display for Scaffold<'_> {
+impl Display for GrammarJs<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.fmt_header(f)?;
         writeln!(f, "module.exports = grammar({{")?;
@@ -269,23 +269,23 @@ fn write_tree_sitter_json(dir: &Path, name: &str) -> Result<(), Box<dyn Error>> 
 /// Writes `grammar.js` and a skeleton `queries/highlights.scm` to the output directory,
 /// then runs `tree-sitter generate` inside it.
 pub fn run_generate(
-    scaffold: &Scaffold<'_>,
+    grammar_js: &GrammarJs<'_>,
     output_dir: Option<&str>,
 ) -> Result<(), Box<dyn Error>> {
-    let dir = resolve_output_dir(output_dir, scaffold.name);
+    let dir = resolve_output_dir(output_dir, grammar_js.name);
     fs::create_dir_all(&dir)?;
-    fs::write(dir.join("grammar.js"), scaffold.to_string())?;
+    fs::write(dir.join("grammar.js"), grammar_js.to_string())?;
     let queries_dir = dir.join("queries");
     fs::create_dir_all(&queries_dir)?;
     fs::write(
         queries_dir.join("highlights.scm"),
         Highlights {
-            grammar: scaffold.grammar,
+            grammar: grammar_js.grammar,
             no_todos: false,
         }
         .to_string(),
     )?;
-    write_tree_sitter_json(&dir, scaffold.name)?;
+    write_tree_sitter_json(&dir, grammar_js.name)?;
     let status = Command::new("tree-sitter")
         .arg("generate")
         .current_dir(&dir)
@@ -320,8 +320,8 @@ mod tests {
         );
     }
 
-    fn s<'a>(grammar: &'a Grammar, name: &'a str) -> Scaffold<'a> {
-        Scaffold {
+    fn s<'a>(grammar: &'a Grammar, name: &'a str) -> GrammarJs<'a> {
+        GrammarJs {
             grammar,
             name,
             source: "test.bnf",
@@ -345,7 +345,7 @@ mod tests {
             TerminalLiteral("'x'".into()),
             "grammar.bnf",
         )]);
-        let out = Scaffold {
+        let out = GrammarJs {
             grammar: &g,
             name: "g",
             source: "grammar.bnf",
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn scaffold_source_comment_uses_stdin_placeholder() {
         let g = Grammar::from_rules([p_named("r", TerminalLiteral("'y'".into()), "<stdin>")]);
-        let out = Scaffold {
+        let out = GrammarJs {
             grammar: &g,
             name: "g",
             source: "<stdin>",
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn scaffold_header_present_by_default() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        let out = Scaffold {
+        let out = GrammarJs {
             grammar: &g,
             name: "g",
             source: "grammar.bnf",
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn scaffold_no_header_suppresses_comment() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        let out = Scaffold {
+        let out = GrammarJs {
             grammar: &g,
             name: "g",
             source: "grammar.bnf",
@@ -584,7 +584,7 @@ mod tests {
     #[test]
     fn scaffold_header_uses_stdin_source() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        let out = Scaffold {
+        let out = GrammarJs {
             grammar: &g,
             name: "g",
             source: "<stdin>",

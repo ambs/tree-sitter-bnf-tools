@@ -1,4 +1,4 @@
-// Rust-specific templates for the `library` subcommand's generated crate:
+// Rust-specific templates for the `scaffold` subcommand's generated crate:
 // `Cargo.toml`, `bindings/rust/build.rs`, `bindings/rust/lib.rs`,
 // `examples/walk.rs`, and `.gitignore`. Everything here is plain string
 // rendering — no `Grammar` DOM involved — parameterized only by the crate's
@@ -9,39 +9,40 @@ use std::path::PathBuf;
 
 use indoc::formatdoc;
 
-use super::LibraryFile;
+use super::ScaffoldFile;
 
-/// Renders every file this target's `library` crate needs, at the paths a
-/// Rust crate expects them: `Cargo.toml`/`examples/walk.rs` are left alone
-/// on rerun (tutorial-editable), the rest are always regenerated.
-pub(super) fn render(name: &str, no_header: bool, visitor_source: String) -> Vec<LibraryFile> {
+/// Renders every file this target's generated crate needs, at the paths a
+/// Rust crate expects them: `Cargo.toml`/`bindings/rust/lib.rs`/
+/// `examples/walk.rs` are left alone on rerun (tutorial-editable), the rest
+/// are always regenerated.
+pub(super) fn render(name: &str, no_header: bool, visitor_source: String) -> Vec<ScaffoldFile> {
     vec![
-        LibraryFile {
+        ScaffoldFile {
             path: PathBuf::from("Cargo.toml"),
             content: cargo_toml(name),
             preserve_existing: true,
         },
-        LibraryFile {
+        ScaffoldFile {
             path: PathBuf::from("bindings/rust/build.rs"),
             content: build_rs(name),
             preserve_existing: false,
         },
-        LibraryFile {
+        ScaffoldFile {
             path: PathBuf::from("bindings/rust/lib.rs"),
             content: lib_rs(name, no_header),
-            preserve_existing: false,
+            preserve_existing: true,
         },
-        LibraryFile {
+        ScaffoldFile {
             path: PathBuf::from("bindings/rust/visitor.rs"),
             content: visitor_source,
             preserve_existing: false,
         },
-        LibraryFile {
+        ScaffoldFile {
             path: PathBuf::from("examples/walk.rs"),
             content: walk_example(name),
             preserve_existing: true,
         },
-        LibraryFile {
+        ScaffoldFile {
             path: PathBuf::from(".gitignore"),
             content: "/target\n".to_string(),
             preserve_existing: false,
@@ -125,6 +126,12 @@ fn build_rs(name: &str) -> String {
 /// per-language output, e.g. `tree-sitter-bnf/bindings/rust/lib.rs`), a
 /// `pub mod visitor;` for the generated `Visitor` trait, and a `parse`
 /// convenience function wrapping parser setup.
+///
+/// Only ever scaffolded once (`preserve_existing: true` in [`render`]):
+/// unlike `visitor.rs`, this file's `LANGUAGE`/`NODE_TYPES`/`parse` content
+/// never needs to change on a grammar edit, and it's exactly where the
+/// tutorial invites users to add `pub mod` declarations for their own
+/// hand-written `Visitor` implementations.
 fn lib_rs(name: &str, no_header: bool) -> String {
     let fn_name = name.replace('-', "_");
     let header = if no_header {
@@ -146,6 +153,7 @@ fn lib_rs(name: &str, no_header: bool) -> String {
         use tree_sitter_language::LanguageFn;
 
         pub mod visitor;
+        // Add `pub mod` declarations here for your own Visitor implementations.
 
         extern "C" {{
             fn tree_sitter_{fn_name}() -> *const ();
