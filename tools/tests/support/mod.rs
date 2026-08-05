@@ -70,11 +70,11 @@ pub fn generate(dir_name: &str, name: Option<&str>, bnf_source: &str) -> PathBuf
     out_dir
 }
 
-/// Runs `ts-bnf-tool library` on `bnf_source` into a freshly-cleared
+/// Runs `ts-bnf-tool scaffold` on `bnf_source` into a freshly-cleared
 /// directory named `dir_name` under the system temp dir, passing `--name`.
 /// Panics if generation does not exit successfully. Returns the output
 /// directory so callers can build/run the generated crate themselves.
-pub fn library(dir_name: &str, name: &str, bnf_source: &str) -> PathBuf {
+pub fn scaffold(dir_name: &str, name: &str, bnf_source: &str) -> PathBuf {
     let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
     std::fs::write(&bnf_path, bnf_source).unwrap();
 
@@ -82,14 +82,14 @@ pub fn library(dir_name: &str, name: &str, bnf_source: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&out_dir);
 
     let out = Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
-        .args(["library", "--name", name, "--output-dir"])
+        .args(["scaffold", "--name", name, "--output-dir"])
         .arg(&out_dir)
         .arg(&bnf_path)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "ts-bnf-tool library failed: {}",
+        "ts-bnf-tool scaffold failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     out_dir
@@ -97,7 +97,7 @@ pub fn library(dir_name: &str, name: &str, bnf_source: &str) -> PathBuf {
 
 /// Writes `input` to a file under `crate_dir` and runs `cargo run --example
 /// walk -- <that file>` with `crate_dir` as the working directory — the
-/// generated `library` crate's own example, compiled and run fresh, not a
+/// generated `scaffold` crate's own example, compiled and run fresh, not a
 /// checked-in fixture. Panics if the subprocess does not exit successfully.
 /// Returns the captured stdout.
 pub fn run_walk_example(crate_dir: &Path, input: &str) -> String {

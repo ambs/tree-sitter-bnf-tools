@@ -16,7 +16,7 @@ use super::{
 /// ANTLR-style `Visitor<'tree>` trait — one `visit_<kind>` method per
 /// visible node kind, plus a `visit()` dispatcher and a `combine`-based fold.
 ///
-/// Mirrors [`super::super::Scaffold`]'s shape: a reference to the grammar
+/// Mirrors [`super::super::GrammarJs`]'s shape: a reference to the grammar
 /// plus the same header-comment fields, so the two emitters read the same
 /// way even though one renders `grammar.js` and the other a Rust trait.
 ///
@@ -70,9 +70,9 @@ impl<'a> RustVisitor<'a> {
 
 impl RustVisitor<'_> {
     /// Emits the generated-file header comment, unless suppressed by
-    /// `no_header` — identical wording to [`super::super::Scaffold`]'s, since
+    /// `no_header` — identical wording to [`super::super::GrammarJs`]'s, since
     /// this is also generated code that shouldn't be hand-edited. Unlike
-    /// `Scaffold::fmt_header`, a blank line follows the comment: the next
+    /// `GrammarJs::fmt_header`, a blank line follows the comment: the next
     /// thing emitted is a Rust `use` statement, and comment-blank-`use` reads
     /// more naturally than comment-immediately-`use`.
     fn fmt_header(&self, f: &mut Formatter<'_>) -> fmt::Result {

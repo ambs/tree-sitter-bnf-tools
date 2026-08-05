@@ -12,7 +12,7 @@ use ts_bnf_tool::dom::analysis::{FirstTerminal, first_sets};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{
-    Diagnostic, Grammar, Highlights, ParseError, Scaffold, Severity, run_generate, run_library,
+    Diagnostic, Grammar, GrammarJs, Highlights, ParseError, Severity, run_generate, run_scaffold,
 };
 use ts_bnf_tool::util::syntax_error_diagnostics;
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
@@ -142,10 +142,11 @@ enum Subcommands {
         #[arg(long)]
         start: Option<String>,
     },
-    /// Scaffold a complete Rust library crate for processing a BNF-described
-    /// language: the tree-sitter parser, an ANTLR-style Visitor<'tree> trait,
-    /// and a runnable example that traverses a file with no code edits needed.
-    Library {
+    /// Scaffold a complete crate/module/package (Rust only, for now) for
+    /// processing a BNF-described language: the tree-sitter parser, an
+    /// ANTLR-style Visitor<'tree> trait, and a runnable example that
+    /// traverses a file with no code edits needed.
+    Scaffold {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
         /// Output directory for the generated crate (default: ./<name>)
@@ -345,17 +346,17 @@ fn run() -> Result<(), Box<dyn Error>> {
             if rules_only {
                 println!("{}", grammar);
             } else if generate {
-                let scaffold = Scaffold {
+                let grammar_js = GrammarJs {
                     grammar: &grammar,
                     name: &name,
                     source,
                     no_header,
                 };
-                run_generate(&scaffold, output_dir.as_deref())?;
+                run_generate(&grammar_js, output_dir.as_deref())?;
             } else {
                 println!(
                     "{}",
-                    Scaffold {
+                    GrammarJs {
                         grammar: &grammar,
                         name: &name,
                         source,
@@ -504,7 +505,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        Subcommands::Library {
+        Subcommands::Scaffold {
             filename,
             output_dir,
             name,
@@ -518,11 +519,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     eprintln!("{d}");
                 }
                 return Err(
-                    "grammar name is not a valid JavaScript identifier; library generation aborted"
+                    "grammar name is not a valid JavaScript identifier; scaffold generation aborted"
                         .into(),
                 );
             }
-            run_library(
+            run_scaffold(
                 &grammar,
                 &name,
                 source_label(&filename),

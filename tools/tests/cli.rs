@@ -994,26 +994,26 @@ fn highlights_output_file_flag() {
     assert!(content.contains("(string) @string"));
 }
 
-// ── library ──────────────────────────────────────────────────────────────────
+// ── scaffold ─────────────────────────────────────────────────────────────────
 
 #[test]
-/// `library`'s `check_visitor` pre-flight runs before `run_generate` (which
-/// shells out to the real `tree-sitter` CLI), so this is the one `library`
+/// `scaffold`'s `check_visitor` pre-flight runs before `run_generate` (which
+/// shells out to the real `tree-sitter` CLI), so this is the one `scaffold`
 /// scenario testable without it: exits non-zero with a diagnostic naming
 /// both offending kinds, without ever touching the filesystem or spawning
 /// `tree-sitter`.
-fn library_colliding_kind_names_exits_nonzero() {
+fn scaffold_colliding_kind_names_exits_nonzero() {
     let path = write_tmp(
-        "ts_bnf_library_collision.bnf",
+        "ts_bnf_scaffold_collision.bnf",
         indoc! {"
             fooBar -> 'x' ;
             foo_bar -> 'y' ;
         "},
     );
-    let out_dir = std::env::temp_dir().join("ts_bnf_library_collision_project");
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_collision_project");
     let _ = std::fs::remove_dir_all(&out_dir);
     let out = tool()
-        .args(["library", "--output-dir"])
+        .args(["scaffold", "--output-dir"])
         .arg(&out_dir)
         .arg(&path)
         .output()
@@ -1036,12 +1036,12 @@ fn library_colliding_kind_names_exits_nonzero() {
 /// own diagnostic before anything is written — same as `convert`'s check —
 /// rather than reaching `tree-sitter generate` and dying as a raw Node.js
 /// stack trace with a partial crate left on disk.
-fn library_invalid_grammar_name_exits_nonzero_before_writing() {
+fn scaffold_invalid_grammar_name_exits_nonzero_before_writing() {
     let path = write_tmp("my-lang.bnf", "expr -> 'x' ;\n");
-    let out_dir = std::env::temp_dir().join("ts_bnf_library_invalid_name_project");
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_invalid_name_project");
     let _ = std::fs::remove_dir_all(&out_dir);
     let out = tool()
-        .args(["library", "--output-dir"])
+        .args(["scaffold", "--output-dir"])
         .arg(&out_dir)
         .arg(&path)
         .output()
@@ -1058,39 +1058,39 @@ fn library_invalid_grammar_name_exits_nonzero_before_writing() {
     );
 }
 
-/// A tiny grammar with a field, used by the `library`-generation tests
+/// A tiny grammar with a field, used by the `scaffold`-generation tests
 /// below: enough to exercise `RustVisitor` genuinely, without needing
 /// `visitor_sample.bnf` or `grammar/bnf.bnf`'s own fixtures.
-const LIBRARY_BNF: &str = indoc! {"
+const SCAFFOLD_BNF: &str = indoc! {"
     program -> decl* ;
     decl -> target: ident '=' value: ident ';' ;
     ident -> /[a-z]+/ ;
 "};
 
 #[test]
-/// `library` writes the parser scaffold (same as `convert --generate`) plus
+/// `scaffold` writes the parser scaffold (same as `convert --generate`) plus
 /// the Rust-specific files this subcommand adds on top of it: `Cargo.toml`,
 /// `bindings/rust/build.rs`, `bindings/rust/lib.rs`,
 /// `bindings/rust/visitor.rs`, `examples/walk.rs`, `.gitignore`.
-fn library_writes_full_crate_layout() {
+fn scaffold_writes_full_crate_layout() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
     };
     if version < (0, 25) {
         return; // ABI 15 requires tree-sitter >= 0.25
     }
-    let path = write_tmp("ts_bnf_library_layout.bnf", LIBRARY_BNF);
-    let out_dir = std::env::temp_dir().join("ts_bnf_library_layout_project");
+    let path = write_tmp("ts_bnf_scaffold_layout.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_layout_project");
     let _ = std::fs::remove_dir_all(&out_dir);
     let out = tool()
-        .args(["library", "--name", "mylang", "--output-dir"])
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
         .arg(&out_dir)
         .arg(&path)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "library must succeed: {}",
+        "scaffold must succeed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
@@ -1132,25 +1132,26 @@ fn library_writes_full_crate_layout() {
 }
 
 #[test]
-/// Re-running `library` over an existing generated directory must not
-/// destroy hand-edits to the two files the tutorial invites users to edit
-/// (`Cargo.toml`, `examples/walk.rs`) — but `bindings/rust/visitor.rs` is
-/// genuinely derived from the grammar and must still be regenerated every
-/// time, since it's meant to track grammar changes automatically.
-fn library_rerun_preserves_user_edits_but_regenerates_visitor() {
+/// Re-running `scaffold` over an existing generated directory must not
+/// destroy hand-edits to the files the tutorial invites users to edit
+/// (`Cargo.toml`, `bindings/rust/lib.rs`, `examples/walk.rs`) — but
+/// `bindings/rust/visitor.rs` is genuinely derived from the grammar and must
+/// still be regenerated every time, since it's meant to track grammar
+/// changes automatically.
+fn scaffold_rerun_preserves_user_edits_but_regenerates_visitor() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
     };
     if version < (0, 25) {
         return; // ABI 15 requires tree-sitter >= 0.25
     }
-    let path = write_tmp("ts_bnf_library_rerun.bnf", LIBRARY_BNF);
-    let out_dir = std::env::temp_dir().join("ts_bnf_library_rerun_project");
+    let path = write_tmp("ts_bnf_scaffold_rerun.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_rerun_project");
     let _ = std::fs::remove_dir_all(&out_dir);
 
     let run = || {
         tool()
-            .args(["library", "--name", "mylang", "--output-dir"])
+            .args(["scaffold", "--name", "mylang", "--output-dir"])
             .arg(&out_dir)
             .arg(&path)
             .output()
@@ -1160,17 +1161,22 @@ fn library_rerun_preserves_user_edits_but_regenerates_visitor() {
     let first = run();
     assert!(
         first.status.success(),
-        "first library run must succeed: {}",
+        "first scaffold run must succeed: {}",
         String::from_utf8_lossy(&first.stderr)
     );
 
     let cargo_toml_path = out_dir.join("Cargo.toml");
+    let lib_rs_path = out_dir.join("bindings/rust/lib.rs");
     let walk_rs_path = out_dir.join("examples/walk.rs");
     let visitor_rs_path = out_dir.join("bindings/rust/visitor.rs");
 
     let mut cargo_toml = std::fs::read_to_string(&cargo_toml_path).unwrap();
     cargo_toml.push_str("\n# user-added-marker\n");
     std::fs::write(&cargo_toml_path, &cargo_toml).unwrap();
+
+    let mut lib_rs = std::fs::read_to_string(&lib_rs_path).unwrap();
+    lib_rs.push_str("\n// user-added-marker\npub mod my_visitor;\n");
+    std::fs::write(&lib_rs_path, &lib_rs).unwrap();
 
     let mut walk_rs = std::fs::read_to_string(&walk_rs_path).unwrap();
     walk_rs.push_str("\n// user-added-marker\n");
@@ -1181,7 +1187,7 @@ fn library_rerun_preserves_user_edits_but_regenerates_visitor() {
     let second = run();
     assert!(
         second.status.success(),
-        "second library run must succeed: {}",
+        "second scaffold run must succeed: {}",
         String::from_utf8_lossy(&second.stderr)
     );
 
@@ -1189,6 +1195,12 @@ fn library_rerun_preserves_user_edits_but_regenerates_visitor() {
     assert!(
         cargo_toml_after.contains("user-added-marker"),
         "Cargo.toml must not be clobbered on rerun: {cargo_toml_after}"
+    );
+
+    let lib_rs_after = std::fs::read_to_string(&lib_rs_path).unwrap();
+    assert!(
+        lib_rs_after.contains("user-added-marker") && lib_rs_after.contains("pub mod my_visitor;"),
+        "bindings/rust/lib.rs must not be clobbered on rerun: {lib_rs_after}"
     );
 
     let walk_rs_after = std::fs::read_to_string(&walk_rs_path).unwrap();
@@ -1208,18 +1220,18 @@ fn library_rerun_preserves_user_edits_but_regenerates_visitor() {
 #[test]
 /// `--no-header` suppresses the generated-file comment on the Rust files
 /// this subcommand hand-authors.
-fn library_no_header_suppresses_lib_rs_comment() {
+fn scaffold_no_header_suppresses_lib_rs_comment() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
     };
     if version < (0, 25) {
         return; // ABI 15 requires tree-sitter >= 0.25
     }
-    let path = write_tmp("ts_bnf_library_no_header.bnf", LIBRARY_BNF);
-    let out_dir = std::env::temp_dir().join("ts_bnf_library_no_header_project");
+    let path = write_tmp("ts_bnf_scaffold_no_header.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_no_header_project");
     let _ = std::fs::remove_dir_all(&out_dir);
     let out = tool()
-        .args(["library", "--no-header", "--output-dir"])
+        .args(["scaffold", "--no-header", "--output-dir"])
         .arg(&out_dir)
         .arg(&path)
         .output()
@@ -1238,14 +1250,14 @@ fn library_no_header_suppresses_lib_rs_comment() {
 /// independent direct tree walk rather than a hardcoded literal (same
 /// principle `dogfood_visitor_trait_runs_and_counts_rule_nodes` in
 /// `tests/visitor.rs` uses for the underlying derivation/emission engine).
-fn library_generated_crate_builds_and_walk_example_runs() {
+fn scaffold_generated_crate_builds_and_walk_example_runs() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
     };
     if version < (0, 25) {
         return; // ABI 15 requires tree-sitter >= 0.25
     }
-    let out_dir = support::library("ts_bnf_library_e2e_project", "e2elang", LIBRARY_BNF);
+    let out_dir = support::scaffold("ts_bnf_scaffold_e2e_project", "e2elang", SCAFFOLD_BNF);
 
     let sample = "x = y;\ny = z;\n";
     let stdout = support::run_walk_example(&out_dir, sample);
@@ -1257,7 +1269,7 @@ fn library_generated_crate_builds_and_walk_example_runs() {
     );
 }
 
-/// Independently counts the nodes `LIBRARY_BNF`'s grammar (`program ->
+/// Independently counts the nodes `SCAFFOLD_BNF`'s grammar (`program ->
 /// decl*`, `decl -> target: ident '=' value: ident ';'`) produces for
 /// `source`, by direct arithmetic over its line count rather than by
 /// re-deriving the same traversal the generated example already performs —
@@ -1271,12 +1283,12 @@ fn expected_node_count(source: &str) -> usize {
 
 #[test]
 /// The generated crate must build standing alone even when it lands inside
-/// an existing Cargo workspace (the natural "run `ts-bnf-tool library`
-/// inside my Rust project" workflow) — `dom::library::rust::cargo_toml`'s `[workspace]`
+/// an existing Cargo workspace (the natural "run `ts-bnf-tool scaffold`
+/// inside my Rust project" workflow) — `dom::scaffold::rust::cargo_toml`'s `[workspace]`
 /// table (added for this reason) stops cargo from walking up to the
 /// enclosing workspace root and rejecting the generated crate for not being
 /// listed as one of its members.
-fn library_generated_crate_builds_inside_an_enclosing_workspace() {
+fn scaffold_generated_crate_builds_inside_an_enclosing_workspace() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
     };
@@ -1284,7 +1296,7 @@ fn library_generated_crate_builds_inside_an_enclosing_workspace() {
         return; // ABI 15 requires tree-sitter >= 0.25
     }
 
-    let workspace_root = std::env::temp_dir().join("ts_bnf_library_enclosing_workspace");
+    let workspace_root = std::env::temp_dir().join("ts_bnf_scaffold_enclosing_workspace");
     let _ = std::fs::remove_dir_all(&workspace_root);
     std::fs::create_dir_all(&workspace_root).unwrap();
     std::fs::write(
@@ -1297,18 +1309,18 @@ fn library_generated_crate_builds_inside_an_enclosing_workspace() {
     .unwrap();
 
     let bnf_path = workspace_root.join("crate.bnf");
-    std::fs::write(&bnf_path, LIBRARY_BNF).unwrap();
+    std::fs::write(&bnf_path, SCAFFOLD_BNF).unwrap();
     let out_dir = workspace_root.join("generated-crate");
 
     let out = tool()
-        .args(["library", "--name", "wslang", "--output-dir"])
+        .args(["scaffold", "--name", "wslang", "--output-dir"])
         .arg(&out_dir)
         .arg(&bnf_path)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "library must succeed: {}",
+        "scaffold must succeed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 

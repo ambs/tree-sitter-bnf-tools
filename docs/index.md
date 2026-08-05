@@ -25,7 +25,7 @@ notation.
 9. [Formatting and refactoring](tutorial/09-refactoring.md) — `format`,
    `rename`
 10. [Visualising a grammar](tutorial/10-visualising.md) — `railroad`, `graph`
-11. [Generating a processing library](tutorial/11-generating-a-library.md) — `library`
+11. [Generating a processing scaffold](tutorial/11-generating-a-scaffold.md) — `scaffold`
 
 ## Guides
 
