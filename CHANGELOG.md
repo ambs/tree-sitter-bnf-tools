@@ -10,13 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scaffold` subcommand: scaffolds a complete, self-contained Rust crate for
   parsing and traversing a BNF-described language — the tree-sitter parser,
   a generated ANTLR-style `Visitor<'tree>` trait (one documented `visit_*`
-  method per visible node kind, a `visit()` dispatcher, and a
-  `combine`-based fold, with dedicated hooks for tree-sitter's `ERROR` and
-  `MISSING` recovery nodes), and a runnable `examples/walk.rs` that works
-  with no code changes. The generated crate builds standalone even inside
-  an existing Cargo workspace, and re-running `scaffold` after a grammar
-  change regenerates the parser and `Visitor` trait without touching
-  hand-edited `Cargo.toml`/`bindings/rust/lib.rs`/`examples/walk.rs`. See
+  method per visible node kind, each taking a `SourceNode<'tree>` — a
+  `tree_sitter::Node` bundled with the source text it was parsed from, so
+  overrides can call `Node::utf8_text` without threading `source` through
+  by hand — a `visit()` dispatcher, and a `combine`-based fold, with
+  dedicated hooks for tree-sitter's `ERROR` and `MISSING` recovery nodes),
+  and a runnable `examples/walk.rs` that works with no code changes. The
+  generated crate builds standalone even inside an existing Cargo
+  workspace, and re-running `scaffold` after a grammar change regenerates
+  the parser and `Visitor` trait without touching hand-edited
+  `Cargo.toml`/`bindings/rust/lib.rs`/`examples/walk.rs`. See
   [Generating a processing scaffold](docs/tutorial/11-generating-a-scaffold.md)
   (#210, #330).
 

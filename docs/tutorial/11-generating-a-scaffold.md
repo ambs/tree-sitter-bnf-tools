@@ -108,7 +108,7 @@ so its doc comment lists both:
 /// - `value` -> `expr` ([`Visitor::visit_expr`]), via `self.field_visitor(node, "value")`
 ///
 /// **Anonymous children** (not visited by default): `'='`, `';'`
-fn visit_decl(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {
+fn visit_decl(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {
     self.children_visitor(node)
 }
 ```
@@ -121,7 +121,7 @@ children" section either:
 /// Visits a `ident` node.
 ///
 /// **Leaf node**: no visible children; defaults to [`Visitor::default_result`].
-fn visit_ident(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {
+fn visit_ident(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {
     let _ = node;
     self.default_result()
 }
@@ -205,15 +205,19 @@ visit *only* its `target` field — skipping `value` entirely, so a name used
 inside an expression never gets collected as if it were a declaration. This
 can replace `examples/walk.rs`, or live alongside it as a second example:
 
+Every `visit_*` method receives a `SourceNode`, which bundles the
+`tree_sitter::Node` with the source text it was parsed from — so
+`DeclExtractor` doesn't need to store `source` itself the way a bare
+`Node<'tree>`-based visitor would; `node.source` is already there, and
+`node.utf8_text(...)` reaches `Node`'s own method through `SourceNode`'s
+`Deref` impl.
+
 ```rust
-use decls::visitor::Visitor;
-use tree_sitter::Node;
+use decls::visitor::{SourceNode, Visitor};
 
-struct DeclExtractor<'src> {
-    source: &'src str,
-}
+struct DeclExtractor;
 
-impl<'t> Visitor<'t> for DeclExtractor<'t> {
+impl<'t> Visitor<'t> for DeclExtractor {
     type Output = Vec<String>;
     type Error = std::convert::Infallible;
 
@@ -221,11 +225,11 @@ impl<'t> Visitor<'t> for DeclExtractor<'t> {
         Ok(results.into_iter().flatten().collect())
     }
 
-    fn visit_ident(&mut self, node: Node<'t>) -> Result<Vec<String>, Self::Error> {
-        Ok(vec![node.utf8_text(self.source.as_bytes()).unwrap().to_string()])
+    fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
+        Ok(vec![node.utf8_text(node.source.as_bytes()).unwrap().to_string()])
     }
 
-    fn visit_decl(&mut self, node: Node<'t>) -> Result<Vec<String>, Self::Error> {
+    fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
         self.field_visitor(node, "target")
     }
 }
@@ -233,8 +237,9 @@ impl<'t> Visitor<'t> for DeclExtractor<'t> {
 fn main() {
     let source = "x = 1;\ny = x;\n";
     let tree = decls::parse(source).expect("parse must succeed");
-    let mut extractor = DeclExtractor { source };
-    let names = extractor.visit(tree.root_node()).unwrap();
+    let mut extractor = DeclExtractor;
+    let root = SourceNode { node: tree.root_node(), source };
+    let names = extractor.visit(root).unwrap();
     assert_eq!(names, vec!["x", "y"]);
 }
 ```
@@ -246,15 +251,17 @@ declared names, not `x`'s later use as a value.
 
 ## Typed node structs
 
-The generated `Visitor` trait works directly with `tree_sitter::Node` and
-`node.kind()`/`children_by_field_name` — you get traversal and dispatch, but
-node payloads stay stringly-typed. If you'd rather have a real Rust struct
-per kind with typed field accessors, see
+The generated `Visitor` trait works with `SourceNode` — a thin wrapper
+around `tree_sitter::Node` plus the source text — and
+`node.kind()`/`children_by_field_name` reached through it — you get
+traversal and dispatch, but node payloads stay stringly-typed. If you'd
+rather have a real Rust struct per kind with typed field accessors, see
 [type-sitter](https://github.com/Jakobeha/type-sitter), which generates those
 from the same `node-types.json` the generated crate's `NODE_TYPES` constant
 also embeds. The two approaches compose: a `Visitor` implementation can
-construct type-sitter's typed wrappers from the `Node` it's handed, combining
-the generated crate's traversal skeleton with type-sitter's typed payloads.
+construct type-sitter's typed wrappers from the `Node` inside the
+`SourceNode` it's handed, combining the generated crate's traversal skeleton
+with type-sitter's typed payloads.
 
 ---
 

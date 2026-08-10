@@ -323,7 +323,7 @@ impl<'t> Visitor<'t> for RuleCounter {{
         Ok(())
     }}
 
-    fn visit_rule(&mut self, node: Node<'t>) -> Result<(), Self::Error> {{
+    fn visit_rule(&mut self, node: SourceNode<'t>) -> Result<(), Self::Error> {{
         self.count += 1;
         self.children_visitor(node)
     }}
@@ -351,7 +351,7 @@ fn main() {{
 
     let mut counter = RuleCounter {{ count: 0 }};
     counter
-        .visit(tree.root_node())
+        .visit(SourceNode {{ node: tree.root_node(), source }})
         .expect("Infallible visitor must not fail");
 
     assert_eq!(
@@ -391,7 +391,7 @@ impl<'t> Visitor<'t> for MissingSpy {
         Ok(())
     }
 
-    fn missing_visitor(&mut self, node: Node<'t>) -> Result<(), Self::Error> {
+    fn missing_visitor(&mut self, node: SourceNode<'t>) -> Result<(), Self::Error> {
         assert!(
             node.is_missing(),
             "missing_visitor must only ever be called for a MISSING node"
@@ -412,7 +412,7 @@ fn main() {
     let mut spy = MissingSpy {
         reached_missing: false,
     };
-    spy.visit(tree.root_node())
+    spy.visit(SourceNode { node: tree.root_node(), source })
         .expect("Infallible visitor must not fail");
 
     assert!(
