@@ -139,9 +139,12 @@ fn derive_ast_node_specs(grammar: &Grammar) -> IndexMap<String, AstNodeSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::GrammarNode::{Field, OneOrMore, Sequence, TerminalLiteral, ZeroOrMore};
+    use crate::dom::GrammarNode::{
+        Alias, Field, OneOrMore, Optional, Sequence, TerminalLiteral, ZeroOrMore,
+    };
     use crate::dom::test_utils::{nt, p};
     use crate::dom::visitor::collect_fields;
+    use indexmap::IndexSet;
 
     // ── collect_ast_fields ──────────────────────────────────────────────
 
@@ -186,6 +189,92 @@ mod tests {
         let body = Field("value".into(), Box::new(nt("expr")));
         let result = collect_ast_fields(&g, &body);
         assert!(!result.get("value").unwrap().multiple);
+    }
+
+    /// A field declared inside a hidden rule's body is transparent: it
+    /// still belongs to the enclosing kind, exercising the `NonTerminal`
+    /// arm's hidden-rule traversal (not just its early-return guard).
+    #[test]
+    fn collect_ast_fields_transparent_through_hidden_rule() {
+        let g = Grammar::from_rules([
+            p("kind", nt("_wrapper")),
+            p("_wrapper", Field("value".into(), Box::new(nt("expr")))),
+            p("expr", TerminalLiteral("'e'".into())),
+        ]);
+        let result = collect_ast_fields(&g, &nt("_wrapper"));
+        assert_eq!(
+            result.get("value").unwrap().target.named,
+            IndexSet::from(["expr".to_string()])
+        );
+    }
+
+    /// A mutually-recursive pair of hidden rules that never reaches a field
+    /// terminates via cycle protection with an empty result, rather than
+    /// looping forever.
+    #[test]
+    fn collect_ast_fields_cycle_protection_terminates_with_no_result() {
+        let g = Grammar::from_rules([p("_a", nt("_b")), p("_b", nt("_a"))]);
+        let result = collect_ast_fields(&g, &nt("_a"));
+        assert!(result.is_empty());
+    }
+
+    /// `optional(…)` is a transparent wrapper, same as every other
+    /// annotation: a field nested inside it still belongs to the enclosing
+    /// kind, via the generic `transparent_inner` fallback arm.
+    #[test]
+    fn collect_ast_fields_transparent_through_optional() {
+        let g = Grammar::from_rules([p("expr", TerminalLiteral("'e'".into()))]);
+        let node = Optional(Box::new(Field("value".into(), Box::new(nt("expr")))));
+        let result = collect_ast_fields(&g, &node);
+        assert_eq!(
+            result.get("value").unwrap().target.named,
+            IndexSet::from(["expr".to_string()])
+        );
+    }
+
+    /// An `Alias` whose name target is a *visible* rule is a distinct node:
+    /// the aliased body's fields are not collected.
+    #[test]
+    fn collect_ast_fields_alias_to_visible_name_contributes_no_field() {
+        let g = Grammar::from_rules([
+            p("expr", TerminalLiteral("'e'".into())),
+            p("renamed", TerminalLiteral("'r'".into())),
+        ]);
+        let node = Alias(
+            Box::new(Field("value".into(), Box::new(nt("expr")))),
+            Box::new(nt("renamed")),
+        );
+        let result = collect_ast_fields(&g, &node);
+        assert!(result.is_empty());
+    }
+
+    /// An `Alias` whose name target is itself hidden produces no node of its
+    /// own, so field collection falls through to the aliased body instead.
+    #[test]
+    fn collect_ast_fields_alias_to_hidden_name_falls_through_to_body() {
+        let g = Grammar::from_rules([p("expr", TerminalLiteral("'e'".into()))]);
+        let node = Alias(
+            Box::new(Field("value".into(), Box::new(nt("expr")))),
+            Box::new(nt("_hidden_alias")),
+        );
+        let result = collect_ast_fields(&g, &node);
+        assert_eq!(
+            result.get("value").unwrap().target.named,
+            IndexSet::from(["expr".to_string()])
+        );
+    }
+
+    /// An `Alias` to a literal target produces an anonymous node with no
+    /// fields of its own: the aliased body's fields are not collected.
+    #[test]
+    fn collect_ast_fields_alias_to_literal_contributes_no_field() {
+        let g = Grammar::from_rules([p("expr", TerminalLiteral("'e'".into()))]);
+        let node = Alias(
+            Box::new(Field("value".into(), Box::new(nt("expr")))),
+            Box::new(TerminalLiteral("'x'".into())),
+        );
+        let result = collect_ast_fields(&g, &node);
+        assert!(result.is_empty());
     }
 
     // ── derive_ast_node_specs ────────────────────────────────────────────
