@@ -1,5 +1,8 @@
 /// Semantic analyses over a parsed grammar (FIRST sets, left-recursion, …).
 pub mod analysis;
+/// Derives typed AST node/field shapes from a [`Grammar`] (per-kind fields,
+/// multiplicity, leaf status), reusing the `Visitor` derivation layer.
+pub mod ast;
 /// Structured diagnostic messages with severity levels.
 pub mod diagnostic;
 /// Types for grammar directive entries with source location.
