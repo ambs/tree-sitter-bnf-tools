@@ -1127,7 +1127,7 @@ fn scaffold_writes_full_crate_layout() {
     assert!(visitor_rs.contains("fn visit_decl("));
 
     let walk_rs = std::fs::read_to_string(out_dir.join("examples/walk.rs")).unwrap();
-    assert!(walk_rs.contains("use mylang::visitor::Visitor;"));
+    assert!(walk_rs.contains("use mylang::visitor::{SourceNode, Visitor};"));
     assert!(walk_rs.contains("fn combine(&mut self, _results: Vec<()>)"));
 }
 

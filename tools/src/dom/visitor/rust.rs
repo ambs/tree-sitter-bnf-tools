@@ -176,7 +176,7 @@ impl RustVisitor<'_> {
                 ///         Ok(())
                 ///     }}
                 ///
-                ///     fn visit_decl(&mut self, node: Node<'t>) -> Result<(), Self::Error> {{
+                ///     fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<(), Self::Error> {{
                 ///         self.0 += 1;
                 ///         self.children_visitor(node)
                 ///     }}
@@ -231,11 +231,11 @@ impl RustVisitor<'_> {
                 /// This is the default body of every non-leaf `visit_*`
                 /// method. Anonymous children (punctuation, keywords) are
                 /// silently skipped.
-                fn children_visitor(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {
+                fn children_visitor(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {
                     let mut cursor = node.walk();
                     let mut results = Vec::new();
                     for child in node.named_children(&mut cursor) {
-                        results.push(self.visit(child)?);
+                        results.push(self.visit(SourceNode { node: child, source: node.source })?);
                     }
                     self.combine(results)
                 }
@@ -249,13 +249,13 @@ impl RustVisitor<'_> {
                 /// [`Visitor::default_result`] when the field is absent.
                 fn field_visitor(
                     &mut self,
-                    node: Node<'tree>,
+                    node: SourceNode<'tree>,
                     field_name: &str,
                 ) -> Result<Self::Output, Self::Error> {
                     let mut cursor = node.walk();
                     let mut results = Vec::new();
                     for child in node.children_by_field_name(field_name, &mut cursor) {
-                        results.push(self.visit(child)?);
+                        results.push(self.visit(SourceNode { node: child, source: node.source })?);
                     }
                     self.combine(results)
                 }
@@ -280,7 +280,7 @@ impl RustVisitor<'_> {
                 /// parsed as anonymous tokens yields nothing by default.
                 /// Override this method directly (e.g. to inspect
                 /// [`Node::utf8_text`]) if that matters for your use case.
-                fn error_visitor(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {
+                fn error_visitor(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {
                     self.children_visitor(node)
                 }
             "#},
@@ -294,7 +294,7 @@ impl RustVisitor<'_> {
                 /// routes here instead. Defaults to
                 /// [`Visitor::default_result`]: treated as absent, not
                 /// recursed into.
-                fn missing_visitor(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {
+                fn missing_visitor(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {
                     let _ = node;
                     self.default_result()
                 }
@@ -306,6 +306,33 @@ impl RustVisitor<'_> {
             .collect::<Vec<_>>()
             .join("\n\n");
         writeln!(f, "{}", indent(&body, 4))
+    }
+
+    /// Emits the `SourceNode` struct.
+    fn fmt_source_node(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let body = indoc! {r#"
+            /// A tree-sitter node bundled with the source text it was parsed from.
+            ///
+            /// `Node` alone can't produce its own text ([`Node::utf8_text`] needs the
+            /// source bytes too), so every generated `visit_*`/`build_*` function takes
+            /// this instead of a bare `Node<'tree>`.
+            #[derive(Clone, Copy)]
+            pub struct SourceNode<'tree> {
+                pub node: Node<'tree>,
+                pub source: &'tree str,
+            }
+
+            /// Lets `visit_*` bodies call `Node` methods (`.kind()`, `.start_position()`,
+            /// …) directly on a `SourceNode` without unwrapping `.node` first.
+            impl<'tree> std::ops::Deref for SourceNode<'tree> {
+                type Target = Node<'tree>;
+
+                fn deref(&self) -> &Self::Target {
+                    &self.node
+                }
+            }
+        "#};
+        writeln!(f, "\n{}", indent(body.trim_end(), 4))
     }
 
     /// Emits the `visit()` dispatcher.
@@ -340,7 +367,7 @@ impl RustVisitor<'_> {
             /// whatever kind the parser expected there, so a `MISSING`
             /// node always routes to [`Visitor::missing_visitor`]
             /// regardless of what kind it reports.
-            fn visit(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {{
+            fn visit(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {{
                 if node.is_missing() {{
                     return self.missing_visitor(node);
                 }}
@@ -440,9 +467,13 @@ impl RustVisitor<'_> {
         } else {
             "self.children_visitor(node)"
         };
-        format!(
-            "{doc_comment}\nfn visit_{method_name}(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {{\n    {default_body}\n}}"
-        )
+        let body = formatdoc! {r#"
+            {doc_comment}
+            fn visit_{method_name}(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {{
+                {default_body}
+            }}
+        "#};
+        body.trim_end().to_string()
     }
 }
 
@@ -453,7 +484,8 @@ impl Display for RustVisitor<'_> {
         self.fmt_core_members(f)?;
         self.fmt_dispatcher(f)?;
         self.fmt_visit_methods(f)?;
-        writeln!(f, "}}")
+        writeln!(f, "}}")?;
+        self.fmt_source_node(f)
     }
 }
 
@@ -468,6 +500,35 @@ mod tests {
 
     fn rv<'a>(grammar: &'a Grammar, name: &'a str) -> RustVisitor<'a> {
         RustVisitor::new(grammar, name, "test.bnf", true).expect("grammar must be visitor-safe")
+    }
+
+    /// Extracts the text strictly between `pub trait Visitor<'tree> {` and
+    /// its balanced closing `}`, so tests can check the trait's own members
+    /// without depending on what the generated file emits before or after
+    /// the trait itself.
+    fn trait_body(out: &str) -> &str {
+        let marker = "pub trait Visitor<'tree> {";
+        let open = out.find(marker).expect("trait definition present") + marker.len() - 1;
+        let mut depth = 0i32;
+        for (i, c) in out[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &out[open + 1..open + i];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("trait has no matching closing brace");
+    }
+
+    #[test]
+    #[should_panic(expected = "trait has no matching closing brace")]
+    fn trait_body_panics_on_unbalanced_input() {
+        trait_body("pub trait Visitor<'tree> { unbalanced");
     }
 
     #[test]
@@ -577,11 +638,11 @@ mod tests {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = rv(&g, "g").to_string();
         for helper in [
-            "fn children_visitor(&mut self, node: Node<'tree>)",
+            "fn children_visitor(&mut self, node: SourceNode<'tree>)",
             "fn field_visitor(",
             "fn default_result(&mut self)",
-            "fn error_visitor(&mut self, node: Node<'tree>)",
-            "fn missing_visitor(&mut self, node: Node<'tree>)",
+            "fn error_visitor(&mut self, node: SourceNode<'tree>)",
+            "fn missing_visitor(&mut self, node: SourceNode<'tree>)",
         ] {
             assert!(out.contains(helper), "missing helper signature: {helper}");
         }
@@ -638,7 +699,7 @@ mod tests {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = rv(&g, "g").to_string();
         assert!(out.contains(
-            "fn visit(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {"
+            "fn visit(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {"
         ));
         let visit_pos = out.find("fn visit(&mut self,").unwrap();
         let is_missing_pos = out.find("if node.is_missing()").unwrap();
@@ -722,10 +783,18 @@ mod tests {
     }
 
     #[test]
-    fn visit_method_is_now_the_last_member_before_the_closing_brace() {
+    fn visit_a_is_the_last_member_before_the_trait_closes() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = rv(&g, "g").to_string();
-        assert!(out.trim_end().ends_with("    }\n}"), "got: {out:?}");
+        let body = trait_body(&out);
+        let last_fn = body
+            .rfind("\n    fn ")
+            .expect("trait has at least one method");
+        let last_member = &body[last_fn + 1..];
+        assert!(
+            last_member.starts_with("    fn visit_a("),
+            "last trait member: {last_member:?}"
+        );
     }
 
     #[test]
@@ -733,7 +802,7 @@ mod tests {
         let g = Grammar::from_rules([p("num", TerminalLiteral("'0'".into()))]);
         let out = rv(&g, "g").to_string();
         assert!(out.contains(
-            "fn visit_num(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {"
+            "fn visit_num(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {"
         ));
         assert!(out.contains("let _ = node;\n        self.default_result()"));
         assert!(out.contains(
@@ -819,7 +888,7 @@ mod tests {
         ]);
         let out = rv(&g, "g").to_string();
         assert!(out.contains("**Anonymous children** (not visited by default): `'('`, `')'`"));
-        assert!(!out.contains("fn visit_paren_expr(&mut self, node: Node<'tree>) -> Result<Self::Output, Self::Error> {\n    let _ = node;"));
+        assert!(!out.contains("fn visit_paren_expr(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {\n    let _ = node;"));
     }
 
     #[test]
@@ -875,7 +944,7 @@ mod tests {
             ),
         )]);
         let out = rv(&g, "g").to_string();
-        assert!(out.contains("fn visit_renamed(&mut self, node: Node<'tree>)"));
+        assert!(out.contains("fn visit_renamed(&mut self, node: SourceNode<'tree>)"));
         assert!(out.contains("**Leaf node**"));
     }
 }

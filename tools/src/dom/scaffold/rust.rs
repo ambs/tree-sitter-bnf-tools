@@ -196,7 +196,7 @@ fn walk_example(name: &str) -> String {
         //! cargo run --example walk -- <file>
         //! ```
 
-        use {crate_name}::visitor::Visitor;
+        use {crate_name}::visitor::{{SourceNode, Visitor}};
 
         /// Counts every node visited, leaves and non-leaves alike: `combine` runs
         /// exactly once per visited node, regardless of kind.
@@ -225,7 +225,7 @@ fn walk_example(name: &str) -> String {
 
             let mut counter = Counter {{ total: 0 }};
             counter
-                .visit(tree.root_node())
+                .visit(SourceNode {{ node: tree.root_node(), source: &source }})
                 .expect("Infallible visitor must not fail");
 
             println!("{{path}}: {{}} node(s)", counter.total);
