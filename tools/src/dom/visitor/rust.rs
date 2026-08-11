@@ -526,6 +526,12 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "trait has no matching closing brace")]
+    fn trait_body_panics_on_unbalanced_input() {
+        trait_body("pub trait Visitor<'tree> { unbalanced");
+    }
+
+    #[test]
     fn header_present_by_default() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = RustVisitor::new(&g, "g", "grammar.bnf", false)
