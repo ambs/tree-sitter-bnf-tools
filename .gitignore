@@ -17,3 +17,6 @@ tree-sitter-bnf/binding.gyp
 # (a freshly generated Visitor trait + a small runner, compiled via
 # `cargo build`/`cargo run --example` so it's never a stale, checked-in copy).
 tools/examples/visitor_*_harness.rs
+
+# Same idea, for tools/tests/ast.rs's compile-check tests (generated AST types).
+tools/examples/ast_*_harness.rs

@@ -20,7 +20,7 @@ mod markdown;
 pub mod rust;
 /// Language-agnostic text-shaping helpers (indentation, comment-line
 /// prefixing) shared by every target-language emitter, not just [`rust`].
-mod text;
+pub(crate) mod text;
 
 /// Returns the ordered set of node-kind names that will actually appear in a
 /// parse tree generated from `grammar`.
@@ -205,21 +205,15 @@ pub(crate) fn to_snake_case(name: &str) -> String {
 /// with `visit_`, so a collision with one of them is structurally impossible
 /// rather than merely rare — there is nothing to check.
 pub(crate) fn check_method_name_collisions(kinds: &IndexSet<String>) -> Result<(), String> {
-    let mut seen_by_suffix: IndexMap<String, &str> = IndexMap::new();
-
-    for kind in kinds {
-        let suffix = to_snake_case(kind);
-
-        if let Some(&other) = seen_by_suffix.get(&suffix) {
-            return Err(format!(
-                "kinds '{other}' and '{kind}' both generate method 'visit_{suffix}'; \
-                 rename one of the rules to avoid the clash"
-            ));
-        }
-
-        seen_by_suffix.insert(suffix, kind.as_str());
+    let items = kinds
+        .iter()
+        .map(|kind| (kind.as_str(), to_snake_case(kind)));
+    if let Some((other, kind, suffix)) = crate::util::find_first_name_collision(items) {
+        return Err(format!(
+            "kinds '{other}' and '{kind}' both generate method 'visit_{suffix}'; \
+             rename one of the rules to avoid the clash"
+        ));
     }
-
     Ok(())
 }
 

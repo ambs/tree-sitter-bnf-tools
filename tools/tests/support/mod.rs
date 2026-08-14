@@ -120,6 +120,51 @@ pub fn run_walk_example(crate_dir: &Path, input: &str) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+/// Same as [`scaffold`], but also passes `--ast-types`, so the returned
+/// directory additionally has `bindings/rust/ast.rs` and `examples/ast.rs`.
+pub fn scaffold_with_ast_types(dir_name: &str, name: &str, bnf_source: &str) -> PathBuf {
+    let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+    std::fs::write(&bnf_path, bnf_source).unwrap();
+
+    let out_dir = std::env::temp_dir().join(dir_name);
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
+        .args(["scaffold", "--name", name, "--ast-types", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "ts-bnf-tool scaffold --ast-types failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out_dir
+}
+
+/// Same as [`run_walk_example`], but for the `--ast-types` scaffold's own
+/// `examples/ast.rs` (`cargo run --example ast -- <that file>`).
+pub fn run_ast_example(crate_dir: &Path, input: &str) -> String {
+    let input_path = crate_dir.join("sample-input.txt");
+    std::fs::write(&input_path, input).unwrap();
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let out = Command::new(&cargo)
+        .args(["run", "--quiet", "--example", "ast", "--"])
+        .arg(&input_path)
+        .current_dir(crate_dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "generated crate's `cargo run --example ast` failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
 /// Writes `input` to a file under `out_dir` and runs `tree-sitter parse` on it
 /// with `out_dir` as the working directory, so the CLI picks up the grammar
 /// generated there. Panics if the parse subprocess does not exit successfully.

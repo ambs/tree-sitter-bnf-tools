@@ -22,6 +22,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Cargo.toml`/`bindings/rust/lib.rs`/`examples/walk.rs`. See
   [Generating a processing scaffold](docs/tutorial/11-generating-a-scaffold.md)
   (#210, #330).
+- `scaffold --ast-types`: generates `bindings/rust/ast.rs` alongside the
+  existing `Visitor` trait — one typed struct per grammar rule (or, for a
+  field whose value can be more than one kind, a generated enum), each with
+  a `TryFrom<SourceNode<'tree>>` impl, sharing one `BuildError` type across
+  all of them. Every generated type derives `Debug`, so `{:#?}` recursively
+  pretty-prints an entire typed tree with no per-kind code. A runnable
+  `examples/ast.rs` builds the grammar's root node and prints it, the same
+  bar `examples/walk.rs` already meets. Re-running `scaffold --ast-types`
+  regenerates `ast.rs` without touching hand-edited `examples/ast.rs`
+  (#342).
 
 ### Fixed
 - `convert`: a symbol combining a field label with a `?` Kleene operator
