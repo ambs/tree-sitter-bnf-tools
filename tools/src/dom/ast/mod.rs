@@ -10,6 +10,11 @@ use indexmap::IndexMap;
 /// complete `.rs` file containing the generated AST types.
 pub mod rust;
 
+/// `--merge-config` parsing and validation: collapsing several grammar
+/// kinds into a shared Rust `enum`, renaming a kind, or explicitly leaving
+/// a kind as the default baseline struct.
+pub mod merge;
+
 /// One kind's derived AST-struct shape.
 pub struct AstNodeSpec {
     /// The node kind
