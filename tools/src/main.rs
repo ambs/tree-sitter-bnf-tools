@@ -158,6 +158,9 @@ enum Subcommands {
         /// Suppress generated-file header comments
         #[arg(long)]
         no_header: bool,
+        /// Generate ast-types files
+        #[arg(long)]
+        ast_types: bool,
     },
     /// Pretty-print a BNF file in canonical style.
     Format {
@@ -510,6 +513,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             output_dir,
             name,
             no_header,
+            ast_types,
         } => {
             let (grammar, _) = parse_file(&filename, false)?;
             let name = grammar_name(&filename, name.as_deref());
@@ -529,6 +533,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 source_label(&filename),
                 output_dir.as_deref(),
                 no_header,
+                ast_types,
             )?;
         }
 

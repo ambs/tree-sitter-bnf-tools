@@ -1281,6 +1281,151 @@ fn expected_node_count(source: &str) -> usize {
     1 + decls * 3
 }
 
+// ── scaffold --ast-types ────────────────────────────────────────────────
+
+/// A tiny grammar with a *labeled, repeated* root field, used by the
+/// `--ast-types` scaffold tests below: `items: decl*` is exactly the shape
+/// `field_value_is_multiple` (`dom/ast/mod.rs`) was added to detect
+/// correctly (see `plans/342.3.md`, 342.3.9) — reusing it here means a
+/// regression in that fix would fail this end-to-end test too, not just
+/// the unit tests it was originally caught by.
+const SCAFFOLD_AST_BNF: &str = indoc! {"
+    program -> items: decl* ;
+    decl -> target: ident '=' value: ident ';' ;
+    ident -> /[a-z]+/ ;
+"};
+
+#[test]
+/// `scaffold --ast-types` writes `bindings/rust/ast.rs` and
+/// `examples/ast.rs` on top of the usual crate layout, adds `pub mod ast;`
+/// to `lib.rs`, and the generated crate isn't just plausible-looking text:
+/// `cargo run --example ast -- <file>` genuinely builds a typed `Program`
+/// root node (with its `items: Vec<Decl>` field populated) and
+/// pretty-prints it, proving the whole derive→emit→compile→run pipeline
+/// works for a real grammar, not just the synthetic ones the unit tests in
+/// `dom/ast/rust.rs` construct.
+fn scaffold_ast_types_writes_files_and_ast_example_runs() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_ast_types(
+        "ts_bnf_scaffold_ast_e2e_project",
+        "astlang",
+        SCAFFOLD_AST_BNF,
+    );
+
+    for relative in ["bindings/rust/ast.rs", "examples/ast.rs"] {
+        assert!(
+            out_dir.join(relative).exists(),
+            "{relative} must be created by --ast-types"
+        );
+    }
+
+    let lib_rs = std::fs::read_to_string(out_dir.join("bindings/rust/lib.rs")).unwrap();
+    assert!(lib_rs.contains("pub mod ast;"));
+
+    let stdout = support::run_ast_example(&out_dir, "x = y;\ny = z;\n");
+    assert!(stdout.contains("Program"), "{stdout}");
+    assert!(stdout.contains("items:"), "{stdout}");
+    assert!(stdout.contains("Decl"), "{stdout}");
+    assert!(stdout.contains("target:"), "{stdout}");
+    assert!(stdout.contains("Ident"), "{stdout}");
+}
+
+#[test]
+/// Without `--ast-types`, no AST-types files are written at all, and
+/// `lib.rs` has no `pub mod ast;` — the flag is genuinely opt-in, not
+/// always-on.
+fn scaffold_without_ast_types_flag_omits_ast_files() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold(
+        "ts_bnf_scaffold_no_ast_types_project",
+        "noastlang",
+        SCAFFOLD_AST_BNF,
+    );
+    assert!(!out_dir.join("bindings/rust/ast.rs").exists());
+    assert!(!out_dir.join("examples/ast.rs").exists());
+    let lib_rs = std::fs::read_to_string(out_dir.join("bindings/rust/lib.rs")).unwrap();
+    assert!(!lib_rs.contains("pub mod ast;"));
+}
+
+#[test]
+/// Re-running `scaffold --ast-types` must regenerate `bindings/rust/ast.rs`
+/// (genuinely derived from the grammar, like `visitor.rs`) while leaving
+/// hand-edits to `examples/ast.rs` alone (tutorial-editable, like
+/// `examples/walk.rs`) — same "safe to re-run" guarantee
+/// `scaffold_rerun_preserves_user_edits_but_regenerates_visitor` already
+/// covers for the non-`--ast-types` files.
+fn scaffold_ast_types_rerun_regenerates_ast_rs_but_preserves_example() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_ast_rerun.bnf", SCAFFOLD_AST_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_ast_rerun_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let run = || {
+        tool()
+            .args([
+                "scaffold",
+                "--name",
+                "mylang",
+                "--ast-types",
+                "--output-dir",
+            ])
+            .arg(&out_dir)
+            .arg(&path)
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert!(
+        first.status.success(),
+        "first scaffold --ast-types run must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let ast_rs_path = out_dir.join("bindings/rust/ast.rs");
+    let ast_example_path = out_dir.join("examples/ast.rs");
+
+    let mut ast_example = std::fs::read_to_string(&ast_example_path).unwrap();
+    ast_example.push_str("\n// user-added-marker\n");
+    std::fs::write(&ast_example_path, &ast_example).unwrap();
+
+    std::fs::write(&ast_rs_path, "GARBAGE").unwrap();
+
+    let second = run();
+    assert!(
+        second.status.success(),
+        "second scaffold --ast-types run must succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let ast_example_after = std::fs::read_to_string(&ast_example_path).unwrap();
+    assert!(
+        ast_example_after.contains("user-added-marker"),
+        "examples/ast.rs must not be clobbered on rerun: {ast_example_after}"
+    );
+
+    let ast_rs_after = std::fs::read_to_string(&ast_rs_path).unwrap();
+    assert!(
+        !ast_rs_after.contains("GARBAGE") && ast_rs_after.contains("pub struct Program {"),
+        "bindings/rust/ast.rs must still be regenerated on rerun: {ast_rs_after}"
+    );
+}
+
 #[test]
 /// The generated crate must build standing alone even when it lands inside
 /// an existing Cargo workspace (the natural "run `ts-bnf-tool scaffold`

@@ -11,6 +11,8 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::dom::ast::rust::{RustAst, pascal_case};
+
 use super::grammar_js::{GrammarJs, resolve_output_dir, run_generate};
 use super::types::Grammar;
 use super::visitor::{check_visitor, render_visitor};
@@ -55,10 +57,22 @@ pub fn render_scaffold(
     name: &str,
     source: &str,
     no_header: bool,
+    ast_types: bool,
 ) -> Result<ScaffoldCrate, String> {
     let visitor_source = render_visitor(grammar, name, source, no_header)?;
+    let ast_source = if ast_types {
+        let root_rule = pascal_case(
+            grammar
+                .root_rule()
+                .expect("grammar without rules should have been treated earlier"),
+        );
+        let ast = RustAst::new(grammar, source, no_header)?;
+        Some((ast.to_string(), root_rule))
+    } else {
+        None
+    };
     Ok(ScaffoldCrate {
-        files: rust::render(name, no_header, visitor_source),
+        files: rust::render(name, no_header, visitor_source, ast_source),
     })
 }
 
@@ -83,6 +97,7 @@ pub fn run_scaffold(
     source: &str,
     output_dir: Option<&str>,
     no_header: bool,
+    ast_types: bool,
 ) -> Result<(), Box<dyn Error>> {
     check_visitor(grammar).map_err(|msg| -> Box<dyn Error> { msg.into() })?;
 
@@ -95,7 +110,7 @@ pub fn run_scaffold(
     run_generate(&grammar_js, output_dir)?;
 
     let dir = resolve_output_dir(output_dir, name);
-    let crate_files = render_scaffold(grammar, name, source, no_header)
+    let crate_files = render_scaffold(grammar, name, source, no_header, ast_types)
         .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
     for file in crate_files.files {
         let path = dir.join(&file.path);

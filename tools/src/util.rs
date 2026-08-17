@@ -87,6 +87,28 @@ pub fn to_camelcase(name: &str) -> String {
         .collect()
 }
 
+/// Returns the first `(existing_label, new_label, generated_name)`
+/// collision among `items`, or `None` if every generated name is distinct.
+///
+/// Shared first-collision scan for "many derived names must all be
+/// distinct" checks (a grammar's `visit_<kind>` method names, a
+/// multi-shape AST enum's synthesized name, …) — callers derive their own
+/// `(label, generated_name)` pairs and keep their own error-message
+/// wording; this only owns the "seen" map and the scan itself, since what
+/// counts as a helpful message differs per caller.
+pub fn find_first_name_collision<'a>(
+    items: impl IntoIterator<Item = (&'a str, String)>,
+) -> Option<(&'a str, &'a str, String)> {
+    let mut seen: indexmap::IndexMap<String, &'a str> = indexmap::IndexMap::new();
+    for (label, name) in items {
+        if let Some(&other) = seen.get(&name) {
+            return Some((other, label, name));
+        }
+        seen.insert(name, label);
+    }
+    None
+}
+
 /// Returns the first line of `text`, char-truncated to 30 characters with a trailing '…'.
 fn snippet(text: &str) -> String {
     let mut chars = text.lines().next().unwrap_or("").chars();
@@ -188,6 +210,47 @@ mod tests {
     fn camelcase_empty_string() {
         assert_eq!(to_camelcase(""), "");
     }
+
+    // ── find_first_name_collision ──────────────────────────────────────────────
+
+    #[test]
+    fn no_collision_for_distinct_names() {
+        let items = [("a", "Alpha".to_string()), ("b", "Beta".to_string())];
+        assert!(find_first_name_collision(items).is_none());
+    }
+
+    /// Two labels producing the same generated name are reported, in
+    /// encounter order — the first-seen label first, the newly-seen one
+    /// second, plus the shared name.
+    #[test]
+    fn collision_reports_both_labels_and_the_shared_name() {
+        let items = [
+            ("fooBar", "foo_bar".to_string()),
+            ("foo_bar", "foo_bar".to_string()),
+        ];
+        let (existing, new, name) = find_first_name_collision(items).unwrap();
+        assert_eq!(existing, "fooBar");
+        assert_eq!(new, "foo_bar");
+        assert_eq!(name, "foo_bar");
+    }
+
+    /// Only the *first* collision is reported, not every one — matches
+    /// `check_method_name_collisions`'s existing "reject outright on the
+    /// first offense" behavior rather than collecting every clash.
+    #[test]
+    fn only_the_first_collision_is_reported() {
+        let items = [
+            ("a", "X".to_string()),
+            ("b", "X".to_string()),
+            ("c", "X".to_string()),
+        ];
+        let (existing, new, name) = find_first_name_collision(items).unwrap();
+        assert_eq!(existing, "a");
+        assert_eq!(new, "b");
+        assert_eq!(name, "X");
+    }
+
+    // ── strip_comments_from_source ───────────────────────────────────────────
 
     #[test]
     fn no_comments_unchanged() {

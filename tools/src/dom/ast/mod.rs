@@ -6,6 +6,10 @@ use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
+/// The Rust-specific emitter: renders the derivation in this module as a
+/// complete `.rs` file containing the generated AST types.
+pub mod rust;
+
 /// One kind's derived AST-struct shape.
 pub struct AstNodeSpec {
     /// The node kind
@@ -35,9 +39,12 @@ pub struct AstFieldSpec {
 /// (transparent through hidden/`%inline` rules, stops at a visible
 /// `NonTerminal` reference). The only new question this asks is
 /// multiplicity: a field is `multiple: true` when it's reached while inside
-/// a [`GrammarNode::ZeroOrMore`]/[`GrammarNode::OneOrMore`], or when the
-/// same field name is declared at more than one position in the body (e.g.
-/// `item (',' item)*`, both labeled `item:`).
+/// a [`GrammarNode::ZeroOrMore`]/[`GrammarNode::OneOrMore`] ancestor (e.g.
+/// `item (',' item)*`, both labeled `item:`), or when the field's own value
+/// contains one (`items: decl*`, i.e. `field('items', repeat(...))` at the
+/// tree-sitter level — the far more common way to write a list field, and
+/// the opposite nesting from the ancestor case; see
+/// [`field_value_is_multiple`]).
 fn collect_ast_fields(grammar: &Grammar, node: &GrammarNode) -> IndexMap<String, AstFieldSpec> {
     let mut out = IndexMap::new();
     collect_ast_fields_into(grammar, node, false, &mut HashSet::new(), &mut out);
@@ -64,7 +71,7 @@ fn collect_ast_fields_into(
             entry.target.named.extend(resolved.named);
             entry.target.anonymous_token |= resolved.anonymous_token;
 
-            if repeating || already_seen {
+            if repeating || already_seen || field_value_is_multiple(grammar, inner) {
                 entry.multiple = true;
             }
 
@@ -103,6 +110,60 @@ fn collect_ast_fields_into(
                 collect_ast_fields_into(grammar, inner, repeating, in_progress, out);
             }
         }
+    }
+}
+
+/// Returns `true` if `node` — a field's own value expression — can produce
+/// more than one child per match: a [`GrammarNode::ZeroOrMore`]/
+/// [`GrammarNode::OneOrMore`] sits directly along the path to its target
+/// kind, reached through the same transparent wrappers
+/// [`resolve_field_target_kinds`] already treats as "doesn't change what
+/// kind comes out" (hidden/`%inline` rule bodies, `Choice`/`Sequence`
+/// children, a hidden-named `Alias` target). Catches `items: decl*` —
+/// `field('items', repeat(...))` at the tree-sitter level — which
+/// [`collect_ast_fields_into`]'s own `repeating` ancestor flag misses,
+/// since that only catches the opposite nesting, `(items: decl)*`.
+fn field_value_is_multiple(grammar: &Grammar, node: &GrammarNode) -> bool {
+    field_value_is_multiple_into(grammar, node, &mut HashSet::new())
+}
+
+/// Recursive worker for [`field_value_is_multiple`]; `in_progress` holds the
+/// hidden/inline rule names currently being resolved, for cycle protection
+/// — a fresh set per top-level call, independent of
+/// [`collect_ast_fields_into`]'s own `in_progress`, since this answers a
+/// separate question about a single field's value, not the outer field walk.
+fn field_value_is_multiple_into(
+    grammar: &Grammar,
+    node: &GrammarNode,
+    in_progress: &mut HashSet<String>,
+) -> bool {
+    match node {
+        GrammarNode::ZeroOrMore(_) | GrammarNode::OneOrMore(_) => true,
+        GrammarNode::NonTerminal(name) => {
+            if !grammar.is_hidden_rule(name) && !grammar.is_inline_rule(name) {
+                return false;
+            }
+            if !in_progress.insert(name.clone()) {
+                return false;
+            }
+            let result = grammar.productions.get(name).is_some_and(|production| {
+                field_value_is_multiple_into(grammar, &production.body, in_progress)
+            });
+            in_progress.remove(name);
+            result
+        }
+        GrammarNode::TerminalLiteral(_) | GrammarNode::TerminalPattern(_) => false,
+        GrammarNode::Sequence(children) | GrammarNode::Choice(children) => children
+            .iter()
+            .any(|child| field_value_is_multiple_into(grammar, child, in_progress)),
+        GrammarNode::Alias(body, name) => match name.as_ref() {
+            GrammarNode::NonTerminal(n) if !grammar.is_hidden_rule(n) => false,
+            GrammarNode::NonTerminal(_) => field_value_is_multiple_into(grammar, body, in_progress),
+            _ => false,
+        },
+        _ => node
+            .transparent_inner()
+            .is_some_and(|inner| field_value_is_multiple_into(grammar, inner, in_progress)),
     }
 }
 
@@ -189,6 +250,73 @@ mod tests {
         let body = Field("value".into(), Box::new(nt("expr")));
         let result = collect_ast_fields(&g, &body);
         assert!(!result.get("value").unwrap().multiple);
+    }
+
+    /// A field *wrapping* `*` (`items: decl*`, i.e. `field('items',
+    /// repeat(...))` at the tree-sitter level) is multiple — the opposite
+    /// nesting from `collect_ast_fields_field_under_zero_or_more_is_multiple`
+    /// above, and the one the `repeating` ancestor flag alone misses (see
+    /// [`field_value_is_multiple`]).
+    #[test]
+    fn collect_ast_fields_field_wrapping_zero_or_more_is_multiple() {
+        let g = Grammar::from_rules([p("stmt", TerminalLiteral("'s'".into()))]);
+        let body = Field("items".into(), Box::new(ZeroOrMore(Box::new(nt("stmt")))));
+        let result = collect_ast_fields(&g, &body);
+        assert!(result.get("items").unwrap().multiple);
+    }
+
+    /// Same as above for `+`.
+    #[test]
+    fn collect_ast_fields_field_wrapping_one_or_more_is_multiple() {
+        let g = Grammar::from_rules([p("stmt", TerminalLiteral("'s'".into()))]);
+        let body = Field("items".into(), Box::new(OneOrMore(Box::new(nt("stmt")))));
+        let result = collect_ast_fields(&g, &body);
+        assert!(result.get("items").unwrap().multiple);
+    }
+
+    /// A field wrapping a choice where only one alternative repeats is still
+    /// multiple: `field_value_is_multiple` unions across `Choice`/`Sequence`
+    /// children rather than requiring every alternative to repeat.
+    #[test]
+    fn collect_ast_fields_field_wrapping_choice_with_one_repeating_alternative_is_multiple() {
+        let g = Grammar::from_rules([
+            p("a", TerminalLiteral("'a'".into())),
+            p("b", TerminalLiteral("'b'".into())),
+        ]);
+        let body = Field(
+            "items".into(),
+            Box::new(crate::dom::GrammarNode::Choice(vec![
+                ZeroOrMore(Box::new(nt("a"))),
+                nt("b"),
+            ])),
+        );
+        let result = collect_ast_fields(&g, &body);
+        assert!(result.get("items").unwrap().multiple);
+    }
+
+    /// A field wrapping a reference to a hidden rule whose own body repeats
+    /// is multiple: the hidden-rule indirection is transparent, same as
+    /// target-kind resolution treats it.
+    #[test]
+    fn collect_ast_fields_field_wrapping_hidden_rule_that_repeats_is_multiple() {
+        let g = Grammar::from_rules([
+            p("_group", ZeroOrMore(Box::new(nt("stmt")))),
+            p("stmt", TerminalLiteral("'s'".into())),
+        ]);
+        let body = Field("items".into(), Box::new(nt("_group")));
+        let result = collect_ast_fields(&g, &body);
+        assert!(result.get("items").unwrap().multiple);
+    }
+
+    /// A mutually-recursive pair of hidden rules that never reaches a repeat
+    /// terminates `field_value_is_multiple` via cycle protection, returning
+    /// `false` (not multiple) rather than looping forever.
+    #[test]
+    fn collect_ast_fields_field_multiplicity_cycle_protection_terminates() {
+        let g = Grammar::from_rules([p("_a", nt("_b")), p("_b", nt("_a"))]);
+        let body = Field("items".into(), Box::new(nt("_a")));
+        let result = collect_ast_fields(&g, &body);
+        assert!(!result.get("items").unwrap().multiple);
     }
 
     /// A field declared inside a hidden rule's body is transparent: it
