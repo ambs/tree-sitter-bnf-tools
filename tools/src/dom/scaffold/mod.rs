@@ -11,7 +11,8 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::dom::ast::rust::{RustAst, pascal_case};
+use crate::dom::ast::merge::{MergeConfig, check_merge_config};
+use crate::dom::ast::rust::{RustAst, check_root_rule_not_merged, kind_display_name};
 
 use super::grammar_js::{GrammarJs, resolve_output_dir, run_generate};
 use super::types::Grammar;
@@ -58,15 +59,20 @@ pub fn render_scaffold(
     source: &str,
     no_header: bool,
     ast_types: bool,
+    merge_config: Option<&MergeConfig>,
 ) -> Result<ScaffoldCrate, String> {
     let visitor_source = render_visitor(grammar, name, source, no_header)?;
     let ast_source = if ast_types {
-        let root_rule = pascal_case(
+        // `kind_display_name`, not bare `pascal_case`: a `passthrough`
+        // entry can rename the root rule's own struct, and `examples/ast.rs`
+        // must `use` it under the name it's actually declared under.
+        let root_rule = kind_display_name(
             grammar
                 .root_rule()
                 .expect("grammar without rules should have been treated earlier"),
+            merge_config,
         );
-        let ast = RustAst::new(grammar, source, no_header)?;
+        let ast = RustAst::new(grammar, source, no_header, merge_config)?;
         Some((ast.to_string(), root_rule))
     } else {
         None
@@ -98,8 +104,14 @@ pub fn run_scaffold(
     output_dir: Option<&str>,
     no_header: bool,
     ast_types: bool,
+    merge_config: Option<&MergeConfig>,
 ) -> Result<(), Box<dyn Error>> {
     check_visitor(grammar).map_err(|msg| -> Box<dyn Error> { msg.into() })?;
+    if let Some(config) = merge_config {
+        check_merge_config(grammar, config).map_err(|msg| -> Box<dyn Error> { msg.into() })?;
+        check_root_rule_not_merged(grammar, config)
+            .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
+    }
 
     let grammar_js = GrammarJs {
         grammar,
@@ -110,7 +122,7 @@ pub fn run_scaffold(
     run_generate(&grammar_js, output_dir)?;
 
     let dir = resolve_output_dir(output_dir, name);
-    let crate_files = render_scaffold(grammar, name, source, no_header, ast_types)
+    let crate_files = render_scaffold(grammar, name, source, no_header, ast_types, merge_config)
         .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
     for file in crate_files.files {
         let path = dir.join(&file.path);

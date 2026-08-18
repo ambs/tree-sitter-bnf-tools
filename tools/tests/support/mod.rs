@@ -143,6 +143,38 @@ pub fn scaffold_with_ast_types(dir_name: &str, name: &str, bnf_source: &str) -> 
     out_dir
 }
 
+/// Same as [`scaffold_with_ast_types`], but also writes `merge_config_toml`
+/// to a temp file and passes `--merge-config <path>`.
+pub fn scaffold_with_merge_config(
+    dir_name: &str,
+    name: &str,
+    bnf_source: &str,
+    merge_config_toml: &str,
+) -> PathBuf {
+    let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+    std::fs::write(&bnf_path, bnf_source).unwrap();
+    let config_path = std::env::temp_dir().join(format!("{dir_name}.merge.toml"));
+    std::fs::write(&config_path, merge_config_toml).unwrap();
+
+    let out_dir = std::env::temp_dir().join(dir_name);
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"))
+        .args(["scaffold", "--name", name, "--ast-types", "--merge-config"])
+        .arg(&config_path)
+        .arg("--output-dir")
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "ts-bnf-tool scaffold --ast-types --merge-config failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out_dir
+}
+
 /// Same as [`run_walk_example`], but for the `--ast-types` scaffold's own
 /// `examples/ast.rs` (`cargo run --example ast -- <that file>`).
 pub fn run_ast_example(crate_dir: &Path, input: &str) -> String {

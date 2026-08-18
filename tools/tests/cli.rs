@@ -1335,6 +1335,115 @@ fn scaffold_ast_types_writes_files_and_ast_example_runs() {
     assert!(stdout.contains("Ident"), "{stdout}");
 }
 
+/// A grammar for `--merge-config` end-to-end testing (342.5.8): a
+/// `program` root with an `items:` field whose target set is exactly the
+/// three loop-kind choice merged below (Rule 2 — reuses `enum Loop`
+/// directly), plus a `doc:` field targeting a `passthrough`-renamed
+/// `comment` kind.
+const SCAFFOLD_MERGE_BNF: &str = indoc! {"
+    program -> items: (for_statement | while_statement | repeat_statement)* doc: comment ;
+    for_statement -> 'for' ;
+    while_statement -> 'while' ;
+    repeat_statement -> 'repeat' ;
+    comment -> /#[^\\n]*/ ;
+"};
+
+/// Merges the three loop kinds into `enum Loop`, and renames `comment` to
+/// `DocComment` — the config `SCAFFOLD_MERGE_BNF` is written against.
+const SCAFFOLD_MERGE_CONFIG_TOML: &str = indoc! {r#"
+    [[merge]]
+    target = "Loop"
+    from = ["for_statement", "while_statement", "repeat_statement"]
+
+    [[passthrough]]
+    kind = "comment"
+    target = "DocComment"
+"#};
+
+#[test]
+/// `scaffold --ast-types --merge-config <path>` end-to-end: the generated
+/// `bindings/rust/ast.rs` has the merge-generated `pub enum Loop` (with its
+/// `#[allow(private_interfaces)]`) and the `passthrough`-renamed
+/// `DocComment`, and does *not* expose any of the three merged-away kinds'
+/// structs as `pub` — then, matching the bar
+/// `scaffold_ast_types_writes_files_and_ast_example_runs` already holds
+/// plain `--ast-types` to, `cargo run --example ast` on the generated crate
+/// genuinely builds and runs against real parsed input, proving the full
+/// CLI-to-compiled-crate path works, not just that the emitted text looks
+/// plausible.
+fn scaffold_merge_config_writes_enum_and_hides_merged_structs() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_merge_config(
+        "ts_bnf_scaffold_merge_config_e2e_project",
+        "mergelang",
+        SCAFFOLD_MERGE_BNF,
+        SCAFFOLD_MERGE_CONFIG_TOML,
+    );
+
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("#[allow(private_interfaces)]\n#[derive(Debug)]\npub enum Loop {"));
+    assert!(ast_rs.contains("pub struct DocComment {"));
+    assert!(!ast_rs.contains("pub struct ForStatement {"));
+    assert!(!ast_rs.contains("pub struct WhileStatement {"));
+    assert!(!ast_rs.contains("pub struct RepeatStatement {"));
+    assert!(!ast_rs.contains("pub struct Comment {"));
+
+    let stdout = support::run_ast_example(&out_dir, "for while repeat #a comment\n");
+    assert!(stdout.contains("Program"), "{stdout}");
+    assert!(stdout.contains("ForStatement("), "{stdout}");
+    assert!(stdout.contains("WhileStatement("), "{stdout}");
+    assert!(stdout.contains("RepeatStatement("), "{stdout}");
+    assert!(stdout.contains("DocComment"), "{stdout}");
+}
+
+#[test]
+/// An invalid `--merge-config` (a kind name with a typo) exits non-zero
+/// before any file is written — mirrors
+/// `scaffold_colliding_kind_names_exits_nonzero`'s gating pattern, closing
+/// the loop on 342.5.6's `check_merge_config` call actually running before
+/// `run_generate`/any file write, not just that it's wired up to parse.
+fn scaffold_merge_config_invalid_exits_nonzero_before_writing() {
+    let bnf_path = write_tmp(
+        "ts_bnf_scaffold_merge_config_invalid.bnf",
+        SCAFFOLD_MERGE_BNF,
+    );
+    let config_path = write_tmp(
+        "ts_bnf_scaffold_merge_config_invalid.toml",
+        indoc! {r#"
+            [[merge]]
+            target = "Loop"
+            from = ["bogus_statement", "while_statement"]
+        "#},
+    );
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_merge_config_invalid_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = tool()
+        .args([
+            "scaffold",
+            "--ast-types",
+            "--merge-config",
+            config_path.to_str().unwrap(),
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        !out_dir.exists(),
+        "nothing should be written when merge-config validation fails first"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("bogus_statement"), "{stderr}");
+}
+
 #[test]
 /// Without `--ast-types`, no AST-types files are written at all, and
 /// `lib.rs` has no `pub mod ast;` — the flag is genuinely opt-in, not
