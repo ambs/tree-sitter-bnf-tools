@@ -32,6 +32,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bar `examples/walk.rs` already meets. Re-running `scaffold --ast-types`
   regenerates `ast.rs` without touching hand-edited `examples/ast.rs`
   (#342).
+- `scaffold --ast-types --merge-config <path>`: collapses several grammar
+  kinds into one Rust `enum` via a `merge` entry, or renames a single
+  kind's generated type via a `passthrough` entry, driven by a TOML config
+  file validated against the grammar before anything is written (#342).
 
 ### Fixed
 - `convert`: a symbol combining a field label with a `?` Kleene operator

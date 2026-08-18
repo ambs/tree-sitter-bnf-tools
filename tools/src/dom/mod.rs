@@ -43,6 +43,7 @@ mod types;
 /// emitters live in submodules.
 pub mod visitor;
 
+pub use ast::merge::{MergeConfig, parse_merge_config};
 pub use diagnostic::{Diagnostic, Severity};
 pub use directive::{ConflictGroup, DirectiveItem, NameOrLiteral, PrecedenceGroup, ReservedEntry};
 pub use error::ParseError;

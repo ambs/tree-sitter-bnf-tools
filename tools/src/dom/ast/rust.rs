@@ -1,4 +1,5 @@
 use crate::dom::FieldTargetKinds;
+use crate::dom::ast::merge::{MergeConfig, MergeEntry};
 use crate::dom::ast::{AstFieldSpec, AstNodeSpec};
 use crate::dom::{
     Grammar, ast::derive_ast_node_specs, visitor::text::indent, visitor::to_snake_case,
@@ -21,10 +22,18 @@ pub struct RustAst<'a> {
     source: &'a str,
     /// When `true`, suppress the generated-file header comment.
     no_header: bool,
-    /// Enum name for each distinct multi-shape target-kind set, keyed by
-    /// the sorted kind names — see "Resolved: multi-shape enum naming"
-    /// below. Built once, here, not recomputed per field.
-    multi_shape_names: IndexMap<Vec<String>, String>,
+    /// Rust type name registered for each distinct multi-shape target-kind
+    /// set, keyed by the sorted kind names — see "Resolved: multi-shape
+    /// enum naming" below and [`ShapeName`]. Built once, here, not
+    /// recomputed per field.
+    multi_shape_names: IndexMap<Vec<String>, ShapeName>,
+    /// The validated `--merge-config`, if any. `None` emits every kind's
+    /// Stage-A struct as `pub`, under its default derived name, unchanged
+    /// from phase 3. `Some` marks any kind claimed by a `merge` entry's
+    /// `from` list as non-`pub` (see [`kind_is_merged_away`]), renames a
+    /// `passthrough`-claimed kind's struct (see [`kind_display_name`]), and
+    /// emits one `pub enum {target}` per `merge` entry ([`fmt_structs`]).
+    merge_config: Option<&'a MergeConfig>,
 }
 
 impl<'a> RustAst<'a> {
@@ -37,13 +46,21 @@ impl<'a> RustAst<'a> {
     ///   (`<stdin>` for stdin).
     /// - `no_header`: when `true`, suppresses the generated-file header
     ///   comment.
-    pub fn new(grammar: &'a Grammar, source: &'a str, no_header: bool) -> Result<Self, String> {
-        let multi_shape_names = build_multi_shape_names(grammar)?;
+    /// - `merge_config`: the validated `--merge-config`, if any — see the
+    ///   `merge_config` field's own doc comment.
+    pub fn new(
+        grammar: &'a Grammar,
+        source: &'a str,
+        no_header: bool,
+        merge_config: Option<&'a MergeConfig>,
+    ) -> Result<Self, String> {
+        let multi_shape_names = build_multi_shape_names(grammar, merge_config)?;
         Ok(Self {
             grammar,
             source,
             no_header,
             multi_shape_names,
+            merge_config,
         })
     }
 }
@@ -163,23 +180,45 @@ impl RustAst<'_> {
         writeln!(f, "{}", body)
     }
 
-    /// Builds one kind's full declaration + `impl`: [`fmt_struct_decl`]
-    /// (using `self.multi_shape_names` to resolve multi-shape field
-    /// types), then [`fmt_struct_try_from`] — which, unlike
+    /// Builds one kind's full declaration + `impl`: resolves the Rust
+    /// struct name once — [`kind_display_name`], a `passthrough` entry's
+    /// `target` override if one claims `kind`, else `pascal_case(kind)` —
+    /// and whether it should be `pub` ([`kind_is_merged_away`]: a kind
+    /// claimed by a `merge` entry is emitted private, so nothing outside
+    /// the generated crate can construct or name it directly, while
+    /// `enum {Target}`'s variant still wraps it and reuses this same
+    /// `TryFrom` impl unchanged — see `plans/342.5.md`). Both are passed to
+    /// [`fmt_struct_decl`] (using `self.multi_shape_names` to resolve
+    /// multi-shape field types) and [`fmt_struct_try_from`], which, unlike
     /// [`fmt_multi_shape_enum`]'s `try_from` half, already returns its own
-    /// complete `impl` block at one consistent scale, so no `indent()`
-    /// step is needed here.
+    /// complete `impl` block at one consistent scale, so no `indent()` step
+    /// is needed here.
     fn fmt_struct(&self, kind: &str, spec: &AstNodeSpec) -> String {
-        let decl = fmt_struct_decl(kind, spec, &self.multi_shape_names);
-        let try_from = fmt_struct_try_from(kind, spec);
+        let struct_name = kind_display_name(kind, self.merge_config);
+        let is_pub = !kind_is_merged_away(kind, self.merge_config);
+        let decl = fmt_struct_decl(
+            &struct_name,
+            kind,
+            spec,
+            is_pub,
+            &self.multi_shape_names,
+            self.merge_config,
+        );
+        let try_from = fmt_struct_try_from(&struct_name, kind, spec);
         format!("{decl}\n{try_from}")
     }
 
     /// Emits every generated struct/impl pair ([`fmt_struct`], one per kind
     /// in `derive_ast_node_specs`'s output) followed by every generated
-    /// multi-shape enum/impl pair ([`fmt_multi_shape_enum`], one per entry
-    /// in `self.multi_shape_names`) — the last of the five blocks `Display`
-    /// assembles the generated file from.
+    /// multi-shape enum/impl pair ([`fmt_multi_shape_enum`] — one per
+    /// [`ShapeName::Generated`] entry in `self.multi_shape_names`, plus one
+    /// per `merge_config` `merge` entry (342.5.4): both are "one enum, one
+    /// variant per kind, `TryFrom` dispatching on `node.node.kind()`", so a
+    /// `merge` entry reuses the same renderer directly rather than a
+    /// separate one. A [`ShapeName::MergeTarget`] entry is *not* rendered
+    /// here — it names a shape whose kind set exactly matches some `merge`
+    /// entry's own `from`, so that entry's own render (below) already
+    /// covers it; rendering both would declare the same `enum` name twice.
     fn fmt_structs(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let specs = derive_ast_node_specs(self.grammar);
         let structs = specs
@@ -187,13 +226,26 @@ impl RustAst<'_> {
             .map(|(node, spec)| self.fmt_struct(node, spec))
             .collect::<Vec<_>>()
             .join("\n");
-        let enums = self
+        let mut enums = self
             .multi_shape_names
             .iter()
-            .map(|(shape_key, shape_name)| fmt_multi_shape_enum(shape_key, shape_name))
-            .collect::<Vec<_>>()
-            .join("\n");
-        writeln!(f, "{}\n{}", structs, enums)
+            .filter_map(|(shape_key, shape_name)| match shape_name {
+                ShapeName::Generated(name) => {
+                    Some(fmt_multi_shape_enum(shape_key, name, self.merge_config))
+                }
+                ShapeName::MergeTarget(_) => None,
+            })
+            .collect::<Vec<_>>();
+        if let Some(config) = self.merge_config {
+            for entry in &config.merge {
+                enums.push(fmt_multi_shape_enum(
+                    &entry.from,
+                    &entry.target,
+                    self.merge_config,
+                ));
+            }
+        }
+        writeln!(f, "{}\n{}", structs, enums.join("\n"))
     }
 }
 
@@ -220,15 +272,30 @@ fn shape_key(target: &FieldTargetKinds) -> Vec<String> {
 }
 
 /// Builds one kind's struct declaration: a `` /// `{kind}` node. `` doc
-/// comment, then `pub struct <PascalKind> { ... }` with `pragma: Pragma`
-/// first, followed by one field per entry in `spec.fields`, each typed via
-/// [`field_rust_type`].
+/// comment, then `struct {struct_name} { ... }` — `pub` unless `is_pub` is
+/// `false`, in which case an `#[allow(dead_code)]` also precedes
+/// `#[derive(Debug)]`, since a non-`pub` struct's fields are no longer
+/// exempt from the `dead_code` lint the way a `pub` one's are (confirmed
+/// against `rustc`; see `plans/342.5.md`). An `#[allow(private_interfaces)]`
+/// is also added whenever any of `spec.fields` directly references a
+/// merged-away kind ([`field_directly_references_merged_kind`]) — such a
+/// field's type is that kind's own (non-`pub`) struct, referenced directly
+/// rather than through its merge entry's enum (see
+/// [`field_rust_type`]/[`merge_entry_for_shape`] for why: widening it to
+/// the enum would let the field hold a value the grammar can never actually
+/// produce there). `pragma: Pragma` comes first, followed by one field per
+/// entry in `spec.fields`, each typed via [`field_rust_type`].
+/// `struct_name` is resolved by the caller ([`RustAst::fmt_struct`]) rather
+/// than derived here, so a `passthrough` rename only needs to change that
+/// one call site.
 fn fmt_struct_decl(
+    struct_name: &str,
     kind: &str,
     spec: &AstNodeSpec,
-    multi_shape_names: &IndexMap<Vec<String>, String>,
+    is_pub: bool,
+    multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
+    merge_config: Option<&MergeConfig>,
 ) -> String {
-    let struct_name = pascal_case(kind);
     let mut fields = vec!["    pub pragma: Pragma,".to_string()];
 
     fields.extend(
@@ -238,7 +305,7 @@ fn fmt_struct_decl(
                 format!(
                     "    pub {}: {},",
                     f,
-                    field_rust_type(f_spec, multi_shape_names)
+                    field_rust_type(f_spec, multi_shape_names, merge_config)
                 )
             })
             .collect::<Vec<String>>(),
@@ -249,11 +316,27 @@ fn fmt_struct_decl(
     }
 
     let fields_text = fields.join("\n");
+    let vis = if is_pub { "pub " } else { "" };
+    let dead_code_allow = if is_pub {
+        String::new()
+    } else {
+        "#[allow(dead_code)]\n".to_string()
+    };
+    let private_interfaces_allow = if is_pub
+        && spec
+            .fields
+            .values()
+            .any(|f| field_directly_references_merged_kind(f, merge_config))
+    {
+        "#[allow(private_interfaces)]\n".to_string()
+    } else {
+        String::new()
+    };
 
     formatdoc! {r#"
         /// `{kind}` node.
-        #[derive(Debug)]
-        pub struct {struct_name} {{
+        {dead_code_allow}{private_interfaces_allow}#[derive(Debug)]
+        {vis}struct {struct_name} {{
         {fields_text}
         }}
     "#}
@@ -264,15 +347,21 @@ fn fmt_struct_decl(
 /// includes the `"$token"` sentinel ([`shape_kinds`]), then a `match` on
 /// `node.node.kind()` with one arm per real kind delegating to that kind's
 /// own `TryFrom`, falling through to `BuildError::UnexpectedKind` for any
-/// other kind.
-fn fmt_multi_shape_enum_try_from(shape: &[String], name: &str) -> String {
+/// other kind. Each variant's payload type goes through
+/// [`kind_display_name`], so a `passthrough`-renamed kind's variant still
+/// names the type it's actually declared under.
+fn fmt_multi_shape_enum_try_from(
+    shape: &[String],
+    name: &str,
+    merge_config: Option<&MergeConfig>,
+) -> String {
     let (clean_shape, has_token) = shape_kinds(shape);
     let match_arms = clean_shape
         .iter()
         .map(|kind| {
             format!(
                 "        \"{kind}\" => Ok({name}::{}(node.try_into()?)),",
-                pascal_case(kind)
+                kind_display_name(kind, merge_config)
             )
         })
         .collect::<Vec<_>>()
@@ -315,15 +404,25 @@ fn shape_kinds(shape: &[String]) -> (Vec<&String>, bool) {
 }
 
 /// Builds one multi-shape enum's declaration: `pub enum {name} { ... }`
-/// with one `{PascalKind}({PascalKind})` variant per real kind in `shape`
-/// ([`shape_kinds`]), plus a trailing `Token(String)` variant when `shape`
-/// includes the `"$token"` sentinel.
-fn fmt_multi_shape_enum_decl(shape: &[String], name: &str) -> String {
+/// with one `{Variant}({Variant})` variant per real kind in `shape`
+/// ([`shape_kinds`], each name via [`kind_display_name`] so a
+/// `passthrough`-renamed kind's variant matches the name it's actually
+/// declared under), plus a trailing `Token(String)` variant when `shape`
+/// includes the `"$token"` sentinel. Gets `#[allow(private_interfaces)]`
+/// whenever any real kind in `shape` is merged-away ([`kind_is_merged_away`])
+/// — true for every merge-entry-driven call ([`RustAst::fmt_structs`]) by
+/// construction, and sometimes true for an ordinary phase-3 multi-shape
+/// enum that happens to partially overlap a `merge` entry.
+fn fmt_multi_shape_enum_decl(
+    shape: &[String],
+    name: &str,
+    merge_config: Option<&MergeConfig>,
+) -> String {
     let (clean_shape, has_token) = shape_kinds(shape);
     let mut fields = clean_shape
         .iter()
         .map(|s| {
-            let n = pascal_case(s);
+            let n = kind_display_name(s, merge_config);
             format!("    {}({}),", n, n)
         })
         .collect::<Vec<String>>();
@@ -331,8 +430,16 @@ fn fmt_multi_shape_enum_decl(shape: &[String], name: &str) -> String {
         fields.push("    Token(String),".to_string());
     }
     let fields_lines = fields.join("\n");
+    let private_interfaces_allow = if clean_shape
+        .iter()
+        .any(|kind| kind_is_merged_away(kind, merge_config))
+    {
+        "#[allow(private_interfaces)]\n"
+    } else {
+        ""
+    };
     formatdoc! {r#"
-        #[derive(Debug)]
+        {private_interfaces_allow}#[derive(Debug)]
         pub enum {name} {{
         {fields_lines}
         }}
@@ -378,24 +485,36 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
     }
 }
 
-/// The Rust type text for one field: the multi-shape enum name for a
-/// multi-target field, the single target kind's own struct name, or
-/// `String` for a bare anonymous token - wrapped in `Vec<...>` if the
-/// field is `multiple`
+/// The Rust type text for one field: a `merge` entry's own `target` name
+/// when the field's full target set exactly matches that entry's `from`
+/// ([`merge_entry_for_shape`] — this case is lossless, since the field's
+/// possible kinds and the entry's variant kinds are then identical), else
+/// the registered multi-shape enum name for a multi-target field, else the
+/// single target kind's own name — [`kind_display_name`], so a
+/// `passthrough`-renamed kind is referenced under its actual declared name
+/// — else `String` for a bare anonymous token — wrapped in `Vec<...>` if
+/// the field is `multiple`.
 fn field_rust_type(
     field: &AstFieldSpec,
-    multi_shape_names: &IndexMap<Vec<String>, String>,
+    multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
+    merge_config: Option<&MergeConfig>,
 ) -> String {
-    let type_name = if field.target.named.len() > 1
+    let type_name = if let Some(entry) = merge_entry_for_shape(&field.target, merge_config) {
+        entry.target.clone()
+    } else if field.target.named.len() > 1
         || (!field.target.named.is_empty() && field.target.anonymous_token)
     {
         let key_shape = shape_key(&field.target);
         multi_shape_names
             .get(&key_shape)
-            .cloned()
+            .map(ShapeName::name)
             .expect("shape was registered by build_multi_shape_names")
+            .to_string()
     } else if field.target.named.len() == 1 && !field.target.anonymous_token {
-        pascal_case(field.target.named.first().expect("array length is one"))
+        kind_display_name(
+            field.target.named.first().expect("array length is one"),
+            merge_config,
+        )
     } else if field.target.named.is_empty() && field.target.anonymous_token {
         "String".to_string()
     } else {
@@ -409,19 +528,161 @@ fn field_rust_type(
     }
 }
 
-/// Computes the Rust enum name to use for each distinct "multi-shape"
+/// Whether `kind` is claimed by some `merge` entry's `from` list in
+/// `merge_config` — such a kind's Stage-A struct is still emitted (so
+/// `enum {Target}`'s variant can wrap it and reuse its `TryFrom` impl
+/// unchanged), just without `pub` ([`fmt_struct_decl`]'s `is_pub`):
+/// nothing outside the generated crate should construct or name it
+/// directly. `merge_config: None` (no `--merge-config` given) means no
+/// kind is ever merged away.
+fn kind_is_merged_away(kind: &str, merge_config: Option<&MergeConfig>) -> bool {
+    merge_config.is_some_and(|config| {
+        config
+            .merge
+            .iter()
+            .any(|entry| entry.from.iter().any(|from_kind| from_kind == kind))
+    })
+}
+
+/// The Rust type name a reference to `kind` should use: a `passthrough`
+/// entry's `target` override if `merge_config` claims `kind` that way,
+/// otherwise `pascal_case(kind)`. Every call site that names a *reference*
+/// to an existing kind (as opposed to synthesizing a brand-new enum name)
+/// routes through this — [`RustAst::fmt_struct`]'s own struct name,
+/// [`field_rust_type`]'s single-target branch, and each multi-shape enum
+/// variant's name/payload type — so a `passthrough` rename never leaves a
+/// stale reference to the kind's default derived name anywhere else in the
+/// generated file.
+pub(crate) fn kind_display_name(kind: &str, merge_config: Option<&MergeConfig>) -> String {
+    merge_config
+        .and_then(|config| config.passthrough.iter().find(|entry| entry.kind == kind))
+        .map(|entry| entry.target.clone())
+        .unwrap_or_else(|| pascal_case(kind))
+}
+
+/// The `merge` entry, if any, whose `from` set exactly equals `target`'s
+/// named-kind set — a field whose entire resolved target matches one merge
+/// entry precisely should reuse that entry's own `enum` rather than
+/// declaring/registering a redundant multi-shape enum for the same shape;
+/// this case is lossless, since the field's possible kinds and the entry's
+/// variant kinds are then identical. `check_merge_config` already
+/// guarantees no kind is claimed by more than one `merge` entry, so at most
+/// one entry can ever match — no ambiguity to resolve here. Returns `None`
+/// for any target with an anonymous-token component, or an empty target —
+/// a `merge` entry's `from` is always purely named kinds.
+fn merge_entry_for_shape<'a>(
+    target: &FieldTargetKinds,
+    merge_config: Option<&'a MergeConfig>,
+) -> Option<&'a MergeEntry> {
+    if target.anonymous_token || target.named.is_empty() {
+        return None;
+    }
+    merge_config.and_then(|config| {
+        config.merge.iter().find(|entry| {
+            entry.from.len() == target.named.len()
+                && entry.from.iter().all(|kind| target.named.contains(kind))
+        })
+    })
+}
+
+/// Whether `field`'s Rust type is a merged-away kind's own (non-`pub`)
+/// struct, referenced directly rather than through that kind's merge
+/// entry's enum — true only for a field pinned to exactly one merged-away
+/// kind whose full target does *not* exactly match some merge entry's
+/// `from` set (that case is [`merge_entry_for_shape`]'s job instead, and
+/// widening it to the enum here would let the field hold a value the
+/// grammar can never actually produce there — see `plans/342.5.md`). A
+/// `pub` struct with such a field needs `#[allow(private_interfaces)]` on
+/// its own declaration ([`fmt_struct_decl`]), since the field's declared
+/// type is otherwise a private type reachable through a `pub` item.
+fn field_directly_references_merged_kind(
+    field: &AstFieldSpec,
+    merge_config: Option<&MergeConfig>,
+) -> bool {
+    if field.target.anonymous_token || field.target.named.len() != 1 {
+        return false;
+    }
+    if merge_entry_for_shape(&field.target, merge_config).is_some() {
+        return false;
+    }
+    let kind = field.target.named.first().expect("length checked above");
+    kind_is_merged_away(kind, merge_config)
+}
+
+/// Rejects a `merge_config` whose `grammar`'s own root rule is claimed by a
+/// `merge` entry. The scaffolded `examples/ast.rs` needs one concrete,
+/// nameable, constructible root type (`use {crate}::ast::{RootKind};`); a
+/// merged-away kind's struct is neither nameable (private) nor a good
+/// substitute (its merge entry's enum could hold any of the entry's other
+/// kinds too — the same precision-loss `field_directly_references_merged_kind`
+/// avoids for ordinary fields, but there's no field here to fall back to
+/// referencing the private struct directly). Called from `run_scaffold`
+/// right after `check_merge_config`, before any files are written — same
+/// gating pattern `check_visitor` already uses.
+pub(crate) fn check_root_rule_not_merged(
+    grammar: &Grammar,
+    merge_config: &MergeConfig,
+) -> Result<(), String> {
+    let Some(root) = grammar.root_rule() else {
+        return Ok(());
+    };
+    if kind_is_merged_away(root, Some(merge_config)) {
+        return Err(format!(
+            "grammar's root rule '{root}' is claimed by a `merge` entry; the scaffolded \
+             example needs a concrete, nameable root type, so the root rule cannot be merged \
+             away — remove it from that entry's `from` list, or use `passthrough` instead"
+        ));
+    }
+    Ok(())
+}
+
+/// The Rust type name registered for one distinct multi-shape target-kind
+/// set (see [`build_multi_shape_names`]).
+#[derive(Debug)]
+enum ShapeName {
+    /// A phase-3-generated sum-type enum, declared once by
+    /// [`fmt_multi_shape_enum`] from [`RustAst::fmt_structs`]'s own
+    /// multi-shape-enum loop.
+    Generated(String),
+    /// This shape's kind set exactly matches a `merge` entry's own `from`
+    /// set ([`merge_entry_for_shape`]) — reuses that entry's `target` name
+    /// instead of declaring a redundant `enum` for the same shape; the
+    /// entry's own enum, rendered once from `RustAst::fmt_structs`'s
+    /// merge-entry loop, already covers it.
+    MergeTarget(String),
+}
+
+impl ShapeName {
+    /// The Rust name this entry resolves to, regardless of which variant.
+    fn name(&self) -> &str {
+        match self {
+            ShapeName::Generated(name) | ShapeName::MergeTarget(name) => name,
+        }
+    }
+}
+
+/// Computes the Rust type name to use for each distinct "multi-shape"
 /// field-target-kind set found anywhere in `grammar` — a field whose value
 /// can be more than one kind (or a kind plus a bare token) needs a
 /// generated sum-type enum, and two fields with the *same* possible-kinds
-/// set reuse the *same* enum rather than each getting their own. Naming
-/// preference, per shape: if every field sharing it has the same name, use
+/// set reuse the *same* enum rather than each getting their own. A shape
+/// whose kind set exactly matches some `merge` entry's own `from` set
+/// ([`merge_entry_for_shape`]) reuses that entry's own `target` enum
+/// instead of synthesizing a new [`ShapeName::Generated`] one — that
+/// entry's enum, rendered separately, already covers it. Otherwise, naming
+/// preference per shape: if every field sharing it has the same name, use
 /// that name (PascalCased); otherwise fall back to a name built from the
 /// shape's own kind names. Finally, validates that every name produced
-/// this way — plus every real kind's own struct name, since both live as
-/// top-level Rust type names in the same generated file — is distinct,
-/// returning the first collision found as `Err` (see
-/// [`find_first_name_collision`]).
-fn build_multi_shape_names(grammar: &Grammar) -> Result<IndexMap<Vec<String>, String>, String> {
+/// this way — plus every real kind's own name ([`kind_display_name`], so a
+/// `passthrough`-renamed kind is checked under the name it actually
+/// declares), plus every `merge`/`passthrough` entry's own `target` name —
+/// since all of these live as top-level Rust type names in the same
+/// generated file, is distinct, returning the first collision found as
+/// `Err` (see [`find_first_name_collision`]).
+fn build_multi_shape_names(
+    grammar: &Grammar,
+    merge_config: Option<&MergeConfig>,
+) -> Result<IndexMap<Vec<String>, ShapeName>, String> {
     let mut out = IndexMap::new();
     let ast_node_specs = derive_ast_node_specs(grammar);
 
@@ -442,27 +703,66 @@ fn build_multi_shape_names(grammar: &Grammar) -> Result<IndexMap<Vec<String>, St
 
     // compute names
     for (shape, fields) in known_shapes {
-        let name = compute_name(&shape, &fields);
-        out.insert(shape, name);
+        let (clean_shape, has_token) = shape_kinds(&shape);
+        let target = FieldTargetKinds {
+            named: clean_shape.into_iter().cloned().collect(),
+            anonymous_token: has_token,
+        };
+        let shape_name = match merge_entry_for_shape(&target, merge_config) {
+            Some(entry) => ShapeName::MergeTarget(entry.target.clone()),
+            None => ShapeName::Generated(compute_name(&shape, &fields)),
+        };
+        out.insert(shape, shape_name);
     }
 
     // Every generated struct/enum name must be distinct within the file:
-    // each grammar kind gets its own `struct <Name>`, and each multi-shape
-    // enum named above gets its own `enum <Name>` — if any two of these
-    // produce the same name, the generated file won't compile. Collect a
-    // (description, generated name) pair from both sources and look for a
-    // repeated name.
+    // each grammar kind gets its own `struct <Name>` (or `passthrough`
+    // rename), each phase-3-generated multi-shape enum gets its own `enum
+    // <Name>`, and each `merge` entry's own `target` name is also a
+    // top-level Rust type name — if any two of these produce the same
+    // name, the generated file won't compile. Collect a (description,
+    // generated name) pair from every source and look for a repeated name.
+    // A `ShapeName::MergeTarget` shape is skipped: its name is
+    // *intentionally* identical to its merge entry's own name, registered
+    // separately below — including it again would report a false
+    // collision against itself. A `passthrough`-claimed kind is *not*
+    // registered separately either: `kind_display_name` below already
+    // resolves it to its `passthrough.target`, so a second entry for the
+    // same target name would collide with itself.
     let mut all_names: Vec<(String, String)> = Vec::new();
 
+    let passthrough_target = |kind: &str| -> Option<&str> {
+        merge_config.and_then(|config| {
+            config
+                .passthrough
+                .iter()
+                .find(|entry| entry.kind == kind)
+                .map(|entry| entry.target.as_str())
+        })
+    };
     for kind in ast_node_specs.keys() {
-        let description = format!("kind '{kind}'");
-        let generated_name = pascal_case(kind);
+        let description = match passthrough_target(kind) {
+            Some(target) => format!("passthrough entry '{kind}' -> '{target}'"),
+            None => format!("kind '{kind}'"),
+        };
+        let generated_name = kind_display_name(kind, merge_config);
         all_names.push((description, generated_name));
     }
 
-    for (shape, name) in &out {
-        let description = format!("shape [{}]", shape.join(", "));
-        all_names.push((description, name.clone()));
+    for (shape, shape_name) in &out {
+        if let ShapeName::Generated(name) = shape_name {
+            let description = format!("shape [{}]", shape.join(", "));
+            all_names.push((description, name.clone()));
+        }
+    }
+
+    if let Some(config) = merge_config {
+        for entry in &config.merge {
+            all_names.push((
+                format!("merge target '{}'", entry.target),
+                entry.target.clone(),
+            ));
+        }
     }
 
     let items = all_names
@@ -470,8 +770,8 @@ fn build_multi_shape_names(grammar: &Grammar) -> Result<IndexMap<Vec<String>, St
         .map(|(description, name)| (description.as_str(), name.clone()));
     if let Some((existing, new, name)) = find_first_name_collision(items) {
         return Err(format!(
-            "{existing} and {new} both generate '{name}'; rename one of the \
-             rules (or its field) to avoid the clash"
+            "{existing} and {new} both generate '{name}'; rename one of them (a grammar \
+             rule/field, or the `--merge-config` entry naming it) to avoid the clash"
         ));
     }
 
@@ -522,13 +822,15 @@ pub(crate) fn pascal_case(word: &str) -> String {
 }
 
 /// Builds one kind's full `impl<'tree> TryFrom<SourceNode<'tree>> for
-/// {PascalKind}` block: `let pragma = Pragma::from(node);` first, then one
+/// {struct_name}` block: `let pragma = Pragma::from(node);` first, then one
 /// construction statement per `spec.fields` entry ([`field_try_from`]),
 /// then `let text = node.text()?.to_string();` if `spec.is_leaf`, and
-/// finally `Ok({PascalKind} { pragma, ... })` naming every field built
-/// above.
-fn fmt_struct_try_from(kind: &str, spec: &AstNodeSpec) -> String {
-    let name = pascal_case(kind);
+/// finally `Ok({struct_name} { pragma, ... })` naming every field built
+/// above. `struct_name` is resolved by the caller ([`RustAst::fmt_struct`]),
+/// same as [`fmt_struct_decl`] — the two must always agree on the type
+/// they're both describing, so neither derives it independently.
+fn fmt_struct_try_from(struct_name: &str, kind: &str, spec: &AstNodeSpec) -> String {
+    let name = struct_name;
     let mut fields_try_from = spec
         .fields
         .iter()
@@ -561,10 +863,18 @@ fn fmt_struct_try_from(kind: &str, spec: &AstNodeSpec) -> String {
 /// `impl<'tree> TryFrom<SourceNode<'tree>> for {name} { type Error =
 /// BuildError; ... }` wrapping [`fmt_multi_shape_enum_try_from`]'s bare
 /// `fn try_from` (re-indented one level via [`indent`] to sit correctly
-/// inside the `impl` body).
-fn fmt_multi_shape_enum(shape: &[String], name: &str) -> String {
-    let enum_text = fmt_multi_shape_enum_decl(shape, name);
-    let impl_text = indent(&fmt_multi_shape_enum_try_from(shape, name), 4);
+/// inside the `impl` body). Reused directly for a `merge` entry's own enum
+/// (342.5.4, called from [`RustAst::fmt_structs`] with `shape = &entry.from`
+/// and `name = &entry.target`) — a per-kind merge entry and a per-field
+/// multi-shape target are structurally the same thing: one enum, one
+/// variant per kind, `TryFrom` dispatching on `node.node.kind()`.
+fn fmt_multi_shape_enum(
+    shape: &[String],
+    name: &str,
+    merge_config: Option<&MergeConfig>,
+) -> String {
+    let enum_text = fmt_multi_shape_enum_decl(shape, name, merge_config);
+    let impl_text = indent(&fmt_multi_shape_enum_try_from(shape, name, merge_config), 4);
 
     formatdoc! {r#"
         {enum_text}
@@ -580,12 +890,23 @@ fn fmt_multi_shape_enum(shape: &[String], name: &str) -> String {
 mod tests {
     use super::*;
     use crate::dom::GrammarNode::{Choice, Field, TerminalLiteral, TerminalPattern, ZeroOrMore};
+    use crate::dom::ast::merge::{MergeConfig, MergeEntry, PassthroughEntry};
     use crate::dom::test_utils::{nt, p};
 
     /// Builds a `RustAst` with `no_header: true`, for tests that don't care
     /// about the header comment.
     fn ra<'a>(grammar: &'a Grammar, source: &'a str) -> RustAst<'a> {
-        RustAst::new(grammar, source, true).expect("grammar must be ast-safe")
+        RustAst::new(grammar, source, true, None).expect("grammar must be ast-safe")
+    }
+
+    /// Same as [`ra`], but with an explicit `merge_config` — for tests
+    /// exercising [`kind_is_merged_away`]'s effect on struct privacy.
+    fn ra_with_merge<'a>(
+        grammar: &'a Grammar,
+        source: &'a str,
+        merge_config: &'a MergeConfig,
+    ) -> RustAst<'a> {
+        RustAst::new(grammar, source, true, Some(merge_config)).expect("grammar must be ast-safe")
     }
 
     // ── top-level assembly (fmt_header / fmt_pragma / fmt_node_helpers /
@@ -594,7 +915,7 @@ mod tests {
     #[test]
     fn header_present_by_default() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        let out = RustAst::new(&g, "grammar.bnf", false)
+        let out = RustAst::new(&g, "grammar.bnf", false, None)
             .expect("grammar must be ast-safe")
             .to_string();
         let version = env!("CARGO_PKG_VERSION");
@@ -701,7 +1022,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "a field always resolves to at least one target kind")]
     fn field_rust_type_panics_on_empty_target() {
-        field_rust_type(&AstFieldSpec::default(), &IndexMap::new());
+        field_rust_type(&AstFieldSpec::default(), &IndexMap::new(), None);
     }
 
     #[test]
@@ -726,9 +1047,9 @@ mod tests {
             p("num", TerminalPattern("/[0-9]+/".into())),
             p("str", TerminalPattern("/\"[^\"]*\"/".into())),
         ]);
-        let names = build_multi_shape_names(&g).expect("no name collisions");
+        let names = build_multi_shape_names(&g, None).expect("no name collisions");
         assert_eq!(names.len(), 1, "one shape shared by both fields: {names:?}");
-        assert_eq!(names.values().next().unwrap(), "Value");
+        assert_eq!(names.values().next().unwrap().name(), "Value");
     }
 
     #[test]
@@ -748,9 +1069,9 @@ mod tests {
             p("num", TerminalPattern("/[0-9]+/".into())),
             p("str", TerminalPattern("/\"[^\"]*\"/".into())),
         ]);
-        let names = build_multi_shape_names(&g).expect("no name collisions");
+        let names = build_multi_shape_names(&g, None).expect("no name collisions");
         assert_eq!(names.len(), 1);
-        assert_eq!(names.values().next().unwrap(), "NumStr");
+        assert_eq!(names.values().next().unwrap().name(), "NumStr");
     }
 
     #[test]
@@ -759,7 +1080,7 @@ mod tests {
             p("decl", Field("value".into(), Box::new(nt("expr")))),
             p("expr", TerminalLiteral("'e'".into())),
         ]);
-        let names = build_multi_shape_names(&g).expect("no name collisions");
+        let names = build_multi_shape_names(&g, None).expect("no name collisions");
         assert!(names.is_empty());
     }
 
@@ -774,7 +1095,7 @@ mod tests {
             p("a", TerminalLiteral("'a'".into())),
             p("b", TerminalLiteral("'b'".into())),
         ]);
-        let err = build_multi_shape_names(&g).unwrap_err();
+        let err = build_multi_shape_names(&g, None).unwrap_err();
         assert!(err.contains("Value"), "error should name 'Value': {err}");
     }
 
@@ -794,7 +1115,7 @@ mod tests {
             p("c", TerminalLiteral("'c'".into())),
             p("d", TerminalLiteral("'d'".into())),
         ]);
-        let err = build_multi_shape_names(&g).unwrap_err();
+        let err = build_multi_shape_names(&g, None).unwrap_err();
         assert!(err.contains("shape [a, b]"), "{err}");
         assert!(err.contains("shape [c, d]"), "{err}");
     }
@@ -835,6 +1156,302 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains(".child_by_field(\"value\")"));
         assert!(out.contains("BuildError::MissingField { kind: \"decl\", field: \"value\" }"));
+    }
+
+    // ── merge-config privacy (kind_is_merged_away / fmt_struct_decl) ────
+
+    /// A grammar with two kinds, one of which a `MergeConfig` claims via a
+    /// `merge` entry — used across the tests below.
+    fn merge_grammar_and_config() -> (Grammar, MergeConfig) {
+        let g = Grammar::from_rules([
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p("while_statement", TerminalLiteral("'w'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        (g, config)
+    }
+
+    /// A kind claimed by a `merge` entry is emitted as a private struct
+    /// (no `pub`), not the `pub struct` phase 3 emits by default.
+    #[test]
+    fn merged_kind_struct_is_not_pub() {
+        let (g, config) = merge_grammar_and_config();
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(!out.contains("pub struct ForStatement {"));
+        assert!(out.contains("struct ForStatement {"));
+    }
+
+    /// A merged-away struct's `#[allow(dead_code)]` precedes
+    /// `#[derive(Debug)]`, directly above the (non-`pub`) struct
+    /// declaration — confirmed against `rustc` in `plans/342.5.md` as
+    /// necessary once the struct itself is no longer `pub`.
+    #[test]
+    fn merged_kind_struct_has_allow_dead_code() {
+        let (g, config) = merge_grammar_and_config();
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("#[allow(dead_code)]\n#[derive(Debug)]\nstruct ForStatement {"));
+    }
+
+    /// A merged-away kind's `TryFrom` impl is unaffected by privacy — `impl`
+    /// blocks carry no visibility modifier in Rust, so phase 3's
+    /// `fmt_struct_try_from` output is reused completely unchanged.
+    #[test]
+    fn merged_kind_try_from_impl_unaffected_by_privacy() {
+        let (g, config) = merge_grammar_and_config();
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for ForStatement {"));
+        assert!(out.contains("Ok(ForStatement { pragma, text })"));
+    }
+
+    /// A kind no `merge` entry claims stays `pub`, even when `merge_config`
+    /// is `Some` and claims a *different* kind.
+    #[test]
+    fn unclaimed_kind_with_merge_config_present_stays_pub() {
+        let g = Grammar::from_rules([
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p("comment", TerminalLiteral("'c'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("pub struct Comment {"));
+        assert!(!out.contains("#[allow(dead_code)]\n#[derive(Debug)]\nstruct Comment {"));
+    }
+
+    // ── merge-config enum emission (342.5.4) ─────────────────────────────
+
+    /// The full worked `Loop` example from `plans/342.5.md`: three kinds
+    /// merged into one `pub enum`, each variant wrapping that kind's own
+    /// (now-private) struct and reusing its unchanged `TryFrom` impl.
+    #[test]
+    fn merge_entry_emits_pub_enum_with_variant_per_kind_and_try_from_dispatch() {
+        let g = Grammar::from_rules([
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p("while_statement", TerminalLiteral("'w'".into())),
+            p("repeat_statement", TerminalLiteral("'r'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec![
+                    "for_statement".to_string(),
+                    "while_statement".to_string(),
+                    "repeat_statement".to_string(),
+                ],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = ra_with_merge(&g, "g", &config).to_string();
+
+        assert!(!out.contains("pub struct ForStatement {"));
+        assert!(!out.contains("pub struct WhileStatement {"));
+        assert!(!out.contains("pub struct RepeatStatement {"));
+
+        assert!(out.contains("#[allow(private_interfaces)]\n#[derive(Debug)]\npub enum Loop {"));
+        assert!(out.contains("ForStatement(ForStatement),"));
+        assert!(out.contains("WhileStatement(WhileStatement),"));
+        assert!(out.contains("RepeatStatement(RepeatStatement),"));
+
+        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for Loop {"));
+        assert!(out.contains("\"for_statement\" => Ok(Loop::ForStatement(node.try_into()?)),"));
+        assert!(out.contains("\"while_statement\" => Ok(Loop::WhileStatement(node.try_into()?)),"));
+        assert!(
+            out.contains("\"repeat_statement\" => Ok(Loop::RepeatStatement(node.try_into()?)),")
+        );
+        assert!(out.contains("expected: \"Loop\","));
+
+        // Each merged kind's own `TryFrom` is phase 3's unchanged output.
+        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for ForStatement {"));
+        assert!(out.contains("Ok(ForStatement { pragma, text })"));
+    }
+
+    // ── passthrough (342.5.5) ─────────────────────────────────────────────
+
+    /// A `passthrough` entry renames a kind's generated type, staying
+    /// `pub` and otherwise unchanged from phase 3's ordinary rendering.
+    #[test]
+    fn passthrough_renames_struct_and_try_from_target_stays_pub() {
+        let g = Grammar::from_rules([p("comment", TerminalLiteral("'c'".into()))]);
+        let config = MergeConfig {
+            merge: vec![],
+            passthrough: vec![PassthroughEntry {
+                kind: "comment".to_string(),
+                target: "DocComment".to_string(),
+            }],
+            ignore: vec![],
+        };
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("pub struct DocComment {"));
+        assert!(!out.contains("struct Comment {"));
+        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for DocComment {"));
+        assert!(out.contains("Ok(DocComment { pragma, text })"));
+    }
+
+    // ── field-type resolution gap fix (342.5.13) ─────────────────────────
+
+    /// Rule 1: a field elsewhere in the grammar whose sole target is a
+    /// `passthrough`-renamed kind gets that kind's *renamed* type, never
+    /// its stale default-derived name.
+    #[test]
+    fn field_referencing_passthrough_renamed_kind_uses_renamed_type() {
+        let g = Grammar::from_rules([
+            p("comment", TerminalLiteral("'c'".into())),
+            p("decl", Field("doc".into(), Box::new(nt("comment")))),
+        ]);
+        let config = MergeConfig {
+            merge: vec![],
+            passthrough: vec![PassthroughEntry {
+                kind: "comment".to_string(),
+                target: "DocComment".to_string(),
+            }],
+            ignore: vec![],
+        };
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("pub doc: DocComment,"));
+        assert!(!out.contains("pub doc: Comment,"));
+    }
+
+    /// Rule 2: a field whose full target set exactly matches a `merge`
+    /// entry's `from` set gets that entry's own enum type, and that enum
+    /// is declared exactly once — no duplicate/redundant `enum Loop`.
+    #[test]
+    fn field_matching_full_merge_entry_shape_reuses_merge_enum_exactly_once() {
+        let g = Grammar::from_rules([
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p("while_statement", TerminalLiteral("'w'".into())),
+            p(
+                "stmt",
+                Field(
+                    "body".into(),
+                    Box::new(Choice(vec![nt("for_statement"), nt("while_statement")])),
+                ),
+            ),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("pub body: Loop,"));
+        assert_eq!(
+            out.matches("pub enum Loop {").count(),
+            1,
+            "enum Loop must be declared exactly once: {out}"
+        );
+    }
+
+    /// Rule 3: a field pinned to exactly one merged-away kind (not the
+    /// entry's full choice) keeps referencing that kind's own precise
+    /// (private) struct type, rather than being widened to the lossy
+    /// merge-enum — and the *containing* struct gets
+    /// `#[allow(private_interfaces)]` since it now has a `pub` field of a
+    /// private type.
+    #[test]
+    fn field_referencing_single_merged_away_kind_keeps_precise_type() {
+        let g = Grammar::from_rules([
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p("while_statement", TerminalLiteral("'w'".into())),
+            p(
+                "outer",
+                Field("loop_part".into(), Box::new(nt("for_statement"))),
+            ),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("pub loop_part: ForStatement,"));
+        assert!(!out.contains("pub loop_part: Loop,"));
+        assert!(out.contains("#[allow(private_interfaces)]\n#[derive(Debug)]\npub struct Outer {"));
+    }
+
+    // ── Rust-identifier collision checks (merge/passthrough targets) ─────
+
+    #[test]
+    fn build_multi_shape_names_merge_target_colliding_with_real_kind_is_an_error() {
+        let g = Grammar::from_rules([
+            p("Loop", TerminalLiteral("'l'".into())),
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p("while_statement", TerminalLiteral("'w'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let err = build_multi_shape_names(&g, Some(&config)).unwrap_err();
+        assert!(err.contains("kind 'Loop'"), "{err}");
+        assert!(err.contains("merge target 'Loop'"), "{err}");
+    }
+
+    #[test]
+    fn build_multi_shape_names_passthrough_target_colliding_with_real_kind_is_an_error() {
+        let g = Grammar::from_rules([
+            p("expr", TerminalLiteral("'e'".into())),
+            p("comment", TerminalLiteral("'c'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![],
+            passthrough: vec![PassthroughEntry {
+                kind: "comment".to_string(),
+                target: "Expr".to_string(),
+            }],
+            ignore: vec![],
+        };
+        let err = build_multi_shape_names(&g, Some(&config)).unwrap_err();
+        assert!(err.contains("kind 'expr'"), "{err}");
+        assert!(err.contains("passthrough entry 'comment'"), "{err}");
+    }
+
+    #[test]
+    fn build_multi_shape_names_merge_target_colliding_with_generated_shape_name_is_an_error() {
+        let g = Grammar::from_rules([
+            p(
+                "decl",
+                Field("value".into(), Box::new(Choice(vec![nt("num"), nt("str")]))),
+            ),
+            p("num", TerminalPattern("/[0-9]+/".into())),
+            p("str", TerminalPattern("/\"[^\"]*\"/".into())),
+            p("a", TerminalLiteral("'a'".into())),
+            p("b", TerminalLiteral("'b'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Value".to_string(),
+                from: vec!["a".to_string(), "b".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let err = build_multi_shape_names(&g, Some(&config)).unwrap_err();
+        assert!(err.contains("shape [num, str]"), "{err}");
+        assert!(err.contains("merge target 'Value'"), "{err}");
     }
 
     // ── multi-shape enum dispatch (fmt_multi_shape_enum_try_from) ───────

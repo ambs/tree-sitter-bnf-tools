@@ -30,6 +30,7 @@ use std::process::{Command, Output};
 use std::sync::Mutex;
 
 use ts_bnf_tool::dom::Grammar;
+use ts_bnf_tool::dom::ast::merge::MergeConfig;
 use ts_bnf_tool::dom::ast::rust::RustAst;
 use ts_bnf_tool::dom::visitor::rust::RustVisitor;
 use ts_bnf_tool::visitors::parse_source;
@@ -53,20 +54,22 @@ impl Drop for HarnessGuard {
 /// protect calls within this file.
 static HARNESS_MUTEX: Mutex<()> = Mutex::new(());
 
-/// Renders `grammar` via [`RustVisitor`] and [`RustAst`], wraps each in its
-/// own `mod visitor { .. }` / `mod ast { .. }` block (matching the real
-/// scaffolded crate's sibling-module layout `ast.rs`'s `use
-/// super::visitor::SourceNode;` depends on), appends `extra_source`, and
-/// writes the result into a real `cargo` example of this package named
-/// `example_name`. Then runs `cargo build` (`run` when `run` is `true`)
-/// `--example <example_name>` and asserts it succeeds — panicking with both
-/// captured stdout and stderr otherwise.
+/// Renders `grammar` via [`RustVisitor`] and [`RustAst`] (with an optional
+/// `merge_config` — 342.5.7), wraps each in its own `mod visitor { .. }` /
+/// `mod ast { .. }` block (matching the real scaffolded crate's
+/// sibling-module layout `ast.rs`'s `use super::visitor::SourceNode;`
+/// depends on), appends `extra_source`, and writes the result into a real
+/// `cargo` example of this package named `example_name`. Then runs `cargo
+/// build` (`run` when `run` is `true`) `--example <example_name>` and
+/// asserts it succeeds — panicking with both captured stdout and stderr
+/// otherwise.
 fn compile_generated_ast(
     example_name: &str,
     grammar: &Grammar,
     rust_name: &str,
     extra_source: &str,
     run: bool,
+    merge_config: Option<&MergeConfig>,
 ) -> Output {
     // Declared before `_guard` so it's dropped *after* it (Rust drops
     // locals in reverse declaration order): the lock isn't released until
@@ -78,7 +81,7 @@ fn compile_generated_ast(
     let visitor_source = RustVisitor::new(grammar, rust_name, "<test>", true)
         .expect("grammar must be visitor-safe")
         .to_string();
-    let ast_source = RustAst::new(grammar, "<test>", true)
+    let ast_source = RustAst::new(grammar, "<test>", true, merge_config)
         .expect("grammar must be ast-safe")
         .to_string();
 
@@ -140,5 +143,61 @@ fn sample_grammar_ast_types_compile() {
         "sample",
         "fn main() {}\n",
         false,
+        None,
+    );
+}
+
+/// Compile-check for a `--merge-config`-driven grammar (342.5.7): three
+/// leaf kinds merged into one `pub enum`, and a fourth `passthrough`-renamed
+/// — proving the `#[allow(private_interfaces)]`/`#[allow(dead_code)]`
+/// placement (`plans/342.5.md`'s `rustc`-verified addendum) is correct in
+/// real generated output, not just in hand-written unit-test string
+/// assertions. Specifically asserts **no `private_interfaces` warning**
+/// (the lint the whole privacy design exists to suppress): the empirical
+/// regression guard for that promise. Not a blanket zero-warnings
+/// assertion — this harness's own `fn main() {}` deliberately never
+/// constructs any of the generated types, so ordinary `dead_code`/
+/// `missing_docs` warnings on the unused harness itself are expected noise,
+/// unrelated to this phase's `#[allow(...)]` placement.
+#[test]
+fn sample_grammar_ast_types_with_merge_config_compiles_without_private_interfaces_warning() {
+    let source = "program -> for_statement | while_statement | repeat_statement | comment ;\n\
+                   for_statement -> 'for' ;\n\
+                   while_statement -> 'while' ;\n\
+                   repeat_statement -> 'repeat' ;\n\
+                   comment -> /#.*/ ;\n";
+    let (grammar, diagnostics) =
+        parse_source(source).unwrap_or_else(|e| panic!("merge-config fixture must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "merge-config fixture must be diagnostic-free: {diagnostics:?}"
+    );
+
+    let config: MergeConfig = ts_bnf_tool::dom::parse_merge_config(
+        r#"
+            [[merge]]
+            target = "Loop"
+            from = ["for_statement", "while_statement", "repeat_statement"]
+
+            [[passthrough]]
+            kind = "comment"
+            target = "DocComment"
+        "#,
+    )
+    .expect("inline merge-config TOML must parse");
+
+    let output = compile_generated_ast(
+        "ast_merge_config_harness",
+        &grammar,
+        "merge_sample",
+        "fn main() {}\n",
+        false,
+        Some(&config),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("private_interfaces"),
+        "generated AST types with a merge config must not trigger `private_interfaces`:\n{stderr}"
     );
 }

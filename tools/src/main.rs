@@ -12,7 +12,8 @@ use ts_bnf_tool::dom::analysis::{FirstTerminal, first_sets};
 use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{
-    Diagnostic, Grammar, GrammarJs, Highlights, ParseError, Severity, run_generate, run_scaffold,
+    Diagnostic, Grammar, GrammarJs, Highlights, ParseError, Severity, parse_merge_config,
+    run_generate, run_scaffold,
 };
 use ts_bnf_tool::util::syntax_error_diagnostics;
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
@@ -161,6 +162,10 @@ enum Subcommands {
         /// Generate ast-types files
         #[arg(long)]
         ast_types: bool,
+        /// Path to a `--merge-config` TOML file collapsing/renaming grammar
+        /// kinds in the generated AST types (requires `--ast-types`)
+        #[arg(long, requires = "ast_types")]
+        merge_config: Option<String>,
     },
     /// Pretty-print a BNF file in canonical style.
     Format {
@@ -514,6 +519,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             name,
             no_header,
             ast_types,
+            merge_config,
         } => {
             let (grammar, _) = parse_file(&filename, false)?;
             let name = grammar_name(&filename, name.as_deref());
@@ -527,6 +533,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         .into(),
                 );
             }
+            let merge_config = merge_config
+                .map(|path| -> Result<_, Box<dyn Error>> {
+                    let source = fs::read_to_string(&path)?;
+                    parse_merge_config(&source).map_err(Into::into)
+                })
+                .transpose()?;
             run_scaffold(
                 &grammar,
                 &name,
@@ -534,6 +546,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 output_dir.as_deref(),
                 no_header,
                 ast_types,
+                merge_config.as_ref(),
             )?;
         }
 
