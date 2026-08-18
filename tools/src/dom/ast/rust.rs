@@ -1388,6 +1388,77 @@ mod tests {
         assert!(out.contains("#[allow(private_interfaces)]\n#[derive(Debug)]\npub struct Outer {"));
     }
 
+    /// A `merge` entry's `from` list can hold exactly one kind — degenerate,
+    /// but not rejected by `check_merge_config`. A field pinned to that one
+    /// kind still matches [`merge_entry_for_shape`] exactly (`from.len() ==
+    /// target.named.len() == 1`), so it's typed as the entry's own enum, not
+    /// widened via [`field_directly_references_merged_kind`]'s private-struct
+    /// path — the containing struct needs no `#[allow(private_interfaces)]`.
+    #[test]
+    fn field_matching_single_kind_merge_entry_reuses_merge_enum() {
+        let g = Grammar::from_rules([
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p(
+                "outer",
+                Field("loop_part".into(), Box::new(nt("for_statement"))),
+            ),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = ra_with_merge(&g, "g", &config).to_string();
+        assert!(out.contains("pub loop_part: Loop,"));
+        assert!(
+            !out.contains("#[allow(private_interfaces)]\n#[derive(Debug)]\npub struct Outer {")
+        );
+        assert!(out.contains("pub struct Outer {"));
+    }
+
+    // ── check_root_rule_not_merged (342.5.8) ──────────────────────────────
+
+    /// A grammar with no rules has no root rule to check — trivially `Ok`,
+    /// same permissive stance the empty-grammar case takes everywhere else
+    /// in this module (an earlier, unrelated check rejects an empty grammar
+    /// before `check_root_rule_not_merged` would ever see one in practice).
+    #[test]
+    fn check_root_rule_not_merged_ok_for_empty_grammar() {
+        let g = Grammar::from_rules([]);
+        let config = MergeConfig {
+            merge: vec![],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        assert!(check_root_rule_not_merged(&g, &config).is_ok());
+    }
+
+    /// The grammar's root rule (first production, no `axiom` here) is
+    /// claimed by a `merge` entry — rejected, since the scaffolded example
+    /// needs one concrete, nameable root type and a merge entry's enum is
+    /// neither.
+    #[test]
+    fn check_root_rule_not_merged_rejects_merged_root() {
+        let g = Grammar::from_rules([
+            p("for_statement", TerminalLiteral("'f'".into())),
+            p("while_statement", TerminalLiteral("'w'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let err = check_root_rule_not_merged(&g, &config).unwrap_err();
+        assert!(err.contains("for_statement"), "{err}");
+        assert!(err.contains("cannot be merged away"), "{err}");
+    }
+
     // ── Rust-identifier collision checks (merge/passthrough targets) ─────
 
     #[test]
