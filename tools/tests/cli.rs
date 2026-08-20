@@ -1445,6 +1445,56 @@ fn scaffold_merge_config_invalid_exits_nonzero_before_writing() {
 }
 
 #[test]
+/// `scaffold --ast-types --merge-config <config missing a kind>` (342.6): a
+/// merge config that only covers the three loop kinds, leaving `comment`
+/// untriaged, still exits 0 and still writes every file — the coverage
+/// report is advisory only — but reports the missing kind to stderr.
+fn scaffold_merge_config_missing_kind_still_succeeds_but_reports_coverage_gap() {
+    let bnf_path = write_tmp(
+        "ts_bnf_scaffold_merge_config_coverage_gap.bnf",
+        SCAFFOLD_MERGE_BNF,
+    );
+    let config_path = write_tmp(
+        "ts_bnf_scaffold_merge_config_coverage_gap.toml",
+        indoc! {r#"
+            [[merge]]
+            target = "Loop"
+            from = ["for_statement", "while_statement", "repeat_statement"]
+        "#},
+    );
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_merge_config_coverage_gap_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = tool()
+        .args([
+            "scaffold",
+            "--ast-types",
+            "--merge-config",
+            config_path.to_str().unwrap(),
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "an uncovered kind must not fail the command: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(
+        ast_rs.contains("pub struct Comment {"),
+        "an uncovered kind must still render as an ordinary baseline struct"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("comment"),
+        "stderr must report the uncovered kind 'comment'; got: {stderr}"
+    );
+}
+
+#[test]
 /// Without `--ast-types`, no AST-types files are written at all, and
 /// `lib.rs` has no `pub mod ast;` — the flag is genuinely opt-in, not
 /// always-on.

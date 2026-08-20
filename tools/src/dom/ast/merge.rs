@@ -1,3 +1,5 @@
+use indexmap::IndexSet;
+
 use crate::dom::{Grammar, visible_kinds};
 use crate::util::find_first_name_collision;
 
@@ -128,6 +130,33 @@ pub fn check_merge_config(grammar: &Grammar, config: &MergeConfig) -> Result<(),
     }
 
     Ok(())
+}
+
+/// Visible kinds not covered by any `merge`/`passthrough`/`ignore` entry.
+///
+/// Empty whenever `config.ignore` contains the `"*"` wildcard, by
+/// definition — a config using it has opted out of coverage tracking.
+pub fn uncovered_kinds(grammar: &Grammar, config: &MergeConfig) -> Vec<String> {
+    if config.ignore.iter().any(|kind| kind == "*") {
+        return Vec::new();
+    }
+
+    let mut covered: IndexSet<&str> = IndexSet::new();
+    for entry in &config.merge {
+        covered.extend(entry.from.iter().map(String::as_str));
+    }
+    for entry in &config.passthrough {
+        covered.insert(&entry.kind);
+    }
+    covered.extend(config.ignore.iter().map(String::as_str));
+
+    let mut uncovered = Vec::new();
+    for kind in visible_kinds(grammar) {
+        if !covered.contains(kind.as_str()) {
+            uncovered.push(kind);
+        }
+    }
+    uncovered
 }
 
 #[cfg(test)]
@@ -320,5 +349,58 @@ mod tests {
             err.contains("passthrough entry 'for_statement'"),
             "error must name the passthrough entry; got: {err}"
         );
+    }
+
+    // ── uncovered_kinds ─────────────────────────────────────────────────
+
+    /// A kind named by neither `merge`, `passthrough`, nor `ignore` is
+    /// reported, and only that kind.
+    #[test]
+    fn uncovered_kinds_reports_kind_missing_from_config() {
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![PassthroughEntry {
+                kind: "comment".to_string(),
+                target: "Comment".to_string(),
+            }],
+            ignore: vec![],
+        };
+        assert_eq!(
+            uncovered_kinds(&grammar(), &config),
+            vec!["repeat_statement".to_string()]
+        );
+    }
+
+    /// `ignore = ["*"]` silences the report entirely, even against an
+    /// otherwise completely untriaged grammar.
+    #[test]
+    fn uncovered_kinds_ignore_wildcard_silences_everything() {
+        let config = MergeConfig {
+            merge: vec![],
+            passthrough: vec![],
+            ignore: vec!["*".to_string()],
+        };
+        assert!(uncovered_kinds(&grammar(), &config).is_empty());
+    }
+
+    /// A config that explicitly names every visible kind across
+    /// merge/passthrough/ignore (no wildcard) reports nothing.
+    #[test]
+    fn uncovered_kinds_fully_covered_config_reports_nothing() {
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![PassthroughEntry {
+                kind: "comment".to_string(),
+                target: "Comment".to_string(),
+            }],
+            ignore: vec!["repeat_statement".to_string()],
+        };
+        assert!(uncovered_kinds(&grammar(), &config).is_empty());
     }
 }
