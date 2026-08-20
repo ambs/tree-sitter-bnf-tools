@@ -249,19 +249,212 @@ thing: it visits every `decl`, and `combine`'s `flatten` concatenates their
 results. Given `x = 1; y = x;`, `DeclExtractor` returns `["x", "y"]` — the
 declared names, not `x`'s later use as a value.
 
-## Typed node structs
+## Typed node structs (`--ast-types`)
 
 The generated `Visitor` trait works with `SourceNode` — a thin wrapper
 around `tree_sitter::Node` plus the source text — and
 `node.kind()`/`children_by_field_name` reached through it — you get
-traversal and dispatch, but node payloads stay stringly-typed. If you'd
-rather have a real Rust struct per kind with typed field accessors, see
-[type-sitter](https://github.com/Jakobeha/type-sitter), which generates those
-from the same `node-types.json` the generated crate's `NODE_TYPES` constant
-also embeds. The two approaches compose: a `Visitor` implementation can
-construct type-sitter's typed wrappers from the `Node` inside the
-`SourceNode` it's handed, combining the generated crate's traversal skeleton
-with type-sitter's typed payloads.
+traversal and dispatch, but node payloads stay stringly-typed. Passing
+`--ast-types` alongside `scaffold` adds a second, independent layer on top:
+`bindings/rust/ast.rs`, one owned Rust struct per grammar rule (no `'tree`
+lifetime survives construction), each with a `TryFrom<SourceNode<'tree>>`
+impl and a `pragma: Pragma` field recording its start line/column. A leaf
+kind — one with no visible children of its own — additionally carries
+`text: String`.
+
+```sh
+ts-bnf-tool scaffold --name decls --ast-types decls.bnf
+```
+
+For `decls.bnf` (the running example from earlier in this tutorial),
+`bindings/rust/ast.rs` gets one struct per kind. `decl` has two fields, so
+its `TryFrom` impl builds both from the parsed node:
+
+```rust
+/// `decl` node.
+#[derive(Debug)]
+pub struct Decl {
+    pub pragma: Pragma,
+    pub target: Ident,
+    pub value: Expr,
+}
+
+impl<'tree> TryFrom<SourceNode<'tree>> for Decl {
+    type Error = BuildError;
+
+    fn try_from(node: SourceNode<'tree>) -> Result<Self, Self::Error> {
+        let pragma = Pragma::from(node);
+        let target = node
+            .child_by_field("target")
+            .ok_or(BuildError::MissingField { kind: "decl", field: "target" })?
+            .try_into()?;
+        let value = node
+            .child_by_field("value")
+            .ok_or(BuildError::MissingField { kind: "decl", field: "value" })?
+            .try_into()?;
+        Ok(Decl { pragma, target, value })
+    }
+}
+```
+
+`ident`, being a leaf, gets a `text: String` field instead of any nested
+struct:
+
+```rust
+/// `ident` node.
+#[derive(Debug)]
+pub struct Ident {
+    pub pragma: Pragma,
+    pub text: String,
+}
+```
+
+Every generated struct/enum derives `Debug`, so `{:#?}` recursively
+pretty-prints an entire typed tree with no per-kind code — exactly what the
+scaffolded `examples/ast.rs` does, the same bar `examples/walk.rs` already
+meets:
+
+```sh
+$ printf 'x = 1;\ny = x;\n' > sample.decls
+$ cargo run --example ast -- sample.decls
+sample.decls:
+Program {
+    pragma: Pragma {
+        line: 1,
+        column: 1,
+    },
+}
+```
+
+(`Program` has only `pragma` here — `decl*` in `program -> decl* ;` has no
+field label of its own, and only labeled fields become struct fields; give
+it one, e.g. `program -> items: decl* ;`, to get a `pub items: Vec<Decl>`
+field instead.)
+
+Like `visitor.rs`, `ast.rs` is always regenerated from the current grammar —
+there's no hand-edit support for it. If you need more fields on a generated
+type, wrap it in your own struct rather than editing the generated file; a
+rerun of `scaffold --ast-types` overwrites it every time, same as
+`visitor.rs`, while `examples/ast.rs` itself follows the same
+write-once-then-leave-alone rule as `examples/walk.rs`.
+
+### Collapsing related kinds (`--merge-config`)
+
+A grammar sometimes has several kinds that are really one construct from the
+caller's point of view — `for_statement`/`while_statement`/`repeat_statement`
+all being "a loop", say. Left alone, `--ast-types` gives each its own
+unrelated struct. Passing `--merge-config <path>` alongside `--ast-types`
+collapses a group of kinds like that into a single Rust `enum`, self-
+discriminating on the Rust type tag rather than a stringly `kind` field.
+
+The config is TOML with up to three kinds of entry:
+
+```toml
+# ast-merge.toml
+[[merge]]
+target = "Loop"
+from = ["for_statement", "while_statement", "repeat_statement"]
+
+[[passthrough]]
+kind = "comment"
+target = "DocComment"
+```
+
+- **`merge`** collapses every kind in `from` into one `enum` named `target`,
+  one variant per source kind.
+- **`passthrough`** renames a single kind's generated struct without
+  otherwise changing it — here, `comment`'s struct is emitted as
+  `DocComment` instead of the `Comment` its kind name would otherwise
+  derive.
+- **`ignore`** (not used above) explicitly marks a kind as "leave it as the
+  default baseline struct" — see the coverage report below for why you'd
+  write this out loud instead of just doing nothing.
+
+Given a grammar with a `program -> items: (for_statement | while_statement |
+repeat_statement)* doc: comment ;` rule and the config above,
+`ts-bnf-tool scaffold --ast-types --merge-config ast-merge.toml grammar.bnf`
+generates:
+
+```rust
+pub struct Program {
+    pub pragma: Pragma,
+    pub items: Vec<Loop>,
+    pub doc: DocComment,
+}
+```
+
+```rust
+#[allow(private_interfaces)]
+#[derive(Debug)]
+pub enum Loop {
+    ForStatement(ForStatement),
+    WhileStatement(WhileStatement),
+    RepeatStatement(RepeatStatement),
+}
+
+impl<'tree> TryFrom<SourceNode<'tree>> for Loop {
+    type Error = BuildError;
+
+    fn try_from(node: SourceNode<'tree>) -> Result<Self, Self::Error> {
+        match node.node.kind() {
+            "for_statement" => Ok(Loop::ForStatement(node.try_into()?)),
+            "while_statement" => Ok(Loop::WhileStatement(node.try_into()?)),
+            "repeat_statement" => Ok(Loop::RepeatStatement(node.try_into()?)),
+            found => Err(BuildError::UnexpectedKind {
+                expected: "Loop",
+                found: found.to_string(),
+            }),
+        }
+    }
+}
+```
+
+`ForStatement`/`WhileStatement`/`RepeatStatement` themselves still exist and
+still each get the ordinary `TryFrom` impl `--ast-types` always generates —
+they're just no longer `pub`, so `Loop`'s three variants are the only way
+code outside the generated crate ever sees them. `Comment`'s struct doesn't
+exist at all under that name; it's emitted as `DocComment` per the
+`passthrough` entry, `pub` like any ordinary kind.
+
+**Coverage report.** A grammar can drift out of sync with its merge config —
+a new rule gets added, and nobody's decided yet whether it should merge,
+passthrough, or be left alone. Whenever `--merge-config` is passed,
+`scaffold` prints one line to stderr for every visible kind not named by any
+`merge`, `passthrough`, or `ignore` entry:
+
+```
+warning: kind 'program' is not covered by --merge-config (no merge/passthrough/ignore entry); it will be emitted as an ordinary baseline struct
+```
+
+This is advisory only — it never affects the exit code, and the uncovered
+kind still generates normally as an ordinary `pub` struct, exactly as if
+`--merge-config` hadn't been passed for that kind at all. Once you've
+reviewed a grammar's kinds and are happy leaving the rest as ordinary
+structs, silence the report with the wildcard `ignore` entry:
+
+```toml
+ignore = ["*"]
+
+[[merge]]
+target = "Loop"
+from = ["for_statement", "while_statement", "repeat_statement"]
+```
+
+`ignore = ["*"]` must be the config's only `ignore` entry — it means "every
+kind not otherwise claimed", so listing specific kinds alongside it would be
+redundant at best and a likely typo at worst; `check_merge_config` rejects
+the combination outright.
+
+## Typed field accessors without ownership
+
+If you'd rather have typed field accessors directly over borrowed
+`tree_sitter::Node`s — no owned copy, no `'tree`-free struct, no
+merge/collapse — see [type-sitter](https://github.com/Jakobeha/type-sitter),
+which generates those from the same `node-types.json` the generated crate's
+`NODE_TYPES` constant also embeds. It composes with the `Visitor` trait the
+same way it always has, independently of `--ast-types`: a `Visitor`
+implementation can construct type-sitter's typed wrappers from the `Node`
+inside the `SourceNode` it's handed.
 
 ---
 
