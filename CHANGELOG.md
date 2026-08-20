@@ -35,7 +35,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scaffold --ast-types --merge-config <path>`: collapses several grammar
   kinds into one Rust `enum` via a `merge` entry, or renames a single
   kind's generated type via a `passthrough` entry, driven by a TOML config
-  file validated against the grammar before anything is written (#342).
+  file validated against the grammar before anything is written. Any
+  visible kind not named by a `merge`, `passthrough`, or `ignore` entry is
+  reported to stderr (advisory only — it still generates normally as an
+  ordinary baseline struct); `ignore = ["*"]` opts out of this report
+  entirely (#342).
 
 ### Fixed
 - `convert`: a symbol combining a field label with a `?` Kleene operator

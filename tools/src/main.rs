@@ -13,7 +13,7 @@ use ts_bnf_tool::dom::rename_grammar;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{
     Diagnostic, Grammar, GrammarJs, Highlights, ParseError, Severity, parse_merge_config,
-    run_generate, run_scaffold,
+    run_generate, run_scaffold, uncovered_kinds,
 };
 use ts_bnf_tool::util::syntax_error_diagnostics;
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
@@ -548,6 +548,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                 ast_types,
                 merge_config.as_ref(),
             )?;
+            if let Some(config) = &merge_config {
+                for kind in uncovered_kinds(&grammar, config) {
+                    eprintln!(
+                        "warning: kind '{kind}' is not covered by --merge-config \
+                         (no merge/passthrough/ignore entry); it will be emitted as an \
+                         ordinary baseline struct"
+                    );
+                }
+            }
         }
 
         Subcommands::Format {
