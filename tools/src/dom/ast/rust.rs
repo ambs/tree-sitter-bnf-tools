@@ -447,17 +447,26 @@ fn fmt_multi_shape_enum_decl(
 }
 
 /// Builds one field's construction statement inside a `TryFrom` body: a
-/// `multiple` field collects every matching child via `children_by_field`
-/// into a `Vec`; a single anonymous-token field reads `.text()?` as a
-/// `String`; everything else (single named or multi-shape) reads one child
-/// via `child_by_field` and `.try_into()`s it into its already-resolved
-/// type ([`field_rust_type`]). Panics if `field`'s target resolves to no
-/// possible shape at all — see [`field_rust_type`]'s own doc for why that
-/// shouldn't happen.
+/// `multiple` anonymous-token-only field collects every matching child's
+/// `.text()?` into a `Vec<String>`; any other `multiple` field collects via
+/// `children_by_field` and `.try_into()`s each child into a `Vec`; a single
+/// anonymous-token field reads `.text()?` as a `String`; everything else
+/// (single named or multi-shape) reads one child via `child_by_field` and
+/// `.try_into()`s it into its already-resolved type ([`field_rust_type`]).
+/// Panics if `field`'s target resolves to no possible shape at all — see
+/// [`field_rust_type`]'s own doc for why that shouldn't happen.
 fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String {
     let target = &field.target;
 
-    if field.multiple {
+    if field.multiple && target.named.is_empty() && target.anonymous_token {
+        formatdoc! {r#"
+            let {field_name} = node
+                .children_by_field("{field_name}")
+                .into_iter()
+                .map(|c| c.text().map(|t| t.to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+        "#}
+    } else if field.multiple {
         formatdoc! {r#"
             let {field_name} = node
                 .children_by_field("{field_name}")
@@ -1135,6 +1144,23 @@ mod tests {
         assert!(out.contains("pub items: Vec<Decl>,"));
         assert!(out.contains(".children_by_field(\"items\")"));
         assert!(out.contains(".collect::<Result<Vec<_>, _>>()?;"));
+    }
+
+    #[test]
+    fn struct_multiple_anonymous_token_field_collects_text_not_try_into() {
+        let g = Grammar::from_rules([p(
+            "program",
+            Field(
+                "ops".into(),
+                Box::new(ZeroOrMore(Box::new(TerminalLiteral("'+'".into())))),
+            ),
+        )]);
+        let out = ra(&g, "g").to_string();
+        assert!(out.contains("pub ops: Vec<String>,"));
+        assert!(out.contains(".children_by_field(\"ops\")"));
+        assert!(out.contains(".map(|c| c.text().map(|t| t.to_string()))"));
+        assert!(out.contains(".collect::<Result<Vec<_>, _>>()?;"));
+        assert!(!out.contains(".map(|c| c.try_into())"));
     }
 
     #[test]
