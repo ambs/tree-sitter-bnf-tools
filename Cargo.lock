@@ -822,6 +822,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "syn",
  "toml",
  "tree-sitter",
  "tree-sitter-bnf",

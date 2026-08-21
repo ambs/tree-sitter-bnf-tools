@@ -228,3 +228,30 @@ fn repeated_anonymous_token_field_compiles() {
         None,
     );
 }
+
+/// Compile-check for a field labeled with a Rust keyword (#358): `type:`
+/// is a plausible label (types, loops, etc.) that, before this fix, was
+/// emitted verbatim as `pub type: Ident,` / `let type = ...` — both
+/// invalid Rust (`type` is a keyword). `rust_field_ident` now escapes it as
+/// a raw identifier (`r#type`) in every identifier position, while
+/// `.child_by_field("type")` and the `BuildError::MissingField` message
+/// keep referencing the grammar's actual, unescaped field name.
+#[test]
+fn keyword_field_label_compiles() {
+    let source = "stmt -> type: ident ';' ;\nident -> /[a-z]+/ ;\n";
+    let (grammar, diagnostics) = parse_source(source)
+        .unwrap_or_else(|e| panic!("keyword-field-label fixture must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "keyword-field-label fixture must be diagnostic-free: {diagnostics:?}"
+    );
+
+    compile_generated_ast(
+        "ast_keyword_field_label_harness",
+        &grammar,
+        "keyword_field_sample",
+        "fn main() {}\n",
+        false,
+        None,
+    );
+}
