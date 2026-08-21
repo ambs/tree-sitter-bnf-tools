@@ -37,10 +37,12 @@ pub struct RustAst<'a> {
 }
 
 impl<'a> RustAst<'a> {
-    /// Builds a `RustAst` for `grammar`, computing the multi-shape enum
-    /// naming table ([`build_multi_shape_names`]) up front so every
-    /// per-kind struct emitted later can look a field's type up rather
-    /// than deriving it — see "Resolved: multi-shape enum naming".
+    /// Builds a `RustAst` for `grammar`: rejects it up front if any field
+    /// label can't be represented as a Rust identifier
+    /// ([`check_field_labels_are_representable`]), then computes the
+    /// multi-shape enum naming table ([`build_multi_shape_names`]) up front
+    /// so every per-kind struct emitted later can look a field's type up
+    /// rather than deriving it — see "Resolved: multi-shape enum naming".
     ///
     /// - `source`: the source filename shown in the generated-file header
     ///   (`<stdin>` for stdin).
@@ -54,6 +56,7 @@ impl<'a> RustAst<'a> {
         no_header: bool,
         merge_config: Option<&'a MergeConfig>,
     ) -> Result<Self, String> {
+        check_field_labels_are_representable(grammar)?;
         let multi_shape_names = build_multi_shape_names(grammar, merge_config)?;
         Ok(Self {
             grammar,
@@ -284,10 +287,11 @@ fn shape_key(target: &FieldTargetKinds) -> Vec<String> {
 /// [`field_rust_type`]/[`merge_entry_for_shape`] for why: widening it to
 /// the enum would let the field hold a value the grammar can never actually
 /// produce there). `pragma: Pragma` comes first, followed by one field per
-/// entry in `spec.fields`, each typed via [`field_rust_type`].
-/// `struct_name` is resolved by the caller ([`RustAst::fmt_struct`]) rather
-/// than derived here, so a `passthrough` rename only needs to change that
-/// one call site.
+/// entry in `spec.fields`, each typed via [`field_rust_type`] and named via
+/// [`rust_field_ident`] (escaping a field label that collides with a Rust
+/// keyword). `struct_name` is resolved by the caller ([`RustAst::fmt_struct`])
+/// rather than derived here, so a `passthrough` rename only needs to change
+/// that one call site.
 fn fmt_struct_decl(
     struct_name: &str,
     kind: &str,
@@ -304,7 +308,7 @@ fn fmt_struct_decl(
             .map(|(f, f_spec)| {
                 format!(
                     "    pub {}: {},",
-                    f,
+                    rust_field_ident(f),
                     field_rust_type(f_spec, multi_shape_names, merge_config)
                 )
             })
@@ -446,6 +450,77 @@ fn fmt_multi_shape_enum_decl(
     "#}
 }
 
+/// Field labels that can never be represented as a Rust identifier, raw or
+/// otherwise: `self`, `Self`, `super`, `crate`, and a bare `_` keep special
+/// path/pattern meaning in Rust even as raw identifiers (`r#self` etc. is a
+/// hard `rustc` error), and — unlike an ordinary keyword — there's no other
+/// safe escape for them either: any plain-text substitute (e.g. a suffix)
+/// is itself a syntactically valid field label (field labels are lexically
+/// unrestricted Rust-identifier-shaped text, `tree-sitter-bnf/grammar.js`'s
+/// `fieldLabel`), and a raw identifier is *not* a distinct namespace from
+/// the plain one (`r#foo` and `foo` name the exact same field — confirmed
+/// empirically: declaring both on one struct is rustc error E0124, "field
+/// already declared"), so nothing is provably unreachable by some other
+/// grammar's literal field label. This is a fixed list rather than derived
+/// from `syn`'s keyword table like [`rust_field_ident`]'s general case: it
+/// isn't "which words are keywords" (which grows every edition) but rustc's
+/// own raw-identifier grammar production, which explicitly excludes just
+/// these four keywords (plus `_`, itself not a keyword but similarly
+/// reserved) — a categorically fixed set, not the general keyword list.
+const UNREPRESENTABLE_FIELD_LABELS: [&str; 5] = ["self", "Self", "super", "crate", "_"];
+
+/// Validates that every field label `grammar` derives can be represented
+/// as a Rust identifier ([`UNREPRESENTABLE_FIELD_LABELS`]), rejecting the
+/// grammar with an actionable error otherwise instead of letting
+/// generation silently produce code with a residual collision risk.
+/// Called once from [`RustAst::new`], before generation starts.
+fn check_field_labels_are_representable(grammar: &Grammar) -> Result<(), String> {
+    for spec in derive_ast_node_specs(grammar).values() {
+        for field_name in spec.fields.keys() {
+            if UNREPRESENTABLE_FIELD_LABELS.contains(&field_name.as_str()) {
+                return Err(format!(
+                    "field '{field_name}' cannot be represented as a Rust identifier: {} keep \
+                     special meaning in Rust even as raw identifiers and can never be used as a \
+                     struct field name; rename this field in the grammar",
+                    UNREPRESENTABLE_FIELD_LABELS
+                        .iter()
+                        .map(|kw| format!("'{kw}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Escapes `field_name` into a valid Rust identifier if it collides with a
+/// Rust keyword, else returns it unchanged. Panics if `field_name` is one
+/// of [`UNREPRESENTABLE_FIELD_LABELS`] — [`RustAst::new`] calls
+/// [`check_field_labels_are_representable`] on every field label before
+/// generation starts, so this should be unreachable by the time any
+/// generation function runs.
+///
+/// Rather than hand-maintaining a keyword list here (which would drift as
+/// the language adds new ones — `gen` in edition 2024, for instance), this
+/// defers to `syn`'s own keyword table: a bare word round-trips through
+/// `syn::parse_str::<syn::Ident>` unchanged unless it's a keyword, in
+/// which case parsing it as a bare identifier fails; escaping as a raw
+/// identifier (`r#type`) is then checked the same way.
+fn rust_field_ident(field_name: &str) -> String {
+    if syn::parse_str::<syn::Ident>(field_name).is_ok() {
+        return field_name.to_string();
+    }
+    let raw = format!("r#{field_name}");
+    if syn::parse_str::<syn::Ident>(&raw).is_ok() {
+        return raw;
+    }
+    unreachable!(
+        "field label '{field_name}' is unrepresentable and should have been rejected by \
+         check_field_labels_are_representable before generation started"
+    )
+}
+
 /// Builds one field's construction statement inside a `TryFrom` body: a
 /// `multiple` anonymous-token-only field collects every matching child's
 /// `.text()?` into a `Vec<String>`; any other `multiple` field collects via
@@ -453,14 +528,21 @@ fn fmt_multi_shape_enum_decl(
 /// anonymous-token field reads `.text()?` as a `String`; everything else
 /// (single named or multi-shape) reads one child via `child_by_field` and
 /// `.try_into()`s it into its already-resolved type ([`field_rust_type`]).
-/// Panics if `field`'s target resolves to no possible shape at all — see
-/// [`field_rust_type`]'s own doc for why that shouldn't happen.
+/// The `let` binding is named via [`rust_field_ident`] (escaping a field
+/// label that collides with a Rust keyword), but every `child_by_field`/
+/// `children_by_field` call and `BuildError::MissingField`'s `field:` still
+/// use `field_name` verbatim — tree-sitter's own field-name API and
+/// user-facing error messages must reference the grammar's actual label,
+/// not its escaped Rust spelling. Panics if `field`'s target resolves to no
+/// possible shape at all — see [`field_rust_type`]'s own doc for why that
+/// shouldn't happen.
 fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String {
     let target = &field.target;
+    let field_ident = rust_field_ident(field_name);
 
     if field.multiple && target.named.is_empty() && target.anonymous_token {
         formatdoc! {r#"
-            let {field_name} = node
+            let {field_ident} = node
                 .children_by_field("{field_name}")
                 .into_iter()
                 .map(|c| c.text().map(|t| t.to_string()))
@@ -468,7 +550,7 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
         "#}
     } else if field.multiple {
         formatdoc! {r#"
-            let {field_name} = node
+            let {field_ident} = node
                 .children_by_field("{field_name}")
                 .into_iter()
                 .map(|c| c.try_into())
@@ -476,7 +558,7 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
         "#}
     } else if target.named.is_empty() && target.anonymous_token {
         formatdoc! {r#"
-            let {field_name} = node
+            let {field_ident} = node
                 .child_by_field("{field_name}")
                 .ok_or(BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
                 .text()?
@@ -484,7 +566,7 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
         "#}
     } else if !target.named.is_empty() {
         formatdoc! {r#"
-            let {field_name} = node
+            let {field_ident} = node
                 .child_by_field("{field_name}")
                 .ok_or(BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
                 .try_into()?;
@@ -835,9 +917,12 @@ pub(crate) fn pascal_case(word: &str) -> String {
 /// construction statement per `spec.fields` entry ([`field_try_from`]),
 /// then `let text = node.text()?.to_string();` if `spec.is_leaf`, and
 /// finally `Ok({struct_name} { pragma, ... })` naming every field built
-/// above. `struct_name` is resolved by the caller ([`RustAst::fmt_struct`]),
-/// same as [`fmt_struct_decl`] — the two must always agree on the type
-/// they're both describing, so neither derives it independently.
+/// above, via [`rust_field_ident`] — matching the identifier
+/// [`field_try_from`]'s own `let` binding used, so the struct-literal
+/// shorthand still resolves. `struct_name` is resolved by the caller
+/// ([`RustAst::fmt_struct`]), same as [`fmt_struct_decl`] — the two must
+/// always agree on the type they're both describing, so neither derives it
+/// independently.
 fn fmt_struct_try_from(struct_name: &str, kind: &str, spec: &AstNodeSpec) -> String {
     let name = struct_name;
     let mut fields_try_from = spec
@@ -845,7 +930,11 @@ fn fmt_struct_try_from(struct_name: &str, kind: &str, spec: &AstNodeSpec) -> Str
         .iter()
         .map(|(field, field_spec)| field_try_from(kind, field, field_spec))
         .collect::<Vec<String>>();
-    let mut field_list = spec.fields.keys().cloned().collect::<Vec<_>>();
+    let mut field_list = spec
+        .fields
+        .keys()
+        .map(|f| rust_field_ident(f))
+        .collect::<Vec<_>>();
     if spec.is_leaf {
         fields_try_from.push("let text = node.text()?.to_string();".to_string());
         field_list.push("text".to_string());
@@ -1161,6 +1250,36 @@ mod tests {
         assert!(out.contains(".map(|c| c.text().map(|t| t.to_string()))"));
         assert!(out.contains(".collect::<Result<Vec<_>, _>>()?;"));
         assert!(!out.contains(".map(|c| c.try_into())"));
+    }
+
+    #[test]
+    fn struct_keyword_field_label_escapes_to_raw_identifier() {
+        let g = Grammar::from_rules([
+            p("stmt", Field("type".into(), Box::new(nt("ident")))),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        let out = ra(&g, "g").to_string();
+        assert!(out.contains("pub r#type: Ident,"));
+        assert!(out.contains("let r#type = node"));
+        assert!(out.contains(".child_by_field(\"type\")"));
+        assert!(out.contains("field: \"type\""));
+        assert!(out.contains("Ok(Stmt { pragma, r#type })"));
+        assert!(!out.contains("pub type:"));
+    }
+
+    #[test]
+    fn new_rejects_field_label_that_cannot_be_represented_as_rust_identifier() {
+        for unrepresentable in UNREPRESENTABLE_FIELD_LABELS {
+            let g = Grammar::from_rules([
+                p("stmt", Field(unrepresentable.into(), Box::new(nt("ident")))),
+                p("ident", TerminalPattern("/[a-z]+/".into())),
+            ]);
+            let err = match RustAst::new(&g, "g", true, None) {
+                Err(err) => err,
+                Ok(_) => panic!("'{unrepresentable}' must be rejected"),
+            };
+            assert!(err.contains(unrepresentable), "{err}");
+        }
     }
 
     #[test]
