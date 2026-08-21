@@ -1274,12 +1274,22 @@ mod tests {
                 p("stmt", Field(unrepresentable.into(), Box::new(nt("ident")))),
                 p("ident", TerminalPattern("/[a-z]+/".into())),
             ]);
-            let err = match RustAst::new(&g, "g", true, None) {
-                Err(err) => err,
-                Ok(_) => panic!("'{unrepresentable}' must be rejected"),
-            };
-            assert!(err.contains(unrepresentable), "{err}");
+            assert!(
+                matches!(&RustAst::new(&g, "g", true, None), Err(e) if e.contains(unrepresentable)),
+                "'{unrepresentable}' must be rejected with an error naming it"
+            );
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "is unrepresentable and should have been rejected")]
+    fn rust_field_ident_panics_on_unrepresentable_label() {
+        // Exercises the fallback `rust_field_ident` itself should never
+        // reach in practice — `check_field_labels_are_representable`
+        // guards every real call site — but the panic path still needs a
+        // regression test, same as `field_rust_type`/`field_try_from`'s own
+        // "should never happen" panics just above.
+        rust_field_ident("self");
     }
 
     #[test]
