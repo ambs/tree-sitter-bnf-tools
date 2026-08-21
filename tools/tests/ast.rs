@@ -201,3 +201,30 @@ fn sample_grammar_ast_types_with_merge_config_compiles_without_private_interface
         "generated AST types with a merge config must not trigger `private_interfaces`:\n{stderr}"
     );
 }
+
+/// Compile-check for a repeated anonymous-token field (#357): a field
+/// that's both `multiple` and untyped derives `Vec<String>`
+/// (`field_rust_type`), so its `TryFrom` body must collect `.text()`, not
+/// `.try_into()` a `String` (no `TryFrom<SourceNode> for String` exists).
+/// Regression guard for the case no other compile-checked fixture covers —
+/// `visitor_sample.bnf`'s one repeated field is unlabeled and derives no
+/// field at all.
+#[test]
+fn repeated_anonymous_token_field_compiles() {
+    let source = "program -> ops: ('+' | '-')* ;\n";
+    let (grammar, diagnostics) = parse_source(source)
+        .unwrap_or_else(|e| panic!("repeated anonymous-token fixture must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "repeated anonymous-token fixture must be diagnostic-free: {diagnostics:?}"
+    );
+
+    compile_generated_ast(
+        "ast_repeated_anonymous_token_harness",
+        &grammar,
+        "repeated_token_sample",
+        "fn main() {}\n",
+        false,
+        None,
+    );
+}
