@@ -73,7 +73,12 @@ directories on top:
   same shape as any `tree-sitter generate`-produced crate), a `pub mod
   visitor;`, and a `parse` convenience function. This file is only ever
   scaffolded once — it's where to add `pub mod` declarations for your own
-  hand-written `Visitor` implementations, and a rerun won't touch them:
+  hand-written `Visitor` implementations, and a rerun won't touch them. One
+  exception: if you scaffolded without `--ast-types` and later rerun with
+  it added, the rerun still inserts the one line it needs
+  (`pub mod ast;`) into your existing `lib.rs` — otherwise the newly
+  generated `examples/ast.rs` couldn't even compile — but never removes
+  anything you've added yourself.
 
   ```rust
   pub fn parse(source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Error>> {

@@ -1586,6 +1586,76 @@ fn scaffold_ast_types_rerun_regenerates_ast_rs_but_preserves_example() {
 }
 
 #[test]
+/// `--ast-types` *added* on a rerun over a crate that was originally
+/// scaffolded without it (#360): the first run's `bindings/rust/lib.rs` has
+/// no `pub mod ast;` at all, since `--ast-types` was never passed. Unlike
+/// `scaffold_ast_types_rerun_regenerates_ast_rs_but_preserves_example`
+/// (which starts *with* `--ast-types` on both runs, so `lib.rs` already has
+/// the line from the first run and this gap never triggers), the second run
+/// here must patch the existing, otherwise-untouched `lib.rs` to add it —
+/// proven both by inspecting the file directly and, matching the issue's
+/// own repro, by actually building and running the generated crate's
+/// `examples/ast.rs` (which fails to compile with an unresolved `use
+/// {crate}::ast::...` import without the fix).
+fn scaffold_ast_types_added_on_rerun_patches_lib_rs() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_ast_added_rerun.bnf", SCAFFOLD_AST_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_ast_added_rerun_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let first = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "first scaffold run (without --ast-types) must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let lib_rs_path = out_dir.join("bindings/rust/lib.rs");
+    let lib_rs_before = std::fs::read_to_string(&lib_rs_path).unwrap();
+    assert!(
+        !lib_rs_before.contains("pub mod ast;"),
+        "sanity check: lib.rs must not yet declare `ast` before --ast-types is ever passed"
+    );
+
+    let second = tool()
+        .args([
+            "scaffold",
+            "--name",
+            "mylang",
+            "--ast-types",
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "second scaffold run (adding --ast-types) must succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let lib_rs_after = std::fs::read_to_string(&lib_rs_path).unwrap();
+    assert!(
+        lib_rs_after.contains("pub mod ast;"),
+        "lib.rs must gain `pub mod ast;` once --ast-types is added on a rerun: {lib_rs_after}"
+    );
+
+    let stdout = support::run_ast_example(&out_dir, "x = y;\ny = z;\n");
+    assert!(stdout.contains("Program"), "{stdout}");
+}
+
+#[test]
 /// The generated crate must build standing alone even when it lands inside
 /// an existing Cargo workspace (the natural "run `ts-bnf-tool scaffold`
 /// inside my Rust project" workflow) — `dom::scaffold::rust::cargo_toml`'s `[workspace]`
