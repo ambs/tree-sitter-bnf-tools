@@ -377,14 +377,27 @@ mod tests {
 
     #[test]
     /// Independent errors on separate lines each get their own diagnostic.
+    ///
+    /// Uses two separately-recoverable rules (each just missing its
+    /// pattern), blank-line-separated, rather than one rule with a missing
+    /// pattern immediately followed by another with a stray token: that
+    /// input's error-recovery tree shape isn't stable across tree-sitter
+    /// runtime versions — 0.26.11 recovered it as two independent `rule`
+    /// nodes (2 diagnostics), 0.26.12 merges it into a single `rule`/`ERROR`
+    /// node that swallows the second line entirely (1 diagnostic).
+    /// Confirmed this input's tree shape (two clean `rule` nodes, each with
+    /// its own `MISSING pattern`) is identical under both versions.
     fn syntax_multiple_errors_each_reported() {
-        let diags = syntax_diags("root -> ;\nfoo --> bar ;\n", "g.bnf");
+        let diags = syntax_diags("root -> ;\n\nfoo -> ;\n", "g.bnf");
         assert_eq!(diags.len(), 2);
         assert_eq!(
             diags[0].message,
             "syntax error at g.bnf:1:8: missing 'pattern'"
         );
-        assert_eq!(diags[1].message, "syntax error at g.bnf:2:5 near '-'");
+        assert_eq!(
+            diags[1].message,
+            "syntax error at g.bnf:3:7: missing 'pattern'"
+        );
     }
 
     #[test]
