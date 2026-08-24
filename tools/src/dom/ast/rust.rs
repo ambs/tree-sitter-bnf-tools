@@ -1299,6 +1299,21 @@ mod tests {
         }
     }
 
+    /// A field label starting with `_` is rejected (#359): that whole
+    /// namespace is reserved for the fields this tool injects itself
+    /// (`_pragma`, `_text`) — see [`check_field_labels_are_representable`].
+    #[test]
+    fn new_rejects_field_label_starting_with_underscore() {
+        let g = Grammar::from_rules([
+            p("stmt", Field("_hidden".into(), Box::new(nt("ident")))),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        assert!(
+            matches!(&RustAst::new(&g, "g", true, None), Err(e) if e.contains("_hidden")),
+            "a leading-underscore field label must be rejected with an error naming it"
+        );
+    }
+
     #[test]
     #[should_panic(expected = "is unrepresentable and should have been rejected")]
     fn rust_field_ident_panics_on_unrepresentable_label() {
