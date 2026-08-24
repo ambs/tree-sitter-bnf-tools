@@ -136,6 +136,10 @@ pub fn run_scaffold(
         }
     }
 
+    if ast_types {
+        ensure_lib_rs_declares_ast_module(&dir)?;
+    }
+
     Ok(())
 }
 
@@ -153,4 +157,71 @@ fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
     }
     fs::write(path, content)?;
     Ok(())
+}
+
+/// Patches `bindings/rust/lib.rs` (already written by the caller's own file
+/// loop, fresh or preserved) to add `pub mod ast;` if it's missing.
+///
+/// `write_if_absent` above leaves an existing `lib.rs` completely
+/// untouched — including the case where [`rust::render`]'s freshly
+/// computed content would have included `pub mod ast;` this time, but
+/// never gets written because the file already exists. A `lib.rs` scaffolded
+/// before `--ast-types` was ever passed therefore permanently lacks the
+/// declaration even once a later rerun adds the flag, leaving
+/// `examples/ast.rs`'s `use {crate}::ast::{Root};` an unresolved import
+/// (#360). Only called when `ast_types` is `true`, so a rerun that never
+/// passes `--ast-types` is untouched, matching `write_if_absent`'s
+/// documented "won't touch them" guarantee for every other case.
+///
+/// Inserted right after the `pub mod visitor;` line — [`rust::render`]'s own
+/// insertion point — so the patched file ends up matching what a fresh
+/// scaffold would have produced; appended at the end as a defensive
+/// fallback if that anchor line isn't found (e.g. removed by hand). A no-op
+/// if `pub mod ast;` is already present, which covers every ordinary
+/// `--ast-types` run, fresh or rerun.
+fn ensure_lib_rs_declares_ast_module(dir: &Path) -> Result<(), Box<dyn Error>> {
+    let path = dir.join("bindings/rust/lib.rs");
+    let content = fs::read_to_string(&path)?;
+    if content.contains("pub mod ast;") {
+        return Ok(());
+    }
+
+    let anchor = "pub mod visitor;\n";
+    let patched = match content.find(anchor) {
+        Some(idx) => {
+            let mut patched = content;
+            patched.insert_str(idx + anchor.len(), "pub mod ast;\n");
+            patched
+        }
+        None => format!("{content}\npub mod ast;\n"),
+    };
+    fs::write(&path, patched)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `pub mod visitor;` anchor line missing (e.g. removed by hand)
+    /// still gets `pub mod ast;` appended at the end, rather than silently
+    /// leaving the file untouched — the defensive fallback branch the
+    /// integration tests in `tools/tests/cli.rs` (which always scaffold a
+    /// `lib.rs` with the anchor present) never exercise.
+    #[test]
+    fn ensure_lib_rs_declares_ast_module_appends_when_anchor_missing() {
+        let dir = std::env::temp_dir().join("ts_bnf_ensure_lib_rs_no_anchor_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bindings/rust")).unwrap();
+        let lib_rs_path = dir.join("bindings/rust/lib.rs");
+        fs::write(&lib_rs_path, "// no visitor module declared here\n").unwrap();
+
+        ensure_lib_rs_declares_ast_module(&dir).unwrap();
+
+        let content = fs::read_to_string(&lib_rs_path).unwrap();
+        assert!(
+            content.contains("pub mod ast;"),
+            "pub mod ast; must be appended even without the usual anchor: {content}"
+        );
+    }
 }
