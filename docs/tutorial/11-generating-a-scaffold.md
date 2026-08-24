@@ -257,10 +257,16 @@ around `tree_sitter::Node` plus the source text — and
 traversal and dispatch, but node payloads stay stringly-typed. Passing
 `--ast-types` alongside `scaffold` adds a second, independent layer on top:
 `bindings/rust/ast.rs`, one owned Rust struct per grammar rule (no `'tree`
-lifetime survives construction), each with a `TryFrom<SourceNode<'tree>>`
-impl and a `pragma: Pragma` field recording its start line/column. A leaf
-kind — one with no visible children of its own — additionally carries
-`text: String`.
+lifetime survives construction), each with a
+`TryFrom<super::visitor::SourceNode<'tree>>` impl and a `_pragma:
+runtime::Pragma` field recording its start line/column. A leaf kind — one
+with no visible children of its own — additionally carries `_text: String`.
+`Pragma` and `BuildError` (the shared `TryFrom` error type) live inside an
+inner `runtime` module rather than at `ast.rs`'s own top level, and the two
+injected fields are spelled with a leading underscore — both so that a
+grammar rule or field genuinely named `pragma`, `text`, `build_error`, or
+`source_node` can never collide with these fixed, tool-injected names; see
+"A note on vocabulary" below.
 
 ```sh
 ts-bnf-tool scaffold --name decls --ast-types decls.bnf
@@ -274,38 +280,38 @@ its `TryFrom` impl builds both from the parsed node:
 /// `decl` node.
 #[derive(Debug)]
 pub struct Decl {
-    pub pragma: Pragma,
+    pub _pragma: runtime::Pragma,
     pub target: Ident,
     pub value: Expr,
 }
 
-impl<'tree> TryFrom<SourceNode<'tree>> for Decl {
-    type Error = BuildError;
+impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for Decl {
+    type Error = runtime::BuildError;
 
-    fn try_from(node: SourceNode<'tree>) -> Result<Self, Self::Error> {
-        let pragma = Pragma::from(node);
+    fn try_from(node: super::visitor::SourceNode<'tree>) -> Result<Self, Self::Error> {
+        let _pragma = runtime::Pragma::from(node);
         let target = node
             .child_by_field("target")
-            .ok_or(BuildError::MissingField { kind: "decl", field: "target" })?
+            .ok_or(runtime::BuildError::MissingField { kind: "decl", field: "target" })?
             .try_into()?;
         let value = node
             .child_by_field("value")
-            .ok_or(BuildError::MissingField { kind: "decl", field: "value" })?
+            .ok_or(runtime::BuildError::MissingField { kind: "decl", field: "value" })?
             .try_into()?;
-        Ok(Decl { pragma, target, value })
+        Ok(Decl { _pragma, target, value })
     }
 }
 ```
 
-`ident`, being a leaf, gets a `text: String` field instead of any nested
+`ident`, being a leaf, gets a `_text: String` field instead of any nested
 struct:
 
 ```rust
 /// `ident` node.
 #[derive(Debug)]
 pub struct Ident {
-    pub pragma: Pragma,
-    pub text: String,
+    pub _pragma: runtime::Pragma,
+    pub _text: String,
 }
 ```
 
@@ -319,14 +325,14 @@ $ printf 'x = 1;\ny = x;\n' > sample.decls
 $ cargo run --example ast -- sample.decls
 sample.decls:
 Program {
-    pragma: Pragma {
+    _pragma: Pragma {
         line: 1,
         column: 1,
     },
 }
 ```
 
-(`Program` has only `pragma` here — `decl*` in `program -> decl* ;` has no
+(`Program` has only `_pragma` here — `decl*` in `program -> decl* ;` has no
 field label of its own, and only labeled fields become struct fields; give
 it one, e.g. `program -> items: decl* ;`, to get a `pub items: Vec<Decl>`
 field instead.)
@@ -337,6 +343,17 @@ type, wrap it in your own struct rather than editing the generated file; a
 rerun of `scaffold --ast-types` overwrites it every time, same as
 `visitor.rs`, while `examples/ast.rs` itself follows the same
 write-once-then-leave-alone rule as `examples/walk.rs`.
+
+**A note on vocabulary.** Grammar rule and field names are otherwise
+completely unrestricted — including `pragma`, `text`, `build_error`, and
+`source_node`, all plausible names a real grammar might want (a `pragma`
+directive rule, a `text` leaf, a field called `text`). A kind named any of
+these generates an ordinary top-level `struct Pragma`/`Text`/`BuildError`/
+`SourceNode`, distinct from the tool's own fixed `runtime::Pragma`,
+`runtime::BuildError`, and `super::visitor::SourceNode`. The only
+restriction is on field labels: one starting with `_` is rejected at
+generation time, since that whole leading-underscore namespace is reserved
+for the fields this tool injects itself (`_pragma`, `_text`).
 
 ### Collapsing related kinds (`--merge-config`)
 
@@ -377,7 +394,7 @@ generates:
 
 ```rust
 pub struct Program {
-    pub pragma: Pragma,
+    pub _pragma: runtime::Pragma,
     pub items: Vec<Loop>,
     pub doc: DocComment,
 }
@@ -392,15 +409,15 @@ pub enum Loop {
     RepeatStatement(RepeatStatement),
 }
 
-impl<'tree> TryFrom<SourceNode<'tree>> for Loop {
-    type Error = BuildError;
+impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for Loop {
+    type Error = runtime::BuildError;
 
-    fn try_from(node: SourceNode<'tree>) -> Result<Self, Self::Error> {
+    fn try_from(node: super::visitor::SourceNode<'tree>) -> Result<Self, Self::Error> {
         match node.node.kind() {
             "for_statement" => Ok(Loop::ForStatement(node.try_into()?)),
             "while_statement" => Ok(Loop::WhileStatement(node.try_into()?)),
             "repeat_statement" => Ok(Loop::RepeatStatement(node.try_into()?)),
-            found => Err(BuildError::UnexpectedKind {
+            found => Err(runtime::BuildError::UnexpectedKind {
                 expected: "Loop",
                 found: found.to_string(),
             }),

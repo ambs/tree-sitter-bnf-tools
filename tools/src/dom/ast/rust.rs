@@ -69,28 +69,56 @@ impl<'a> RustAst<'a> {
 }
 
 impl RustAst<'_> {
-    /// Emits `use super::visitor::SourceNode;` — the first line of real
-    /// content in the generated file, right after `fmt_header`'s
-    /// comment/blank-line pair — followed by the `Pragma` struct and its
-    /// `From<SourceNode<'_>>` impl. `Pragma` stores 1-indexed
-    /// `line`/`column` (tree-sitter itself is 0-indexed; this converts
-    /// once here).
-    fn fmt_pragma(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    /// Emits `runtime`, an inner module holding the two fixed types every
+    /// generated node needs: `Pragma` (a node's start position, 1-indexed —
+    /// tree-sitter itself is 0-indexed, this converts once here) and
+    /// `BuildError` (the shared `TryFrom` error type, [`fmt_build_error`]'s
+    /// previous top-level content) — the first real content in the
+    /// generated file, right after `fmt_header`'s comment/blank-line pair.
+    /// Namespacing them inside `runtime` rather than declaring them at
+    /// `ast.rs`'s own top level is what makes a grammar kind named
+    /// `pragma`/`build_error` — otherwise indistinguishable from any other
+    /// kind name — collision-free: the grammar's own `pub struct Pragma`
+    /// (should a kind ever be named that) lives at the top level,
+    /// `runtime::Pragma` one level down; two different paths can never
+    /// collide (#359). No `use super::visitor::SourceNode;` is emitted
+    /// anywhere in the file for the same reason: an unqualified import
+    /// would occupy the bare name `SourceNode` at module scope, so every
+    /// reference is instead spelled out as `super::visitor::SourceNode`
+    /// (`super::super::` from within this nested `runtime` module).
+    fn fmt_runtime_module(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let body = indoc! {r#"
-            use super::visitor::SourceNode;
+            pub mod runtime {
+                /// A node's start position in its source file.
+                /// 1-indexed (tree-sitter uses 0-index; this converts once here).
+                #[derive(Debug)]
+                pub struct Pragma {
+                    pub line: usize,
+                    pub column: usize,
+                }
 
-            /// A node's start position in its source file.
-            /// 1-indexed (tree-sitter uses 0-index; this converts once here).
-            #[derive(Debug)]
-            pub struct Pragma {
-                pub line: usize,
-                pub column: usize,
-            }
+                impl From<super::super::visitor::SourceNode<'_>> for Pragma {
+                    fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
+                        let point = node.node.start_position();
+                        Pragma { line: point.row + 1, column: point.column + 1 }
+                    }
+                }
 
-            impl From<SourceNode<'_>> for Pragma {
-                fn from(node: SourceNode<'_>) -> Self {
-                    let point = node.node.start_position();
-                    Pragma { line: point.row + 1, column: point.column + 1 }
+                /// An error building a typed AST node from a parsed tree.
+                #[derive(Debug)]
+                pub enum BuildError {
+                    /// A field the grammar guarantees is present was absent on this
+                    /// particular node — shouldn't happen for a tree that parsed without
+                    /// errors, but `child_by_field` returns `Option`, so this is what a
+                    /// `None` becomes.
+                    MissingField { kind: &'static str, field: &'static str },
+                    /// A multi-shape field's child had a kind outside its declared
+                    /// target-kind set.
+                    UnexpectedKind { expected: &'static str, found: String },
+                    /// A leaf node's text was not valid UTF-8 — a grammar's own tokenizer
+                    /// should only ever produce valid UTF-8 out of valid UTF-8 source, so
+                    /// this is defensive, not expected in practice.
+                    InvalidUtf8(std::str::Utf8Error),
                 }
             }
         "#};
@@ -116,68 +144,40 @@ impl RustAst<'_> {
         Ok(())
     }
 
-    /// Emits a second `impl<'tree> SourceNode<'tree>` block (`visitor.rs`
-    /// defines the struct itself; this only adds inherent methods) with
-    /// the three helpers every generated `TryFrom` impl needs:
-    /// `child_by_field` and `children_by_field` for single-target and
-    /// `multiple: true` fields respectively, and `text` for a leaf kind's
-    /// own source text.
+    /// Emits a second `impl<'tree> super::visitor::SourceNode<'tree>` block
+    /// (`visitor.rs` defines the struct itself; this only adds inherent
+    /// methods) with the three helpers every generated `TryFrom` impl
+    /// needs: `child_by_field` and `children_by_field` for single-target
+    /// and `multiple: true` fields respectively, and `text` for a leaf
+    /// kind's own source text.
     fn fmt_node_helpers(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let body = indoc! {r#"
-            impl<'tree> SourceNode<'tree> {
+            impl<'tree> super::visitor::SourceNode<'tree> {
                 /// The child at `field_name`, if present, bundled with this node's
                 /// own source text.
-                pub fn child_by_field(&self, field_name: &str) -> Option<SourceNode<'tree>> {
+                pub fn child_by_field(&self, field_name: &str) -> Option<super::visitor::SourceNode<'tree>> {
                     self.node
                         .child_by_field_name(field_name)
-                        .map(|node| SourceNode { node, source: self.source })
+                        .map(|node| super::visitor::SourceNode { node, source: self.source })
                 }
-            
+
                 /// Every child at `field_name`, in declaration order, each bundled
                 /// with this node's own source text — for `multiple: true` fields
                 /// (`Vec<T>`); see the worked example above.
-                pub fn children_by_field(&self, field_name: &str) -> Vec<SourceNode<'tree>> {
+                pub fn children_by_field(&self, field_name: &str) -> Vec<super::visitor::SourceNode<'tree>> {
                     let mut cursor = self.node.walk();
                     self.node
                         .children_by_field_name(field_name, &mut cursor)
-                        .map(|node| SourceNode { node, source: self.source })
+                        .map(|node| super::visitor::SourceNode { node, source: self.source })
                         .collect()
                 }
-            
-                /// This node's own source text — for a leaf kind's `text: String` field.
-                pub fn text(&self) -> Result<&'tree str, BuildError> {
+
+                /// This node's own source text — for a leaf kind's `_text: String` field.
+                pub fn text(&self) -> Result<&'tree str, runtime::BuildError> {
                     self.node
                         .utf8_text(self.source.as_bytes())
-                        .map_err(BuildError::InvalidUtf8)
+                        .map_err(runtime::BuildError::InvalidUtf8)
                 }
-            }
-        "#};
-        writeln!(f, "{}", body)
-    }
-
-    /// Emits `BuildError`, the error type shared by every generated
-    /// `TryFrom` impl: a required field absent from a node
-    /// (`MissingField`), a multi-shape field's child with a kind outside
-    /// its declared set (`UnexpectedKind`), or a leaf node's text not
-    /// being valid UTF-8 (`InvalidUtf8`, defensive — shouldn't happen for
-    /// a grammar's own tokenizer output).
-    fn fmt_build_error(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let body = indoc! {r#"
-            /// An error building a typed AST node from a parsed tree.
-            #[derive(Debug)]
-            pub enum BuildError {
-                /// A field the grammar guarantees is present was absent on this
-                /// particular node — shouldn't happen for a tree that parsed without
-                /// errors, but `child_by_field` returns `Option`, so this is what a
-                /// `None` becomes.
-                MissingField { kind: &'static str, field: &'static str },
-                /// A multi-shape field's child had a kind outside its declared
-                /// target-kind set.
-                UnexpectedKind { expected: &'static str, found: String },
-                /// A leaf node's text was not valid UTF-8 — a grammar's own tokenizer
-                /// should only ever produce valid UTF-8 out of valid UTF-8 source, so
-                /// this is defensive, not expected in practice.
-                InvalidUtf8(std::str::Utf8Error),
             }
         "#};
         writeln!(f, "{}", body)
@@ -255,9 +255,8 @@ impl RustAst<'_> {
 impl fmt::Display for RustAst<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.fmt_header(f)?;
-        self.fmt_pragma(f)?;
+        self.fmt_runtime_module(f)?;
         self.fmt_node_helpers(f)?;
-        self.fmt_build_error(f)?;
         self.fmt_structs(f)
     }
 }
@@ -300,7 +299,7 @@ fn fmt_struct_decl(
     multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
     merge_config: Option<&MergeConfig>,
 ) -> String {
-    let mut fields = vec!["    pub pragma: Pragma,".to_string()];
+    let mut fields = vec!["    pub _pragma: runtime::Pragma,".to_string()];
 
     fields.extend(
         spec.fields
@@ -316,7 +315,7 @@ fn fmt_struct_decl(
     );
 
     if spec.is_leaf {
-        fields.push("    pub text: String,".to_string());
+        fields.push("    pub _text: String,".to_string());
     }
 
     let fields_text = fields.join("\n");
@@ -383,10 +382,10 @@ fn fmt_multi_shape_enum_try_from(
     match_stmt = indent(&match_stmt, 4);
 
     formatdoc! {r#"
-        fn try_from(node: SourceNode<'tree>) -> Result<Self, Self::Error> {{
+        fn try_from(node: super::visitor::SourceNode<'tree>) -> Result<Self, Self::Error> {{
         {match_stmt}
         {match_arms}
-                found => Err(BuildError::UnexpectedKind {{
+                found => Err(runtime::BuildError::UnexpectedKind {{
                     expected: "{name}",
                     found: found.to_string(),
                 }}),
@@ -451,12 +450,12 @@ fn fmt_multi_shape_enum_decl(
 }
 
 /// Field labels that can never be represented as a Rust identifier, raw or
-/// otherwise: `self`, `Self`, `super`, `crate`, and a bare `_` keep special
-/// path/pattern meaning in Rust even as raw identifiers (`r#self` etc. is a
-/// hard `rustc` error), and — unlike an ordinary keyword — there's no other
-/// safe escape for them either: any plain-text substitute (e.g. a suffix)
-/// is itself a syntactically valid field label (field labels are lexically
-/// unrestricted Rust-identifier-shaped text, `tree-sitter-bnf/grammar.js`'s
+/// otherwise: `self`, `Self`, `super`, and `crate` keep special path meaning
+/// in Rust even as raw identifiers (`r#self` etc. is a hard `rustc` error),
+/// and — unlike an ordinary keyword — there's no other safe escape for them
+/// either: any plain-text substitute (e.g. a suffix) is itself a
+/// syntactically valid field label (field labels are lexically unrestricted
+/// Rust-identifier-shaped text, `tree-sitter-bnf/grammar.js`'s
 /// `fieldLabel`), and a raw identifier is *not* a distinct namespace from
 /// the plain one (`r#foo` and `foo` name the exact same field — confirmed
 /// empirically: declaring both on one struct is rustc error E0124, "field
@@ -465,15 +464,27 @@ fn fmt_multi_shape_enum_decl(
 /// from `syn`'s keyword table like [`rust_field_ident`]'s general case: it
 /// isn't "which words are keywords" (which grows every edition) but rustc's
 /// own raw-identifier grammar production, which explicitly excludes just
-/// these four keywords (plus `_`, itself not a keyword but similarly
-/// reserved) — a categorically fixed set, not the general keyword list.
-const UNREPRESENTABLE_FIELD_LABELS: [&str; 5] = ["self", "Self", "super", "crate", "_"];
+/// these four keywords — a categorically fixed set, not the general keyword
+/// list. A bare `_` is *not* in this list: it's covered instead by the
+/// leading-underscore check in [`check_field_labels_are_representable`],
+/// since `_` itself starts with `_`.
+const UNREPRESENTABLE_FIELD_LABELS: [&str; 4] = ["self", "Self", "super", "crate"];
 
-/// Validates that every field label `grammar` derives can be represented
-/// as a Rust identifier ([`UNREPRESENTABLE_FIELD_LABELS`]), rejecting the
-/// grammar with an actionable error otherwise instead of letting
-/// generation silently produce code with a residual collision risk.
-/// Called once from [`RustAst::new`], before generation starts.
+/// Validates that every field label `grammar` derives is safe to emit as a
+/// struct field: not one of [`UNREPRESENTABLE_FIELD_LABELS`], and not
+/// starting with `_`. The leading-underscore restriction reserves that
+/// whole namespace for fields this tool injects itself (`pragma`, `text`)
+/// rather than deriving from the grammar — see [`fmt_struct_decl`]. Unlike
+/// [`UNREPRESENTABLE_FIELD_LABELS`] (names Rust itself can never represent),
+/// `pragma`/`text` are perfectly ordinary identifiers that a grammar's own
+/// field label could otherwise collide with letter-for-letter (#359); since
+/// the grammar's `fieldLabel` production spans the *entire* ASCII
+/// identifier space, there's no fixed suffix/prefix within that space that
+/// could be reserved for the injected names instead — the restriction has
+/// to run the other way, narrowing what grammar labels may claim. Rejects
+/// the grammar with an actionable error rather than letting generation
+/// silently produce code with a residual collision risk. Called once from
+/// [`RustAst::new`], before generation starts.
 fn check_field_labels_are_representable(grammar: &Grammar) -> Result<(), String> {
     for spec in derive_ast_node_specs(grammar).values() {
         for field_name in spec.fields.keys() {
@@ -487,6 +498,13 @@ fn check_field_labels_are_representable(grammar: &Grammar) -> Result<(), String>
                         .map(|kw| format!("'{kw}'"))
                         .collect::<Vec<_>>()
                         .join(", ")
+                ));
+            }
+            if field_name.starts_with('_') {
+                return Err(format!(
+                    "field '{field_name}' cannot be used as a grammar field label: names \
+                     starting with '_' are reserved for fields this tool injects itself \
+                     (`pragma`, `text`); rename this field in the grammar"
                 ));
             }
         }
@@ -560,7 +578,7 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
         formatdoc! {r#"
             let {field_ident} = node
                 .child_by_field("{field_name}")
-                .ok_or(BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
+                .ok_or(runtime::BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
                 .text()?
                 .to_string();
         "#}
@@ -568,7 +586,7 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
         formatdoc! {r#"
             let {field_ident} = node
                 .child_by_field("{field_name}")
-                .ok_or(BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
+                .ok_or(runtime::BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
                 .try_into()?;
         "#}
     } else {
@@ -936,21 +954,21 @@ fn fmt_struct_try_from(struct_name: &str, kind: &str, spec: &AstNodeSpec) -> Str
         .map(|f| rust_field_ident(f))
         .collect::<Vec<_>>();
     if spec.is_leaf {
-        fields_try_from.push("let text = node.text()?.to_string();".to_string());
-        field_list.push("text".to_string());
+        fields_try_from.push("let _text = node.text()?.to_string();".to_string());
+        field_list.push("_text".to_string());
     }
 
     let fields_try_from_text = indent(&fields_try_from.join(""), 8);
     let field_list_text = field_list.join(", ");
 
     formatdoc! {r#"
-        impl<'tree> TryFrom<SourceNode<'tree>> for {name} {{
-            type Error = BuildError;
+        impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for {name} {{
+            type Error = runtime::BuildError;
 
-            fn try_from(node: SourceNode<'tree>) -> Result<Self, Self::Error> {{
-                let pragma = Pragma::from(node);
+            fn try_from(node: super::visitor::SourceNode<'tree>) -> Result<Self, Self::Error> {{
+                let _pragma = runtime::Pragma::from(node);
         {fields_try_from_text}
-                Ok({name} {{ pragma, {field_list_text} }})
+                Ok({name} {{ _pragma, {field_list_text} }})
             }}
         }}
     "#}
@@ -976,8 +994,8 @@ fn fmt_multi_shape_enum(
 
     formatdoc! {r#"
         {enum_text}
-        impl<'tree> TryFrom<SourceNode<'tree>> for {name} {{
-            type Error = BuildError;
+        impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for {name} {{
+            type Error = runtime::BuildError;
 
         {impl_text}
         }}
@@ -1027,7 +1045,7 @@ mod tests {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = ra(&g, "g").to_string();
         assert!(!out.contains("Generated by"));
-        assert!(out.starts_with("use super::visitor::SourceNode;"));
+        assert!(out.starts_with("pub mod runtime {"));
     }
 
     #[test]
@@ -1037,7 +1055,7 @@ mod tests {
         assert!(out.contains("pub struct Pragma {"));
         assert!(out.contains("pub line: usize,"));
         assert!(out.contains("pub column: usize,"));
-        assert!(out.contains("impl From<SourceNode<'_>> for Pragma {"));
+        assert!(out.contains("impl From<super::super::visitor::SourceNode<'_>> for Pragma {"));
     }
 
     #[test]
@@ -1046,7 +1064,7 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("pub fn child_by_field(&self, field_name: &str)"));
         assert!(out.contains("pub fn children_by_field(&self, field_name: &str)"));
-        assert!(out.contains("pub fn text(&self) -> Result<&'tree str, BuildError>"));
+        assert!(out.contains("pub fn text(&self) -> Result<&'tree str, runtime::BuildError>"));
     }
 
     #[test]
@@ -1063,15 +1081,15 @@ mod tests {
     fn display_assembles_blocks_in_order() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = ra(&g, "g").to_string();
-        let use_pos = out.find("use super::visitor::SourceNode;").unwrap();
+        let runtime_pos = out.find("pub mod runtime {").unwrap();
         let pragma_pos = out.find("pub struct Pragma {").unwrap();
-        let helpers_pos = out.find("pub fn child_by_field(").unwrap();
         let error_pos = out.find("pub enum BuildError {").unwrap();
+        let helpers_pos = out.find("pub fn child_by_field(").unwrap();
         let struct_pos = out.find("pub struct A {").unwrap();
-        assert!(use_pos < pragma_pos);
-        assert!(pragma_pos < helpers_pos);
-        assert!(helpers_pos < error_pos);
-        assert!(error_pos < struct_pos);
+        assert!(runtime_pos < pragma_pos);
+        assert!(pragma_pos < error_pos);
+        assert!(error_pos < helpers_pos);
+        assert!(helpers_pos < struct_pos);
     }
 
     // ── four-way field-type breakdown ───────────────────────────────────
@@ -1263,7 +1281,7 @@ mod tests {
         assert!(out.contains("let r#type = node"));
         assert!(out.contains(".child_by_field(\"type\")"));
         assert!(out.contains("field: \"type\""));
-        assert!(out.contains("Ok(Stmt { pragma, r#type })"));
+        assert!(out.contains("Ok(Stmt { _pragma, r#type })"));
         assert!(!out.contains("pub type:"));
     }
 
@@ -1279,6 +1297,21 @@ mod tests {
                 "'{unrepresentable}' must be rejected with an error naming it"
             );
         }
+    }
+
+    /// A field label starting with `_` is rejected (#359): that whole
+    /// namespace is reserved for the fields this tool injects itself
+    /// (`_pragma`, `_text`) — see [`check_field_labels_are_representable`].
+    #[test]
+    fn new_rejects_field_label_starting_with_underscore() {
+        let g = Grammar::from_rules([
+            p("stmt", Field("_hidden".into(), Box::new(nt("ident")))),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        assert!(
+            matches!(&RustAst::new(&g, "g", true, None), Err(e) if e.contains("_hidden")),
+            "a leading-underscore field label must be rejected with an error naming it"
+        );
     }
 
     #[test]
@@ -1297,9 +1330,9 @@ mod tests {
         let g = Grammar::from_rules([p("num", TerminalPattern("/[0-9]+/".into()))]);
         let out = ra(&g, "g").to_string();
         assert!(out.contains("pub struct Num {"));
-        assert!(out.contains("pub text: String,"));
-        assert!(out.contains("let text = node.text()?.to_string();"));
-        assert!(out.contains("Ok(Num { pragma, text })"));
+        assert!(out.contains("pub _text: String,"));
+        assert!(out.contains("let _text = node.text()?.to_string();"));
+        assert!(out.contains("Ok(Num { _pragma, _text })"));
     }
 
     #[test]
@@ -1310,7 +1343,9 @@ mod tests {
         ]);
         let out = ra(&g, "g").to_string();
         assert!(out.contains(".child_by_field(\"value\")"));
-        assert!(out.contains("BuildError::MissingField { kind: \"decl\", field: \"value\" }"));
+        assert!(
+            out.contains("runtime::BuildError::MissingField { kind: \"decl\", field: \"value\" }")
+        );
     }
 
     // ── merge-config privacy (kind_is_merged_away / fmt_struct_decl) ────
@@ -1361,8 +1396,12 @@ mod tests {
     fn merged_kind_try_from_impl_unaffected_by_privacy() {
         let (g, config) = merge_grammar_and_config();
         let out = ra_with_merge(&g, "g", &config).to_string();
-        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for ForStatement {"));
-        assert!(out.contains("Ok(ForStatement { pragma, text })"));
+        assert!(
+            out.contains(
+                "impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for ForStatement {"
+            )
+        );
+        assert!(out.contains("Ok(ForStatement { _pragma, _text })"));
     }
 
     /// A kind no `merge` entry claims stays `pub`, even when `merge_config`
@@ -1421,7 +1460,7 @@ mod tests {
         assert!(out.contains("WhileStatement(WhileStatement),"));
         assert!(out.contains("RepeatStatement(RepeatStatement),"));
 
-        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for Loop {"));
+        assert!(out.contains("impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for Loop {"));
         assert!(out.contains("\"for_statement\" => Ok(Loop::ForStatement(node.try_into()?)),"));
         assert!(out.contains("\"while_statement\" => Ok(Loop::WhileStatement(node.try_into()?)),"));
         assert!(
@@ -1430,8 +1469,12 @@ mod tests {
         assert!(out.contains("expected: \"Loop\","));
 
         // Each merged kind's own `TryFrom` is phase 3's unchanged output.
-        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for ForStatement {"));
-        assert!(out.contains("Ok(ForStatement { pragma, text })"));
+        assert!(
+            out.contains(
+                "impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for ForStatement {"
+            )
+        );
+        assert!(out.contains("Ok(ForStatement { _pragma, _text })"));
     }
 
     // ── passthrough (342.5.5) ─────────────────────────────────────────────
@@ -1452,8 +1495,10 @@ mod tests {
         let out = ra_with_merge(&g, "g", &config).to_string();
         assert!(out.contains("pub struct DocComment {"));
         assert!(!out.contains("struct Comment {"));
-        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for DocComment {"));
-        assert!(out.contains("Ok(DocComment { pragma, text })"));
+        assert!(
+            out.contains("impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for DocComment {")
+        );
+        assert!(out.contains("Ok(DocComment { _pragma, _text })"));
     }
 
     // ── field-type resolution gap fix (342.5.13) ─────────────────────────
@@ -1727,7 +1772,7 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("\"num\" => Ok(Value::Num(node.try_into()?)),"));
         assert!(out.contains("\"str\" => Ok(Value::Str(node.try_into()?)),"));
-        assert!(out.contains("found => Err(BuildError::UnexpectedKind {"));
+        assert!(out.contains("found => Err(runtime::BuildError::UnexpectedKind {"));
         assert!(out.contains("expected: \"Value\","));
     }
 
@@ -1746,8 +1791,8 @@ mod tests {
             p("if_stmt", TerminalLiteral("'i'".into())),
         ]);
         let out = ra(&g, "g").to_string();
-        assert!(out.contains("pub struct Statement {\n    pub pragma: Pragma,\n}"));
-        assert!(out.contains("Ok(Statement { pragma,  })"));
+        assert!(out.contains("pub struct Statement {\n    pub _pragma: runtime::Pragma,\n}"));
+        assert!(out.contains("Ok(Statement { _pragma,  })"));
     }
 
     // ── #[derive(Debug)] on every generated type ────────────────────────
@@ -1763,7 +1808,7 @@ mod tests {
             p("str", TerminalPattern("/\"[^\"]*\"/".into())),
         ]);
         let out = ra(&g, "g").to_string();
-        assert!(out.contains("#[derive(Debug)]\npub struct Pragma {"));
+        assert!(out.contains("#[derive(Debug)]\n    pub struct Pragma {"));
         assert!(out.contains("#[derive(Debug)]\npub struct Decl {"));
         assert!(out.contains("#[derive(Debug)]\npub enum Value {"));
     }
@@ -1777,9 +1822,9 @@ mod tests {
             p("b", TerminalLiteral("'b'".into())),
         ]);
         let out = ra(&g, "g").to_string();
-        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for A {"));
-        assert!(out.contains("impl<'tree> TryFrom<SourceNode<'tree>> for B {"));
-        assert!(out.contains("Ok(A { pragma, text })"));
-        assert!(out.contains("Ok(B { pragma, text })"));
+        assert!(out.contains("impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for A {"));
+        assert!(out.contains("impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for B {"));
+        assert!(out.contains("Ok(A { _pragma, _text })"));
+        assert!(out.contains("Ok(B { _pragma, _text })"));
     }
 }
