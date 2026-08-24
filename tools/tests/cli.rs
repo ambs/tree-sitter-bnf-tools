@@ -2509,9 +2509,18 @@ const SYNTAX_ERROR_BNF: &str = indoc! {"
 "};
 
 /// A grammar with two independent syntax errors on separate lines.
+// Two separately-recoverable rules (each just missing its pattern),
+// blank-line-separated, rather than one rule with a missing pattern
+// immediately followed by another with a stray token: that shape's
+// error-recovery tree isn't stable across tree-sitter runtime versions —
+// 0.26.11 recovered it as two independent `rule` nodes, 0.26.12 merges it
+// into one `rule`/`ERROR` node that swallows the second line entirely.
+// Confirmed this shape (two clean `rule` nodes, each with its own `MISSING
+// pattern`) is identical under both versions.
 const TWO_SYNTAX_ERRORS_BNF: &str = indoc! {"
     root -> ;
-    foo --> bar ;
+
+    foo -> ;
 "};
 
 #[test]
@@ -2569,7 +2578,10 @@ fn check_reports_multiple_syntax_errors() {
         stderr.contains(":1:8: missing 'pattern'"),
         "stderr: {stderr}"
     );
-    assert!(stderr.contains(":2:5 near '-'"), "stderr: {stderr}");
+    assert!(
+        stderr.contains(":3:7: missing 'pattern'"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
