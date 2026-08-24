@@ -387,6 +387,12 @@ target = "DocComment"
   default baseline struct" — see the coverage report below for why you'd
   write this out loud instead of just doing nothing.
 
+Every `merge`/`passthrough` entry's own `target` is emitted verbatim as a
+Rust `struct`/`enum` name, so it must be a valid, non-keyword Rust
+identifier (e.g. `Loop`, not `loop`, `my-loop`, or an empty string) —
+`scaffold` rejects the config up front otherwise, rather than emitting
+non-compiling Rust.
+
 Given a grammar with a `program -> items: (for_statement | while_statement |
 repeat_statement)* doc: comment ;` rule and the config above,
 `ts-bnf-tool scaffold --ast-types --merge-config ast-merge.toml grammar.bnf`

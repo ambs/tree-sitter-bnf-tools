@@ -43,6 +43,17 @@ pub struct PassthroughEntry {
     pub target: String,
 }
 
+/// Whether `name` is safe to emit verbatim as a Rust `struct`/`enum` name: a
+/// bare identifier round-trips through `syn::parse_str::<syn::Ident>`
+/// unchanged iff it's non-empty, uses only identifier characters, and isn't
+/// a Rust keyword — the same technique `rust.rs`'s `rust_field_ident` uses
+/// for field labels, just without that function's raw-identifier fallback
+/// (not applicable here — see [`check_merge_config`]'s own doc comment for
+/// why).
+fn is_valid_rust_type_name(name: &str) -> bool {
+    syn::parse_str::<syn::Ident>(name).is_ok()
+}
+
 /// Parses `source` — the contents of a `--merge-config` TOML file — into a
 /// [`MergeConfig`], without checking it against any particular grammar (see
 /// [`check_merge_config`] for that).
@@ -52,12 +63,48 @@ pub fn parse_merge_config(source: &str) -> Result<MergeConfig, String> {
 
 /// Validates `config` against `grammar`.
 ///
+/// Every `merge`/`passthrough` entry's own `target` must be a syntactically
+/// valid, non-keyword Rust identifier ([`is_valid_rust_type_name`]) — it's
+/// emitted verbatim as a `struct`/`enum` name with no escaping available
+/// (unlike a field label, a `target` is referenced unqualified at many
+/// codegen sites, so raw-identifier escaping isn't a good option here),
+/// so an empty string, a name with invalid identifier characters, or a
+/// Rust keyword is rejected up front rather than silently producing
+/// non-compiling Rust (#361).
+///
 /// Every kind named in `merge[].from`, `passthrough[].kind`, and `ignore`
 /// (aside from the literal wildcard `"*"`) must be one of `grammar`'s own
 /// [`visible_kinds`] — a config written against a different grammar, or
 /// with a typo'd kind name, is rejected outright rather than silently
 /// matching nothing.
+///
+/// A kind repeated within one `merge` entry's own `from` list is caught and
+/// reported by name before the general cross-entry collision check below
+/// gets to it — that check's error would otherwise be self-referential and
+/// unhelpful for this particular case ("claimed by more than one entry
+/// (merge target 'Loop' and merge target 'Loop')", #361).
 pub fn check_merge_config(grammar: &Grammar, config: &MergeConfig) -> Result<(), String> {
+    for entry in &config.merge {
+        if !is_valid_rust_type_name(&entry.target) {
+            return Err(format!(
+                "merge entry's target '{}' is not a valid Rust identifier; choose a target \
+                 that isn't empty, uses only Rust identifier characters, and isn't a Rust \
+                 keyword",
+                entry.target
+            ));
+        }
+    }
+    for entry in &config.passthrough {
+        if !is_valid_rust_type_name(&entry.target) {
+            return Err(format!(
+                "passthrough entry '{}''s target '{}' is not a valid Rust identifier; choose a \
+                 target that isn't empty, uses only Rust identifier characters, and isn't a \
+                 Rust keyword",
+                entry.kind, entry.target
+            ));
+        }
+    }
+
     let visible = visible_kinds(grammar);
 
     for entry in &config.merge {
@@ -98,6 +145,18 @@ pub fn check_merge_config(grammar: &Grammar, config: &MergeConfig) -> Result<(),
                 "ignore entry names '{kind}', which is not a visible kind of this grammar; \
                  check for a typo or a kind that no longer exists"
             ));
+        }
+    }
+
+    for entry in &config.merge {
+        let mut seen: IndexSet<&str> = IndexSet::new();
+        for kind in &entry.from {
+            if !seen.insert(kind.as_str()) {
+                return Err(format!(
+                    "kind '{kind}' is listed twice in merge target '{}''s own `from` list",
+                    entry.target
+                ));
+            }
         }
     }
 
@@ -243,6 +302,53 @@ mod tests {
         assert!(check_merge_config(&grammar(), &config).is_ok());
     }
 
+    /// Target names that fail `syn::parse_str::<syn::Ident>`: a Rust
+    /// keyword, a string with an invalid identifier character, and an
+    /// empty string — the three cases named in #361.
+    const INVALID_TARGET_NAMES: [&str; 3] = ["loop", "my-loop", ""];
+
+    /// A `merge` entry whose `target` isn't a valid Rust identifier is
+    /// rejected, naming that target, for each of #361's three cases.
+    #[test]
+    fn check_merge_config_rejects_invalid_merge_target() {
+        for target in INVALID_TARGET_NAMES {
+            let config = MergeConfig {
+                merge: vec![MergeEntry {
+                    target: target.to_string(),
+                    from: vec!["for_statement".to_string()],
+                }],
+                passthrough: vec![],
+                ignore: vec![],
+            };
+            let err = check_merge_config(&grammar(), &config).unwrap_err();
+            assert!(
+                err.contains(&format!("'{target}'")),
+                "target '{target}' must be rejected with an error naming it; got: {err}"
+            );
+        }
+    }
+
+    /// A `passthrough` entry whose `target` isn't a valid Rust identifier is
+    /// rejected, naming that target, for each of #361's three cases.
+    #[test]
+    fn check_merge_config_rejects_invalid_passthrough_target() {
+        for target in INVALID_TARGET_NAMES {
+            let config = MergeConfig {
+                merge: vec![],
+                passthrough: vec![PassthroughEntry {
+                    kind: "comment".to_string(),
+                    target: target.to_string(),
+                }],
+                ignore: vec![],
+            };
+            let err = check_merge_config(&grammar(), &config).unwrap_err();
+            assert!(
+                err.contains(&format!("'{target}'")),
+                "target '{target}' must be rejected with an error naming it; got: {err}"
+            );
+        }
+    }
+
     /// An unknown kind in a `merge` entry's `from` list is rejected, naming it.
     #[test]
     fn check_merge_config_detects_unknown_kind_in_merge_from() {
@@ -348,6 +454,35 @@ mod tests {
         assert!(
             err.contains("passthrough entry 'for_statement'"),
             "error must name the passthrough entry; got: {err}"
+        );
+    }
+
+    /// A kind repeated within one `merge` entry's own `from` list gets a
+    /// distinct, non-self-referential error naming the entry and the
+    /// repeated kind, not the generic cross-entry collision message (#361).
+    #[test]
+    fn check_merge_config_detects_same_entry_duplicate_kind() {
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "for_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let err = check_merge_config(&grammar(), &config).unwrap_err();
+        assert!(
+            err.contains("'for_statement'"),
+            "error must name 'for_statement'; got: {err}"
+        );
+        assert!(
+            err.contains("listed twice"),
+            "error must describe the same-entry duplicate distinctly, not as a cross-entry \
+             collision; got: {err}"
+        );
+        assert!(
+            err.contains("merge target 'Loop'"),
+            "error must name the merge entry; got: {err}"
         );
     }
 
