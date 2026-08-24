@@ -255,3 +255,71 @@ fn keyword_field_label_compiles() {
         None,
     );
 }
+
+/// Compile-check for grammar kinds literally named after the tool's own
+/// fixed top-level names (#359): a kind named `pragma`, `text`,
+/// `build_error`, or `source_node` derives a top-level `struct Pragma`,
+/// `struct Text`, `struct BuildError`, or `struct SourceNode` respectively.
+/// Before the `runtime`-module namespacing fix, `Pragma`/`BuildError` were
+/// declared unqualified at `ast.rs`'s own top level and `SourceNode` was
+/// imported unqualified from `visitor.rs`, so any of these four kind names
+/// would collide with the tool's own fixed type (`E0428`) or shadow the
+/// import. Now `Pragma`/`BuildError` live under `runtime::`, and every
+/// reference to the real tree-sitter-backed type is spelled out as
+/// `super::visitor::SourceNode`, so a grammar-derived `struct SourceNode`
+/// at the top level can never collide with it.
+#[test]
+fn kind_named_after_tool_fixed_names_compiles() {
+    let source = "root -> a: pragma b: text c: build_error d: source_node ;\n\
+                  pragma -> 'p' ;\n\
+                  text -> 't' ;\n\
+                  build_error -> 'b' ;\n\
+                  source_node -> 's' ;\n";
+    let (grammar, diagnostics) =
+        parse_source(source).unwrap_or_else(|e| panic!("fixed-name-kind fixture must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "fixed-name-kind fixture must be diagnostic-free: {diagnostics:?}"
+    );
+
+    compile_generated_ast(
+        "ast_fixed_name_kind_harness",
+        &grammar,
+        "fixed_name_kind_sample",
+        "fn main() {}\n",
+        false,
+        None,
+    );
+}
+
+/// Compile-check for grammar fields literally labeled `pragma` or `text`
+/// (#359): every generated struct unconditionally gets an injected
+/// `_pragma: runtime::Pragma` field, and a leaf kind also gets an injected
+/// `_text: String` field. Before the injected fields were renamed with a
+/// leading underscore, a field labeled `pragma` or `text` verbatim produced
+/// a duplicate field declaration, `let` binding, and struct-literal entry
+/// (`E0124`). The leading-underscore reservation
+/// (`check_field_labels_are_representable`) means `pragma`/`text` remain
+/// completely free for grammar authors to use as field labels.
+#[test]
+fn field_labeled_pragma_or_text_compiles() {
+    let source = "root -> decl | other ;\n\
+                  decl -> pragma: ident ';' ;\n\
+                  other -> text: ident ';' ;\n\
+                  ident -> /[a-z]+/ ;\n";
+    let (grammar, diagnostics) = parse_source(source)
+        .unwrap_or_else(|e| panic!("pragma/text field-label fixture must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "pragma/text field-label fixture must be diagnostic-free: {diagnostics:?}"
+    );
+
+    compile_generated_ast(
+        "ast_pragma_text_field_label_harness",
+        &grammar,
+        "pragma_text_field_sample",
+        "fn main() {}\n",
+        false,
+        None,
+    );
+}
