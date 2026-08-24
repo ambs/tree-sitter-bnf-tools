@@ -198,3 +198,30 @@ fn ensure_lib_rs_declares_ast_module(dir: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(&path, patched)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `pub mod visitor;` anchor line missing (e.g. removed by hand)
+    /// still gets `pub mod ast;` appended at the end, rather than silently
+    /// leaving the file untouched — the defensive fallback branch the
+    /// integration tests in `tools/tests/cli.rs` (which always scaffold a
+    /// `lib.rs` with the anchor present) never exercise.
+    #[test]
+    fn ensure_lib_rs_declares_ast_module_appends_when_anchor_missing() {
+        let dir = std::env::temp_dir().join("ts_bnf_ensure_lib_rs_no_anchor_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bindings/rust")).unwrap();
+        let lib_rs_path = dir.join("bindings/rust/lib.rs");
+        fs::write(&lib_rs_path, "// no visitor module declared here\n").unwrap();
+
+        ensure_lib_rs_declares_ast_module(&dir).unwrap();
+
+        let content = fs::read_to_string(&lib_rs_path).unwrap();
+        assert!(
+            content.contains("pub mod ast;"),
+            "pub mod ast; must be appended even without the usual anchor: {content}"
+        );
+    }
+}
