@@ -74,6 +74,28 @@ fn normalize_stripped(s: &str) -> String {
     result
 }
 
+/// Replaces every `-` in `name` with `_`; every other character passes
+/// through unchanged. A purely mechanical substitution, not tied to any
+/// one target language — callers supply the reason: tree-sitter's own
+/// `grammar()` call hard-rejects a `name` containing `-`, and both the
+/// resulting C parser symbol (`tree_sitter_<name>`) and a Rust module path
+/// need a strict identifier too, so callers needing "the identifier form
+/// of this name" reach for this rather than duplicating the substitution
+/// (#378).
+///
+/// `-` is deliberately the only substitution this performs: it's the
+/// idiomatic Cargo package-name separator (`ts-bnf-tool`, `tree-sitter-bnf`,
+/// this workspace's own crates), and it's the one character a caller
+/// legitimately wants to keep in a raw, user-facing name (a filename stem,
+/// a `--name` override, a `Cargo.toml` package name) while still needing an
+/// identifier-safe variant elsewhere. This does not itself guarantee a
+/// valid identifier — a leading digit or other punctuation in `name`
+/// passes through untouched; pair it with a validity check when that
+/// matters.
+pub fn hyphens_to_underscores(name: &str) -> String {
+    name.replace('-', "_")
+}
+
 /// Converts a snake_case grammar name to UpperCamelCase for the `camelcase` field in `tree-sitter.json`.
 pub fn to_camelcase(name: &str) -> String {
     name.split('_')

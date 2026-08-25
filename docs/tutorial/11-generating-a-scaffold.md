@@ -18,11 +18,19 @@ ts-bnf-tool scaffold --no-header grammar.bnf    # suppress generated-file commen
 ```
 
 `--name` also affects wording in the generated trait's own doc comment; it
-defaults to the input filename's stem. Like `railroad` and `graph`,
-`scaffold` runs no static checks before generating — diagnostics never gate
-output — but it does check that no two rules would generate the same
-`visit_*` method (see below): a grammar that fails this check is rejected
-with a clear diagnostic before anything is written to disk.
+defaults to the input filename's stem. A hyphenated name — `my-lang`, the
+idiomatic Cargo package-name separator, and an ordinary filename stem — is
+fine: `Cargo.toml`'s `[package] name` keeps the hyphen, while the
+tree-sitter grammar name, the generated C parser symbol, and the module
+path `examples/*.rs` imports all use the normalized (`-` -> `_`) form
+instead, since tree-sitter's own `grammar()` call rejects a hyphenated
+name outright. A name still invalid after that normalization (a leading
+digit, whitespace, …) is rejected before anything is written to disk. Like
+`railroad` and `graph`, `scaffold` runs no static checks before
+generating — diagnostics never gate output — but it does check that no two
+rules would generate the same `visit_*` method (see below): a grammar that
+fails this check is rejected with a clear diagnostic before anything is
+written to disk.
 
 Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
 `src/*`, `bindings/rust/build.rs`, and `bindings/rust/visitor.rs` are

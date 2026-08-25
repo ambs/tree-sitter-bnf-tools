@@ -4,10 +4,22 @@
 // rendering — no `Grammar` DOM involved — parameterized only by the crate's
 // name, header preference, and (for `bindings/rust/visitor.rs`) the
 // already-rendered visitor source.
+//
+// `name`, as received from `super::render_scaffold`, is the raw name the
+// user typed (or the filename stem) — possibly hyphenated. Only
+// `cargo_toml` uses it as-is: Cargo's own package-naming convention keeps
+// hyphens (`ts-bnf-tool`, `tree-sitter-bnf`, this workspace's own crates).
+// Every other template here needs a strict Rust/C identifier instead — the
+// `extern "C"` symbol, the `c_config.compile(...)` target, the module path
+// `examples/*.rs` `use`s — so each such function normalizes its own copy
+// via `hyphens_to_underscores` rather than assuming `name` already is one
+// (#378).
 
 use std::path::PathBuf;
 
 use indoc::formatdoc;
+
+use crate::util::hyphens_to_underscores;
 
 use super::ScaffoldFile;
 
@@ -124,7 +136,14 @@ fn cargo_toml(name: &str) -> String {
 /// unlike `Cargo.toml`/`lib.rs`/`examples/walk.rs`/`.gitignore` — so, like
 /// `visitor.rs`, it carries the generated-file header warning against
 /// hand-edits (#376).
+///
+/// `c_config.compile(...)`'s argument becomes the compiled static
+/// library's name, so it needs the same identifier normalization as the
+/// `extern "C"` symbol in `lib_rs` — a bare `name` would otherwise pass a
+/// hyphen straight to `cc`, which most platforms' archivers reject in a
+/// library name (#378).
 fn build_rs(name: &str, no_header: bool) -> String {
+    let identifier_name = hyphens_to_underscores(name);
     let header = if no_header {
         String::new()
     } else {
@@ -151,7 +170,7 @@ fn build_rs(name: &str, no_header: bool) -> String {
                 println!("cargo:rerun-if-changed={{}}", scanner_path.to_str().unwrap());
             }}
 
-            c_config.compile("{name}");
+            c_config.compile("{identifier_name}");
         }}
     "#}
 }
@@ -168,7 +187,7 @@ fn build_rs(name: &str, no_header: bool) -> String {
 /// tutorial invites users to add `pub mod` declarations for their own
 /// hand-written `Visitor` implementations.
 fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
-    let fn_name = name.replace('-', "_");
+    let fn_name = hyphens_to_underscores(name);
     let header = if no_header {
         String::new()
     } else {
@@ -224,7 +243,7 @@ fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
 /// per-kind code, proving the generated AST types actually compile and
 /// work, the same bar `walk.rs` is already held to.
 fn ast_example(name: &str, root_rule: &str) -> String {
-    let crate_name = name.replace('-', "_");
+    let crate_name = hyphens_to_underscores(name);
     formatdoc! {r#"
         //! Parses a file with the `{name}` parser and builds a typed root node
         //! using the generated AST types. Run it with:
@@ -258,7 +277,7 @@ fn ast_example(name: &str, root_rule: &str) -> String {
 /// doesn't give a default for — proving the crate works without writing any
 /// per-kind override.
 fn walk_example(name: &str) -> String {
-    let crate_name = name.replace('-', "_");
+    let crate_name = hyphens_to_underscores(name);
     formatdoc! {r#"
         //! Parses a file with the `{name}` parser and prints how many named
         //! nodes it contains, using nothing but the generated `Visitor` trait's
