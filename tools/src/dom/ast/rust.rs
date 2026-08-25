@@ -16,12 +16,14 @@ use std::fmt::{self, Formatter};
 ///
 /// Only buildable via [`RustAst::new`] — see its own doc comment for why.
 pub struct RustAst<'a> {
-    /// The grammar to derive the AST types from
-    grammar: &'a Grammar,
     /// The source filename shown in the generated-file header (`<stdin>` for stdin).
     source: &'a str,
     /// When `true`, suppress the generated-file header comment.
     no_header: bool,
+    /// One [`AstNodeSpec`] per visible kind, keyed by kind name. Computed
+    /// once here (see [`RustAst::new`]) and reused by every generation
+    /// step that needs it, rather than each recomputing it from `grammar`.
+    ast_node_specs: IndexMap<String, AstNodeSpec>,
     /// Rust type name registered for each distinct multi-shape target-kind
     /// set, keyed by the sorted kind names — see "Resolved: multi-shape
     /// enum naming" below and [`ShapeName`]. Built once, here, not
@@ -37,7 +39,8 @@ pub struct RustAst<'a> {
 }
 
 impl<'a> RustAst<'a> {
-    /// Builds a `RustAst` for `grammar`: rejects it up front if any field
+    /// Builds a `RustAst` for `grammar`: derives `ast_node_specs`
+    /// ([`derive_ast_node_specs`]) once up front, rejects it if any field
     /// label can't be represented as a Rust identifier
     /// ([`check_field_labels_are_representable`]), then computes the
     /// multi-shape enum naming table ([`build_multi_shape_names`]) up front
@@ -56,12 +59,13 @@ impl<'a> RustAst<'a> {
         no_header: bool,
         merge_config: Option<&'a MergeConfig>,
     ) -> Result<Self, String> {
-        check_field_labels_are_representable(grammar)?;
-        let multi_shape_names = build_multi_shape_names(grammar, merge_config)?;
+        let ast_node_specs = derive_ast_node_specs(grammar);
+        check_field_labels_are_representable(&ast_node_specs)?;
+        let multi_shape_names = build_multi_shape_names(&ast_node_specs, merge_config)?;
         Ok(Self {
-            grammar,
             source,
             no_header,
+            ast_node_specs,
             multi_shape_names,
             merge_config,
         })
@@ -223,7 +227,7 @@ impl RustAst<'_> {
     /// entry's own `from`, so that entry's own render (below) already
     /// covers it; rendering both would declare the same `enum` name twice.
     fn fmt_structs(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let specs = derive_ast_node_specs(self.grammar);
+        let specs = &self.ast_node_specs;
         let structs = specs
             .iter()
             .map(|(node, spec)| self.fmt_struct(node, spec))
@@ -485,8 +489,10 @@ const UNREPRESENTABLE_FIELD_LABELS: [&str; 4] = ["self", "Self", "super", "crate
 /// the grammar with an actionable error rather than letting generation
 /// silently produce code with a residual collision risk. Called once from
 /// [`RustAst::new`], before generation starts.
-fn check_field_labels_are_representable(grammar: &Grammar) -> Result<(), String> {
-    for spec in derive_ast_node_specs(grammar).values() {
+fn check_field_labels_are_representable(
+    ast_node_specs: &IndexMap<String, AstNodeSpec>,
+) -> Result<(), String> {
+    for spec in ast_node_specs.values() {
         for field_name in spec.fields.keys() {
             if UNREPRESENTABLE_FIELD_LABELS.contains(&field_name.as_str()) {
                 return Err(format!(
@@ -771,7 +777,7 @@ impl ShapeName {
 }
 
 /// Computes the Rust type name to use for each distinct "multi-shape"
-/// field-target-kind set found anywhere in `grammar` — a field whose value
+/// field-target-kind set found anywhere in `ast_node_specs` — a field whose value
 /// can be more than one kind (or a kind plus a bare token) needs a
 /// generated sum-type enum, and two fields with the *same* possible-kinds
 /// set reuse the *same* enum rather than each getting their own. A shape
@@ -789,11 +795,10 @@ impl ShapeName {
 /// generated file, is distinct, returning the first collision found as
 /// `Err` (see [`find_first_name_collision`]).
 fn build_multi_shape_names(
-    grammar: &Grammar,
+    ast_node_specs: &IndexMap<String, AstNodeSpec>,
     merge_config: Option<&MergeConfig>,
 ) -> Result<IndexMap<Vec<String>, ShapeName>, String> {
     let mut out = IndexMap::new();
-    let ast_node_specs = derive_ast_node_specs(grammar);
 
     // create temporary map, from list of possible derivations to the fields that use them
     let mut known_shapes = IndexMap::new();
@@ -1163,7 +1168,8 @@ mod tests {
             p("num", TerminalPattern("/[0-9]+/".into())),
             p("str", TerminalPattern("/\"[^\"]*\"/".into())),
         ]);
-        let names = build_multi_shape_names(&g, None).expect("no name collisions");
+        let names =
+            build_multi_shape_names(&derive_ast_node_specs(&g), None).expect("no name collisions");
         assert_eq!(names.len(), 1, "one shape shared by both fields: {names:?}");
         assert_eq!(names.values().next().unwrap().name(), "Value");
     }
@@ -1185,7 +1191,8 @@ mod tests {
             p("num", TerminalPattern("/[0-9]+/".into())),
             p("str", TerminalPattern("/\"[^\"]*\"/".into())),
         ]);
-        let names = build_multi_shape_names(&g, None).expect("no name collisions");
+        let names =
+            build_multi_shape_names(&derive_ast_node_specs(&g), None).expect("no name collisions");
         assert_eq!(names.len(), 1);
         assert_eq!(names.values().next().unwrap().name(), "NumStr");
     }
@@ -1196,7 +1203,8 @@ mod tests {
             p("decl", Field("value".into(), Box::new(nt("expr")))),
             p("expr", TerminalLiteral("'e'".into())),
         ]);
-        let names = build_multi_shape_names(&g, None).expect("no name collisions");
+        let names =
+            build_multi_shape_names(&derive_ast_node_specs(&g), None).expect("no name collisions");
         assert!(names.is_empty());
     }
 
@@ -1211,7 +1219,7 @@ mod tests {
             p("a", TerminalLiteral("'a'".into())),
             p("b", TerminalLiteral("'b'".into())),
         ]);
-        let err = build_multi_shape_names(&g, None).unwrap_err();
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), None).unwrap_err();
         assert!(err.contains("Value"), "error should name 'Value': {err}");
     }
 
@@ -1231,7 +1239,7 @@ mod tests {
             p("c", TerminalLiteral("'c'".into())),
             p("d", TerminalLiteral("'d'".into())),
         ]);
-        let err = build_multi_shape_names(&g, None).unwrap_err();
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), None).unwrap_err();
         assert!(err.contains("shape [a, b]"), "{err}");
         assert!(err.contains("shape [c, d]"), "{err}");
     }
@@ -1676,7 +1684,7 @@ mod tests {
             passthrough: vec![],
             ignore: vec![],
         };
-        let err = build_multi_shape_names(&g, Some(&config)).unwrap_err();
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config)).unwrap_err();
         assert!(err.contains("kind 'Loop'"), "{err}");
         assert!(err.contains("merge target 'Loop'"), "{err}");
     }
@@ -1695,7 +1703,7 @@ mod tests {
             }],
             ignore: vec![],
         };
-        let err = build_multi_shape_names(&g, Some(&config)).unwrap_err();
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config)).unwrap_err();
         assert!(err.contains("kind 'expr'"), "{err}");
         assert!(err.contains("passthrough entry 'comment'"), "{err}");
     }
@@ -1720,7 +1728,7 @@ mod tests {
             passthrough: vec![],
             ignore: vec![],
         };
-        let err = build_multi_shape_names(&g, Some(&config)).unwrap_err();
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config)).unwrap_err();
         assert!(err.contains("shape [num, str]"), "{err}");
         assert!(err.contains("merge target 'Value'"), "{err}");
     }
