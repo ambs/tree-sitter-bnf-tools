@@ -292,6 +292,41 @@ fn kind_named_after_tool_fixed_names_compiles() {
     );
 }
 
+/// Compile-check crossing all four field shapes — single named, single
+/// anonymous-token, repeated named (`Vec<T>`), repeated anonymous-token —
+/// with leaf/non-leaf kind status (#363, split from #356 item 8). A leaf
+/// kind's body can never reference a visible non-terminal (`is_leaf_body`),
+/// so a leaf can only carry token-shaped fields; the real cross is those
+/// four shapes on `branch`
+/// (non-leaf) plus the two token shapes again on `leaf_kind` (still a
+/// leaf, since `Field` is transparent to leaf-ness). Before #357 and #359
+/// were fixed, no compile-checked fixture combined a `Vec<T>` named-kind
+/// field with a leaf kind carrying an explicit field label, so this gap
+/// let both ship broken; this fixture is the regression guard for that
+/// combination going forward.
+#[test]
+fn field_shapes_cross_leaf_status_compile() {
+    let source = "root -> branch leaf_kind ;\n\
+                  branch -> single: ident tok: '+' items: ident* ops: ('+' | '-')* ;\n\
+                  leaf_kind -> single_tok: '#' many_tok: ('a' | 'b')* ;\n\
+                  ident -> /[a-z]+/ ;\n";
+    let (grammar, diagnostics) = parse_source(source)
+        .unwrap_or_else(|e| panic!("field-shapes-cross-leaf-status fixture must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "field-shapes-cross-leaf-status fixture must be diagnostic-free: {diagnostics:?}"
+    );
+
+    compile_generated_ast(
+        "ast_field_shapes_cross_leaf_status_harness",
+        &grammar,
+        "field_shapes_cross_leaf_status_sample",
+        "fn main() {}\n",
+        false,
+        None,
+    );
+}
+
 /// Compile-check for grammar fields literally labeled `pragma` or `text`
 /// (#359): every generated struct unconditionally gets an injected
 /// `_pragma: runtime::Pragma` field, and a leaf kind also gets an injected
