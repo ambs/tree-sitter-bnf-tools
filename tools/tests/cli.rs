@@ -291,6 +291,37 @@ fn generate_writes_tree_sitter_json() {
 }
 
 #[test]
+/// A hyphenated `--name` is normalized to a valid tree-sitter grammar name
+/// (`-` -> `_`) rather than rejected or passed through as-is — tree-sitter's
+/// own `grammar()` call hard-rejects a `name` containing `-` (#378).
+fn generate_normalizes_hyphenated_name() {
+    let path = write_tmp("ts_bnf_gen_hyphen.bnf", CLEAN_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_hyphen_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args([
+            "convert",
+            "--generate",
+            "--name",
+            "my-grammar",
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "convert --generate must succeed for a hyphenated --name: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let grammar_js = std::fs::read_to_string(out_dir.join("grammar.js")).unwrap();
+    assert!(grammar_js.contains("name: \"my_grammar\""));
+    let ts_json = std::fs::read_to_string(out_dir.join("tree-sitter.json")).unwrap();
+    assert!(ts_json.contains("\"name\": \"my_grammar\""));
+}
+
+#[test]
 fn generate_does_not_overwrite_existing_tree_sitter_json() {
     let path = write_tmp("ts_bnf_gen_no_overwrite.bnf", CLEAN_BNF);
     let out_dir = std::env::temp_dir().join("ts_bnf_gen_no_overwrite_project");
@@ -1065,13 +1096,16 @@ fn scaffold_colliding_kind_names_exits_nonzero() {
 }
 
 #[test]
-/// A grammar name that isn't a valid JavaScript identifier (e.g. a filename
-/// stem with a dash, no `--name` override) must fail with `check_grammar_name`'s
-/// own diagnostic before anything is written — same as `convert`'s check —
-/// rather than reaching `tree-sitter generate` and dying as a raw Node.js
-/// stack trace with a partial crate left on disk.
+/// A grammar name still invalid even after hyphen normalization (here: a
+/// leading digit, `1lang` — a filename stem is a perfectly ordinary way to
+/// end up with one) must fail with `check_grammar_name`'s own diagnostic
+/// before anything is written — same as `convert`'s check — rather than
+/// reaching `tree-sitter generate` and dying as a raw Node.js stack trace
+/// with a partial crate left on disk. A hyphenated name alone is *not*
+/// this case any more — see `scaffold_hyphenated_name_is_normalized`
+/// below (#378).
 fn scaffold_invalid_grammar_name_exits_nonzero_before_writing() {
-    let path = write_tmp("my-lang.bnf", "expr -> 'x' ;\n");
+    let path = write_tmp("1lang.bnf", "expr -> 'x' ;\n");
     let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_invalid_name_project");
     let _ = std::fs::remove_dir_all(&out_dir);
     let out = tool()
@@ -1087,8 +1121,73 @@ fn scaffold_invalid_grammar_name_exits_nonzero_before_writing() {
     );
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(
-        stderr.contains("'my-lang'") && stderr.contains("not a valid JavaScript identifier"),
+        stderr.contains("'1lang'") && stderr.contains("not a valid identifier"),
         "stderr must carry check_grammar_name's own diagnostic: {stderr}"
+    );
+}
+
+#[test]
+/// A hyphenated name — from `--name` or, as here, an ordinary filename
+/// stem — is no longer rejected: `Cargo.toml`'s `[package] name` keeps the
+/// hyphen (Cargo's own convention), while the tree-sitter grammar name,
+/// the C parser symbol, and the scaffolded examples' `use` path all get
+/// the normalized (`-` -> `_`) identifier form instead (#378).
+fn scaffold_hyphenated_name_is_normalized() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_hyphen.bnf", "expr -> 'x' ;\n");
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_hyphen_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["scaffold", "--name", "my-lang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "scaffold must succeed for a hyphenated --name: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo_toml.contains("name = \"my-lang\""),
+        "Cargo.toml's [package] name must keep the hyphen: {cargo_toml}"
+    );
+
+    let grammar_js = std::fs::read_to_string(out_dir.join("grammar.js")).unwrap();
+    assert!(
+        grammar_js.contains("name: \"my_lang\""),
+        "grammar.js's grammar name must be normalized: {grammar_js}"
+    );
+
+    let tree_sitter_json = std::fs::read_to_string(out_dir.join("tree-sitter.json")).unwrap();
+    assert!(
+        tree_sitter_json.contains("\"name\": \"my_lang\""),
+        "tree-sitter.json's grammar name must be normalized: {tree_sitter_json}"
+    );
+
+    let build_rs = std::fs::read_to_string(out_dir.join("bindings/rust/build.rs")).unwrap();
+    assert!(
+        build_rs.contains("c_config.compile(\"my_lang\");"),
+        "build.rs's compiled library name must be normalized: {build_rs}"
+    );
+
+    let lib_rs = std::fs::read_to_string(out_dir.join("bindings/rust/lib.rs")).unwrap();
+    assert!(
+        lib_rs.contains("fn tree_sitter_my_lang() -> *const ();"),
+        "lib.rs's extern \"C\" symbol must be normalized: {lib_rs}"
+    );
+
+    let walk_rs = std::fs::read_to_string(out_dir.join("examples/walk.rs")).unwrap();
+    assert!(
+        walk_rs.contains("use my_lang::visitor::{SourceNode, Visitor};"),
+        "examples/walk.rs must import the normalized module path: {walk_rs}"
     );
 }
 

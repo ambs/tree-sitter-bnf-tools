@@ -42,6 +42,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   entirely (#342).
 
 ### Fixed
+- `convert`/`convert --generate`/`scaffold`: a hyphenated grammar name
+  (from `--name`, or an ordinary filename stem like `my-lang.bnf`) is now
+  accepted instead of rejected — `check_grammar_name` validates the
+  normalized (`-` -> `_`) identifier form, matching what tree-sitter's own
+  `grammar()` call requires, rather than the raw name. `scaffold`
+  additionally keeps the hyphen in `Cargo.toml`'s `[package] name`
+  (Cargo's own package-naming convention) while normalizing everywhere a
+  strict identifier is required: the tree-sitter grammar name, the
+  generated C parser symbol, and the module path `examples/*.rs` imports
+  (#378).
 - `convert`: a symbol combining a field label with a `?` Kleene operator
   (e.g. `name: symbol?`) now emits `optional(field("name", ...))` instead of
   `field("name", optional(...))`, matching the idiom tree-sitter grammars

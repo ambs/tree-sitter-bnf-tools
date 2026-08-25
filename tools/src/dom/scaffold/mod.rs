@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dom::ast::merge::{MergeConfig, check_merge_config};
 use crate::dom::ast::rust::{RustAst, check_root_rule_not_merged, kind_display_name};
+use crate::util::hyphens_to_underscores;
 
 use super::grammar_js::{GrammarJs, resolve_output_dir, run_generate};
 use super::types::Grammar;
@@ -53,6 +54,14 @@ pub struct ScaffoldCrate {
 /// yet. Once a second language emitter exists, this signature will need a
 /// target-language parameter (e.g. an enum) to dispatch on, alongside the
 /// added match arm.
+///
+/// `name` is passed through to the target-language emitter (currently
+/// [`rust::render`]) exactly as given — raw, possibly hyphenated. Whether
+/// and where that matters (e.g. a scaffolded Rust crate keeps hyphens in
+/// `Cargo.toml`'s `[package] name` but needs a normalized identifier
+/// everywhere else) is entirely that emitter's own call: this module stays
+/// agnostic to what a "valid identifier" even means in the target language
+/// (#378).
 pub fn render_scaffold(
     grammar: &Grammar,
     name: &str,
@@ -113,9 +122,16 @@ pub fn run_scaffold(
             .map_err(|msg| -> Box<dyn Error> { msg.into() })?;
     }
 
+    // tree-sitter's own `grammar()` call hard-rejects a `name` containing
+    // `-` (throws "must not ... contain non-word characters"), so the
+    // tree-sitter grammar name is always the normalized identifier form —
+    // never the raw `name` this function otherwise uses unchanged (the
+    // output directory below, and everything `render_scaffold` decides for
+    // itself) (#378).
+    let grammar_name = hyphens_to_underscores(name);
     let grammar_js = GrammarJs {
         grammar,
-        name,
+        name: &grammar_name,
         source,
         no_header,
     };

@@ -74,6 +74,13 @@ fn normalize_stripped(s: &str) -> String {
     result
 }
 
+/// Replaces every `-` in `name` with `_`; every other character passes
+/// through unchanged. Does not itself guarantee a valid identifier — pair
+/// with a validity check if that matters.
+pub fn hyphens_to_underscores(name: &str) -> String {
+    name.replace('-', "_")
+}
+
 /// Converts a snake_case grammar name to UpperCamelCase for the `camelcase` field in `tree-sitter.json`.
 pub fn to_camelcase(name: &str) -> String {
     name.split('_')

@@ -4,10 +4,22 @@
 // rendering — no `Grammar` DOM involved — parameterized only by the crate's
 // name, header preference, and (for `bindings/rust/visitor.rs`) the
 // already-rendered visitor source.
+//
+// `name`, as received from `super::render_scaffold`, is the raw name the
+// user typed (or the filename stem) — possibly hyphenated. `render` below
+// normalizes it once into `identifier_name` and passes that to every
+// template except `cargo_toml`, which alone keeps the raw form: Cargo's
+// own package-naming convention keeps hyphens (`ts-bnf-tool`,
+// `tree-sitter-bnf`, this workspace's own crates), while everything else
+// here — the `extern "C"` symbol, the `c_config.compile(...)` target, the
+// module path `examples/*.rs` `use`s — needs a strict Rust/C identifier
+// (#378).
 
 use std::path::PathBuf;
 
 use indoc::formatdoc;
+
+use crate::util::hyphens_to_underscores;
 
 use super::ScaffoldFile;
 
@@ -21,6 +33,7 @@ pub(super) fn render(
     visitor_source: String,
     ast_data: Option<(String, String)>,
 ) -> Vec<ScaffoldFile> {
+    let identifier_name = hyphens_to_underscores(name);
     let mut files = vec![
         ScaffoldFile {
             path: PathBuf::from("Cargo.toml"),
@@ -29,12 +42,12 @@ pub(super) fn render(
         },
         ScaffoldFile {
             path: PathBuf::from("bindings/rust/build.rs"),
-            content: build_rs(name, no_header),
+            content: build_rs(&identifier_name, no_header),
             preserve_existing: false,
         },
         ScaffoldFile {
             path: PathBuf::from("bindings/rust/lib.rs"),
-            content: lib_rs(name, no_header, ast_data.is_some()),
+            content: lib_rs(&identifier_name, no_header, ast_data.is_some()),
             preserve_existing: true,
         },
         ScaffoldFile {
@@ -44,7 +57,7 @@ pub(super) fn render(
         },
         ScaffoldFile {
             path: PathBuf::from("examples/walk.rs"),
-            content: walk_example(name),
+            content: walk_example(&identifier_name),
             preserve_existing: true,
         },
         ScaffoldFile {
@@ -65,7 +78,7 @@ pub(super) fn render(
         });
         files.push(ScaffoldFile {
             path: PathBuf::from("examples/ast.rs"),
-            content: ast_example(name, &root_rule),
+            content: ast_example(&identifier_name, &root_rule),
             preserve_existing: true,
         })
     }
@@ -168,7 +181,6 @@ fn build_rs(name: &str, no_header: bool) -> String {
 /// tutorial invites users to add `pub mod` declarations for their own
 /// hand-written `Visitor` implementations.
 fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
-    let fn_name = name.replace('-', "_");
     let header = if no_header {
         String::new()
     } else {
@@ -192,11 +204,11 @@ fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
         {ast_mod}// Add `pub mod` declarations here for your own Visitor implementations.
 
         extern "C" {{
-            fn tree_sitter_{fn_name}() -> *const ();
+            fn tree_sitter_{name}() -> *const ();
         }}
 
         /// The tree-sitter [`LanguageFn`] for this grammar.
-        pub const LANGUAGE: LanguageFn = unsafe {{ LanguageFn::from_raw(tree_sitter_{fn_name}) }};
+        pub const LANGUAGE: LanguageFn = unsafe {{ LanguageFn::from_raw(tree_sitter_{name}) }};
 
         /// The content of this grammar's `node-types.json` file.
         pub const NODE_TYPES: &str = include_str!("../../src/node-types.json");
@@ -224,7 +236,6 @@ fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
 /// per-kind code, proving the generated AST types actually compile and
 /// work, the same bar `walk.rs` is already held to.
 fn ast_example(name: &str, root_rule: &str) -> String {
-    let crate_name = name.replace('-', "_");
     formatdoc! {r#"
         //! Parses a file with the `{name}` parser and builds a typed root node
         //! using the generated AST types. Run it with:
@@ -233,8 +244,8 @@ fn ast_example(name: &str, root_rule: &str) -> String {
         //! cargo run --example ast -- <file>
         //! ```
 
-        use {crate_name}::visitor::SourceNode;
-        use {crate_name}::ast::{root_rule};
+        use {name}::visitor::SourceNode;
+        use {name}::ast::{root_rule};
 
         fn main() {{
             let path = std::env::args()
@@ -243,7 +254,7 @@ fn ast_example(name: &str, root_rule: &str) -> String {
             let source =
                 std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {{path}}: {{e}}"));
 
-            let tree = {crate_name}::parse(&source).expect("parse must succeed");
+            let tree = {name}::parse(&source).expect("parse must succeed");
 
             let root: {root_rule} = SourceNode {{ node: tree.root_node(), source: &source }}
                 .try_into()
@@ -258,7 +269,6 @@ fn ast_example(name: &str, root_rule: &str) -> String {
 /// doesn't give a default for — proving the crate works without writing any
 /// per-kind override.
 fn walk_example(name: &str) -> String {
-    let crate_name = name.replace('-', "_");
     formatdoc! {r#"
         //! Parses a file with the `{name}` parser and prints how many named
         //! nodes it contains, using nothing but the generated `Visitor` trait's
@@ -268,7 +278,7 @@ fn walk_example(name: &str) -> String {
         //! cargo run --example walk -- <file>
         //! ```
 
-        use {crate_name}::visitor::{{SourceNode, Visitor}};
+        use {name}::visitor::{{SourceNode, Visitor}};
 
         /// Counts every node visited, leaves and non-leaves alike: `combine` runs
         /// exactly once per visited node, regardless of kind.
@@ -293,7 +303,7 @@ fn walk_example(name: &str) -> String {
             let source =
                 std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {{path}}: {{e}}"));
 
-            let tree = {crate_name}::parse(&source).expect("parse must succeed");
+            let tree = {name}::parse(&source).expect("parse must succeed");
 
             let mut counter = Counter {{ total: 0 }};
             counter

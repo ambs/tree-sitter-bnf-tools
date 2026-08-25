@@ -15,7 +15,7 @@ use ts_bnf_tool::dom::{
     Diagnostic, Grammar, GrammarJs, Highlights, ParseError, Severity, parse_merge_config,
     run_generate, run_scaffold, uncovered_kinds,
 };
-use ts_bnf_tool::util::syntax_error_diagnostics;
+use ts_bnf_tool::util::{hyphens_to_underscores, syntax_error_diagnostics};
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -230,13 +230,23 @@ fn is_valid_js_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Returns a warning diagnostic if `name` is not a valid JavaScript identifier.
+/// Returns a warning diagnostic if `name`, once normalized to the
+/// identifier form tree-sitter's `grammar()` call requires
+/// ([`hyphens_to_underscores`]), still is not a valid JavaScript identifier.
+///
+/// A raw `-` in `name` is never itself the problem — it's the idiomatic
+/// Cargo package-name separator, and every artifact actually requiring a
+/// strict identifier (the tree-sitter grammar name, the C parser symbol, a
+/// scaffolded crate's Rust module path) is built from the normalized form,
+/// never `name` directly (#378). What this still catches: a leading digit,
+/// whitespace, or other punctuation `hyphens_to_underscores` doesn't touch.
 fn check_grammar_name(name: &str) -> Vec<Diagnostic> {
-    if is_valid_js_identifier(name) {
+    if is_valid_js_identifier(&hyphens_to_underscores(name)) {
         Vec::new()
     } else {
         vec![Diagnostic::warning(format!(
-            "grammar name '{name}' is not a valid JavaScript identifier; use --name to override"
+            "grammar name '{name}' is not a valid identifier, even after replacing '-' with \
+             '_'; use --name to override"
         ))]
     }
 }
@@ -350,13 +360,19 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             let had_warnings = diagnostics.iter().any(|d| d.severity == Severity::Warning);
             let source = source_label(&filename);
+            // tree-sitter's `grammar()` call hard-rejects a `name` containing `-`
+            // (verified: it throws "must not ... contain non-word characters"), so
+            // the grammar name it's given is always the normalized identifier form,
+            // never the raw `--name`/stem value `check_grammar_name` just validated
+            // (#378).
+            let identifier_name = hyphens_to_underscores(&name);
 
             if rules_only {
                 println!("{}", grammar);
             } else if generate {
                 let grammar_js = GrammarJs {
                     grammar: &grammar,
-                    name: &name,
+                    name: &identifier_name,
                     source,
                     no_header,
                 };
@@ -366,7 +382,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "{}",
                     GrammarJs {
                         grammar: &grammar,
-                        name: &name,
+                        name: &identifier_name,
                         source,
                         no_header,
                     }
@@ -529,7 +545,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     eprintln!("{d}");
                 }
                 return Err(
-                    "grammar name is not a valid JavaScript identifier; scaffold generation aborted"
+                    "grammar name is not a valid identifier, even after replacing '-' with '_'; \
+                     scaffold generation aborted"
                         .into(),
                 );
             }

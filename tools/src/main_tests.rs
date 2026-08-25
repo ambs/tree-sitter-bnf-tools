@@ -118,6 +118,34 @@ fn js_identifier_validation() {
 }
 
 #[test]
+/// A hyphenated name — the idiomatic Cargo package-name separator, and an
+/// ordinary filename stem (`my-lang.bnf`) — is accepted outright:
+/// `check_grammar_name` validates the normalized (`-` -> `_`) form, not
+/// `name` itself, so `is_valid_js_identifier`'s own rejection of `-`
+/// (asserted above) no longer reaches the user for this reason (#378).
+fn check_grammar_name_accepts_hyphens() {
+    for ok in ["my-lang", "grammar", "my--lang"] {
+        assert!(
+            check_grammar_name(ok).is_empty(),
+            "expected no diagnostics for: {ok}"
+        );
+    }
+}
+
+#[test]
+/// A name still invalid after hyphen normalization (leading digit,
+/// whitespace, empty, other punctuation) is still rejected — hyphens are
+/// the only character `check_grammar_name` forgives (#378).
+fn check_grammar_name_rejects_names_invalid_even_after_normalization() {
+    for bad in ["1lang", "my lang", "", "my.lang"] {
+        assert!(
+            !check_grammar_name(bad).is_empty(),
+            "expected a diagnostic for: {bad}"
+        );
+    }
+}
+
+#[test]
 /// `--split` without `--output-dir` is rejected at parse time (R-15).
 fn railroad_split_requires_output_dir() {
     assert!(parse_railroad(&["--split", "f.bnf"]).is_err());
