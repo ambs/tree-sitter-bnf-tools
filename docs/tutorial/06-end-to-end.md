@@ -69,8 +69,10 @@ ts-bnf-tool convert --generate json.bnf
 ```
 
 The `tree-sitter.json` satisfies tree-sitter ≥ 0.25's requirement for ABI 15
-generation. If a `tree-sitter.json` already exists in the output directory it is
-left untouched.
+generation. If a `tree-sitter.json` or a `queries/highlights.scm` already
+exists in the output directory, it is left untouched — so rerunning
+`--generate` after refining the highlights skeleton (step 5, below) never
+loses that work.
 
 Override the output directory and grammar name:
 

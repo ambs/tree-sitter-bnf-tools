@@ -231,6 +231,40 @@ fn generate_writes_queries_highlights_scm() {
 }
 
 #[test]
+/// Rerunning `convert --generate` over an existing output directory must not
+/// clobber a hand-edited `queries/highlights.scm` — the tutorial invites
+/// users to refine that file by hand after the first generation (#375).
+fn generate_rerun_preserves_hand_edited_highlights_scm() {
+    let path = write_tmp("ts_bnf_gen_highlights_rerun.bnf", CLEAN_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_highlights_rerun_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let run = || {
+        tool()
+            .args(["convert", "--generate", "--output-dir"])
+            .arg(&out_dir)
+            .arg(&path)
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert!(first.status.success(), "first generate must succeed");
+
+    let highlights = out_dir.join("queries").join("highlights.scm");
+    std::fs::write(&highlights, "; user-added-marker\n(string) @string\n").unwrap();
+
+    let second = run();
+    assert!(second.status.success(), "second generate must succeed");
+
+    let content = std::fs::read_to_string(&highlights).unwrap();
+    assert!(
+        content.contains("user-added-marker"),
+        "queries/highlights.scm must not be clobbered on rerun: {content}"
+    );
+}
+
+#[test]
 fn generate_writes_tree_sitter_json() {
     let path = write_tmp("ts_bnf_gen_json.bnf", CLEAN_BNF);
     let out_dir = std::env::temp_dir().join("ts_bnf_gen_json_project");
@@ -1169,6 +1203,7 @@ fn scaffold_rerun_preserves_user_edits_but_regenerates_visitor() {
     let lib_rs_path = out_dir.join("bindings/rust/lib.rs");
     let walk_rs_path = out_dir.join("examples/walk.rs");
     let visitor_rs_path = out_dir.join("bindings/rust/visitor.rs");
+    let highlights_path = out_dir.join("queries/highlights.scm");
 
     let mut cargo_toml = std::fs::read_to_string(&cargo_toml_path).unwrap();
     cargo_toml.push_str("\n# user-added-marker\n");
@@ -1183,6 +1218,8 @@ fn scaffold_rerun_preserves_user_edits_but_regenerates_visitor() {
     std::fs::write(&walk_rs_path, &walk_rs).unwrap();
 
     std::fs::write(&visitor_rs_path, "GARBAGE").unwrap();
+
+    std::fs::write(&highlights_path, "; user-added-marker\n").unwrap();
 
     let second = run();
     assert!(
@@ -1214,6 +1251,12 @@ fn scaffold_rerun_preserves_user_edits_but_regenerates_visitor() {
         !visitor_rs_after.contains("GARBAGE")
             && visitor_rs_after.contains("pub trait Visitor<'tree>"),
         "bindings/rust/visitor.rs must still be regenerated on rerun: {visitor_rs_after}"
+    );
+
+    let highlights_after = std::fs::read_to_string(&highlights_path).unwrap();
+    assert!(
+        highlights_after.contains("user-added-marker"),
+        "queries/highlights.scm must not be clobbered on rerun: {highlights_after}"
     );
 }
 

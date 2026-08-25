@@ -25,11 +25,16 @@ output — but it does check that no two rules would generate the same
 with a clear diagnostic before anything is written to disk.
 
 Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
-`src/*`, `queries/`, and `bindings/rust/visitor.rs` are regenerated every
-time so they always track the current grammar, but `Cargo.toml`,
-`bindings/rust/lib.rs`, and `examples/walk.rs` are only ever written once —
-if they already exist, `scaffold` leaves them alone, so hand-written code
-there survives a grammar change.
+`src/*`, and `bindings/rust/visitor.rs` are regenerated every time so they
+always track the current grammar, but `Cargo.toml`, `bindings/rust/lib.rs`,
+`examples/walk.rs`, and `queries/highlights.scm` are only ever written
+once — if they already exist, `scaffold` leaves them alone, so hand-written
+code (and any highlighting refinements — see
+[Refine the highlights skeleton](06-end-to-end.md#step-5--refine-the-highlights-skeleton))
+survives a grammar change. Since `queries/highlights.scm` is frozen after
+its first write, it won't pick up new rules on its own; regenerate it
+explicitly with `ts-bnf-tool highlights -o queries/highlights.scm` when the
+grammar gains rules you want highlighted.
 
 ## What gets generated
 

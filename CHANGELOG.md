@@ -42,6 +42,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   entirely (#342).
 
 ### Fixed
+- `convert --generate` / `scaffold`: rerunning generation no longer
+  overwrites an existing `queries/highlights.scm` — it is now left
+  untouched once it exists, the same never-clobber treatment
+  `tree-sitter.json` already got, so hand-refined highlight queries survive
+  a later grammar change (#375).
 - `convert`: a symbol combining a field label with a `?` Kleene operator
   (e.g. `name: symbol?`) now emits `optional(field("name", ...))` instead of
   `field("name", optional(...))`, matching the idiom tree-sitter grammars
