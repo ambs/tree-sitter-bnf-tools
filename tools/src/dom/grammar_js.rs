@@ -339,6 +339,28 @@ mod tests {
         );
     }
 
+    #[test]
+    /// A `queries_dir` that doesn't resolve to a directory (here: a plain
+    /// file sitting where a directory is expected) makes `path.exists()`
+    /// false — so the never-clobber check doesn't short-circuit — while the
+    /// later `fs::write` still fails, and that failure must propagate
+    /// rather than be swallowed.
+    fn write_highlights_if_absent_propagates_write_errors() {
+        let not_a_dir = std::env::temp_dir().join("ts_bnf_write_highlights_if_absent_error_test");
+        let _ = fs::remove_file(&not_a_dir);
+        fs::write(&not_a_dir, b"not a directory").unwrap();
+
+        let grammar = Grammar::from_rules([p("expr", TerminalLiteral("'x'".into()))]);
+        let result = write_highlights_if_absent(&not_a_dir, &grammar);
+
+        fs::remove_file(&not_a_dir).unwrap();
+
+        assert!(
+            result.is_err(),
+            "writing highlights.scm under a non-directory path must fail, not succeed"
+        );
+    }
+
     fn s<'a>(grammar: &'a Grammar, name: &'a str) -> GrammarJs<'a> {
         GrammarJs {
             grammar,
