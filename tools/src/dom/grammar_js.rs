@@ -234,6 +234,31 @@ pub fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathB
         .unwrap_or_else(|| PathBuf::from(grammar_name))
 }
 
+/// Writes a skeleton `highlights.scm` to `queries_dir` if one does not
+/// already exist.
+///
+/// The tutorial invites users to hand-refine this file once generated (see
+/// `docs/tutorial/06-end-to-end.md`'s "refine the highlights skeleton"
+/// step), so — like [`write_tree_sitter_json`] — a rerun of `convert
+/// --generate` or `scaffold` must not clobber those edits (#375). Users who
+/// want a fresh skeleton already have the standalone `highlights`
+/// subcommand for that.
+fn write_highlights_if_absent(queries_dir: &Path, grammar: &Grammar) -> Result<(), Box<dyn Error>> {
+    let path = queries_dir.join("highlights.scm");
+    if path.exists() {
+        return Ok(());
+    }
+    fs::write(
+        &path,
+        Highlights {
+            grammar,
+            no_todos: false,
+        }
+        .to_string(),
+    )?;
+    Ok(())
+}
+
 /// Writes a minimal `tree-sitter.json` to `dir` if one does not already exist.
 ///
 /// Satisfies tree-sitter ≥ 0.25's requirement for ABI 15 generation.
@@ -266,8 +291,9 @@ fn write_tree_sitter_json(dir: &Path, name: &str) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Writes `grammar.js` and a skeleton `queries/highlights.scm` to the output directory,
-/// then runs `tree-sitter generate` inside it.
+/// Writes `grammar.js` and, unless one already exists, a skeleton
+/// `queries/highlights.scm` to the output directory, then runs
+/// `tree-sitter generate` inside it.
 pub fn run_generate(
     grammar_js: &GrammarJs<'_>,
     output_dir: Option<&str>,
@@ -277,14 +303,7 @@ pub fn run_generate(
     fs::write(dir.join("grammar.js"), grammar_js.to_string())?;
     let queries_dir = dir.join("queries");
     fs::create_dir_all(&queries_dir)?;
-    fs::write(
-        queries_dir.join("highlights.scm"),
-        Highlights {
-            grammar: grammar_js.grammar,
-            no_todos: false,
-        }
-        .to_string(),
-    )?;
+    write_highlights_if_absent(&queries_dir, grammar_js.grammar)?;
     write_tree_sitter_json(&dir, grammar_js.name)?;
     let status = Command::new("tree-sitter")
         .arg("generate")
