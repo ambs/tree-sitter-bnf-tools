@@ -179,8 +179,6 @@ fn field_value_is_multiple_into(
 /// regardless of leaf status, since a leaf body can still contain
 /// `Field`-wrapped terminals; whether an emitter uses that data for a leaf
 /// kind is left to the emitter, not decided here.
-// Not yet called from outside tests — phase 3 wires this into `--ast-types`.
-#[allow(dead_code)]
 fn derive_ast_node_specs(grammar: &Grammar) -> IndexMap<String, AstNodeSpec> {
     let kinds = visible_kinds(grammar);
 
