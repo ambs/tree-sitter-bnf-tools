@@ -166,8 +166,8 @@ impl RustAst<'_> {
                 }
 
                 /// Every child at `field_name`, in declaration order, each bundled
-                /// with this node's own source text — for `multiple: true` fields
-                /// (`Vec<T>`); see the worked example above.
+                /// with this node's own source text — for `multiple: true` fields,
+                /// whose generated struct holds a `Vec<T>` of these.
                 pub fn children_by_field(&self, field_name: &str) -> Vec<super::visitor::SourceNode<'tree>> {
                     let mut cursor = self.node.walk();
                     self.node
