@@ -132,6 +132,28 @@ For a real-world example, the BNF dialect's own grammar
 [railroad diagram](grammar/railroad.svg) (SVG) and
 [rule-dependency graph](grammar/graph.pdf) (PDF).
 
+## Generating a processing scaffold
+
+`ts-bnf-tool scaffold` turns a `.bnf` grammar into a complete, self-contained
+Rust crate — the tree-sitter parser plus an ANTLR-style `Visitor<'tree>`
+trait and a runnable example — with no edits needed:
+
+```sh
+ts-bnf-tool scaffold decls.bnf
+cd decls && cargo run --example walk -- sample.decls
+```
+
+(shells out to the `tree-sitter` CLI, so `tree-sitter-cli` >= 0.25 must be on
+`PATH` — `npm install -g tree-sitter-cli`; the generated crate also needs a C
+compiler to build `src/parser.c`.)
+
+`--ast-types` additionally emits `bindings/rust/ast.rs`, one owned typed
+Rust struct per grammar rule; `--merge-config <path>` collapses a group of
+related kinds into a single Rust `enum` instead of leaving each with its own
+unrelated struct. See
+[Generating a processing scaffold](docs/tutorial/11-generating-a-scaffold.md)
+for the full walkthrough.
+
 ## Development
 
 ```sh
