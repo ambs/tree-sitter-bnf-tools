@@ -1929,6 +1929,213 @@ fn scaffold_generated_crate_builds_inside_an_enclosing_workspace() {
     );
 }
 
+// ── chapter 11's worked example (docs/tutorial/11-generating-a-scaffold.md, #383) ──
+
+/// Chapter 11's own `decls.bnf`, copied verbatim — every claim the chapter
+/// makes about node counts, generated doc-comment shapes, the
+/// `DeclExtractor` override, and `--ast-types` struct shapes below is
+/// checked against this exact grammar, not a smaller stand-in like
+/// `SCAFFOLD_BNF`/`SCAFFOLD_AST_BNF` (#383). If either copy changes, update
+/// the other: `docs/tutorial/11-generating-a-scaffold.md`'s "What gets
+/// generated" section.
+const TUTORIAL_11_DECLS_BNF: &str = indoc! {"
+    # decls.bnf: a tiny declaration language
+    program -> decl* ;
+    decl -> target: ident '=' value: expr ';' ;
+    expr -> ident | num ;
+    ident -> /[a-z][a-zA-Z0-9_]*/ ;
+    num -> /[0-9]+/ ;
+"};
+
+/// Chapter 11's exact two-line sample input for `decls.bnf`.
+const TUTORIAL_11_SAMPLE: &str = "x = 1;\ny = x;\n";
+
+#[test]
+/// `cargo run --example walk` on the chapter's sample input prints the
+/// chapter's stated `9 node(s)` — the root `program`, plus two `decl`s each
+/// contributing itself, its `target` `ident`, its `value`'s `expr` wrapper,
+/// and the `ident`/`num` inside that (4 nodes per `decl`, 8 total, plus
+/// `program` itself).
+fn tutorial_11_walk_example_matches_documented_node_count() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold(
+        "ts_bnf_tutorial11_decls_project",
+        "decls",
+        TUTORIAL_11_DECLS_BNF,
+    );
+
+    let stdout = support::run_walk_example(&out_dir, TUTORIAL_11_SAMPLE);
+    assert!(
+        stdout.contains("9 node(s)"),
+        "chapter 11 states 9 node(s) for this sample; got: {stdout}"
+    );
+
+    let visitor_rs = std::fs::read_to_string(out_dir.join("bindings/rust/visitor.rs")).unwrap();
+    let decl_start = visitor_rs
+        .find("fn visit_decl(")
+        .expect("visit_decl must be generated");
+    let decl_end = decl_start
+        + visitor_rs[decl_start..]
+            .find("fn visit_expr(")
+            .expect("visit_expr must follow visit_decl");
+    let visit_decl = &visitor_rs[decl_start..decl_end];
+    assert!(
+        visit_decl.contains("`target` -> `ident`"),
+        "visit_decl's doc comment must document the `target` field: {visit_decl}"
+    );
+    assert!(
+        visit_decl.contains("`value` -> `expr`"),
+        "visit_decl's doc comment must document the `value` field: {visit_decl}"
+    );
+    assert!(
+        visit_decl.contains("**Anonymous children** (not visited by default): `'='`, `';'`"),
+        "visit_decl's doc comment must list the anonymous `'='`/`';'` children: {visit_decl}"
+    );
+
+    let ident_start = visitor_rs
+        .find("fn visit_ident(")
+        .expect("visit_ident must be generated");
+    let ident_end = ident_start
+        + visitor_rs[ident_start..]
+            .find("fn visit_num(")
+            .expect("visit_num must follow visit_ident");
+    let visit_ident = &visitor_rs[ident_start..ident_end];
+    assert!(
+        visit_ident.contains("**Leaf node**"),
+        "visit_ident must be documented as a leaf node: {visit_ident}"
+    );
+    assert!(
+        visit_ident.contains("let _ = node;"),
+        "visit_ident's default body must be the leaf no-op: {visit_ident}"
+    );
+}
+
+/// The `DeclExtractor` override from chapter 11's "A real use: extracting
+/// declared names" section, copied verbatim (including its own internal
+/// `assert_eq!`) — written as a new example into the scaffolded crate and
+/// run for real, pinning the chapter's claim that it returns exactly
+/// `["x", "y"]`.
+const TUTORIAL_11_DECL_EXTRACTOR_RS: &str = indoc! {r#"
+    use decls::visitor::{SourceNode, Visitor};
+
+    struct DeclExtractor;
+
+    impl<'t> Visitor<'t> for DeclExtractor {
+        type Output = Vec<String>;
+        type Error = std::convert::Infallible;
+
+        fn combine(&mut self, results: Vec<Vec<String>>) -> Result<Vec<String>, Self::Error> {
+            Ok(results.into_iter().flatten().collect())
+        }
+
+        fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
+            Ok(vec![node.utf8_text(node.source.as_bytes()).unwrap().to_string()])
+        }
+
+        fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
+            self.field_visitor(node, "target")
+        }
+    }
+
+    fn main() {
+        let source = "x = 1;\ny = x;\n";
+        let tree = decls::parse(source).expect("parse must succeed");
+        let mut extractor = DeclExtractor;
+        let root = SourceNode { node: tree.root_node(), source };
+        let names = extractor.visit(root).unwrap();
+        assert_eq!(names, vec!["x", "y"]);
+    }
+"#};
+
+#[test]
+fn tutorial_11_decl_extractor_example_returns_documented_names() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold(
+        "ts_bnf_tutorial11_decl_extractor_project",
+        "decls",
+        TUTORIAL_11_DECLS_BNF,
+    );
+    std::fs::write(
+        out_dir.join("examples/decl_extractor.rs"),
+        TUTORIAL_11_DECL_EXTRACTOR_RS,
+    )
+    .unwrap();
+
+    // `main` panics via its own `assert_eq!` if the extracted names don't
+    // match `["x", "y"]`; a non-zero exit is `run_example`'s own failure.
+    support::run_example(&out_dir, "decl_extractor");
+}
+
+#[test]
+/// `scaffold --ast-types` on the chapter's exact grammar matches the
+/// chapter's stated `Decl`/`Ident` field shapes and the exact
+/// `Program { _pragma: Pragma { line: 1, column: 1 } }` dump `cargo run
+/// --example ast` is shown printing (`program -> decl*` has no field label
+/// of its own, so `Program` gets no other field).
+fn tutorial_11_ast_types_matches_documented_struct_shapes_and_output() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_ast_types(
+        "ts_bnf_tutorial11_ast_project",
+        "decls",
+        TUTORIAL_11_DECLS_BNF,
+    );
+
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    let decl_start = ast_rs
+        .find("pub struct Decl {")
+        .expect("Decl struct must be generated");
+    let decl_end = decl_start
+        + ast_rs[decl_start..]
+            .find('}')
+            .expect("Decl struct must be closed");
+    let decl_struct = &ast_rs[decl_start..=decl_end];
+    assert!(
+        decl_struct.contains("pub _pragma: runtime::Pragma,"),
+        "{decl_struct}"
+    );
+    assert!(decl_struct.contains("pub target: Ident,"), "{decl_struct}");
+    assert!(decl_struct.contains("pub value: Expr,"), "{decl_struct}");
+
+    let ident_start = ast_rs
+        .find("pub struct Ident {")
+        .expect("Ident struct must be generated");
+    let ident_end = ident_start
+        + ast_rs[ident_start..]
+            .find('}')
+            .expect("Ident struct must be closed");
+    let ident_struct = &ast_rs[ident_start..=ident_end];
+    assert!(
+        ident_struct.contains("pub _pragma: runtime::Pragma,"),
+        "{ident_struct}"
+    );
+    assert!(
+        ident_struct.contains("pub _text: String,"),
+        "{ident_struct}"
+    );
+
+    let stdout = support::run_ast_example(&out_dir, TUTORIAL_11_SAMPLE);
+    let normalized: String = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains("Program { _pragma: Pragma { line: 1, column: 1, }, }"),
+        "chapter 11 states this exact Program dump; got: {stdout}"
+    );
+}
+
 // ── check --summary ───────────────────────────────────────────────────────────
 
 #[test]
