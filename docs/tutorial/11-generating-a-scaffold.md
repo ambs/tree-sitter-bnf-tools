@@ -34,46 +34,8 @@ you need:
 
 ## Basic usage
 
-```sh
-ts-bnf-tool scaffold grammar.bnf                # crate in ./<name>
-ts-bnf-tool scaffold -o out/decls grammar.bnf   # crate in out/decls
-ts-bnf-tool scaffold --name decls grammar.bnf   # override the crate/grammar name
-ts-bnf-tool scaffold --no-header grammar.bnf    # suppress generated-file comments
-```
-
-`--name` also affects wording in the generated trait's own doc comment; it
-defaults to the input filename's stem. A hyphenated name — `my-lang`, the
-idiomatic Cargo package-name separator, and an ordinary filename stem — is
-fine: `Cargo.toml`'s `[package] name` keeps the hyphen, while the
-tree-sitter grammar name, the generated C parser symbol, and the module
-path `examples/*.rs` imports all use the normalized (`-` -> `_`) form
-instead, since tree-sitter's own `grammar()` call rejects a hyphenated
-name outright. A name still invalid after that normalization (a leading
-digit, whitespace, …) is rejected before anything is written to disk. Like
-`railroad` and `graph`, `scaffold` runs no static checks before
-generating — diagnostics never gate output — but it does check that no two
-rules would generate the same `visit_*` method (see below): a grammar that
-fails this check is rejected with a clear diagnostic before anything is
-written to disk.
-
-## Regenerating after a grammar change
-
-Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
-`src/*`, `bindings/rust/build.rs`, and `bindings/rust/visitor.rs` are
-regenerated every time so they always track the current grammar, but
-`tree-sitter.json`, `Cargo.toml`, `bindings/rust/lib.rs`,
-`examples/walk.rs`, `queries/highlights.scm`, and `.gitignore` are only
-ever written once — if they already exist, `scaffold` leaves them alone,
-so hand-written code (and any highlighting refinements — see
-[Refine the highlights skeleton](06-end-to-end.md#step-5--refine-the-highlights-skeleton))
-survives a grammar change. Since `queries/highlights.scm` is frozen after
-its first write, it won't pick up new rules on its own; regenerate it
-explicitly with `ts-bnf-tool highlights -o queries/highlights.scm` when the
-grammar gains rules you want highlighted.
-
-## What gets generated
-
-Save this tiny declaration language as `decls.bnf`:
+The best way to see what `scaffold` does is to run it. Save this tiny
+declaration language as `decls.bnf`:
 
 ```bnf
 # decls.bnf: a tiny declaration language
@@ -84,7 +46,17 @@ ident -> /[a-z][a-zA-Z0-9_]*/ ;
 num -> /[0-9]+/ ;
 ```
 
-`ts-bnf-tool scaffold --name decls decls.bnf` creates a `decls/` directory:
+It describes programs made of `name = value;` declarations: a `program` is
+zero or more `decl`s, and each `decl` names a `target` identifier and gives
+it a `value`, which is either another identifier or a number.
+
+Now scaffold it:
+
+```sh
+ts-bnf-tool scaffold --name decls decls.bnf
+```
+
+This creates a `decls/` directory:
 
 ```
 decls/
@@ -105,10 +77,10 @@ decls/
     └── walk.rs
 ```
 
-The `grammar.js`/`queries/`/`tree-sitter.json`/`src/` files are exactly what
-`convert --generate` already produces — the real `tree-sitter generate`
-output, unchanged. `scaffold` adds the `bindings/rust/` and `examples/`
-directories on top:
+Have a look inside. The `grammar.js`/`queries/`/`tree-sitter.json`/`src/`
+files are exactly what `convert --generate` already produces — the real
+`tree-sitter generate` output, unchanged. `scaffold` adds the
+`bindings/rust/` and `examples/` directories on top:
 
 - **`bindings/rust/lib.rs`** — the parser bindings (`LANGUAGE`, `NODE_TYPES`,
   same shape as any `tree-sitter generate`-produced crate), a `pub mod
@@ -138,9 +110,36 @@ directories on top:
   nodes, implementing nothing but the trait's one required method (also
   described below).
 
+### Other ways to invoke it
+
+You aren't limited to the defaults used above:
+
+```sh
+ts-bnf-tool scaffold grammar.bnf                # crate in ./<name>, name from the filename
+ts-bnf-tool scaffold -o out/decls grammar.bnf   # crate in out/decls
+ts-bnf-tool scaffold --name decls grammar.bnf   # override the crate/grammar name
+ts-bnf-tool scaffold --no-header grammar.bnf    # suppress generated-file comments
+```
+
+`--name` also affects wording in the generated trait's own doc comment; it
+defaults to the input filename's stem — `decls.bnf`'s stem is already
+`decls`, so passing `--name decls` above was for clarity, not necessity. A
+hyphenated name — `my-lang`, the idiomatic Cargo package-name separator, and
+an ordinary filename stem — is fine: `Cargo.toml`'s `[package] name` keeps
+the hyphen, while the tree-sitter grammar name, the generated C parser
+symbol, and the module path `examples/*.rs` imports all use the normalized
+(`-` -> `_`) form instead, since tree-sitter's own `grammar()` call rejects a
+hyphenated name outright. A name still invalid after that normalization (a
+leading digit, whitespace, …) is rejected before anything is written to
+disk. Like `railroad` and `graph`, `scaffold` runs no static checks before
+generating — diagnostics never gate output — but it does check that no two
+rules would generate the same `visit_*` method (see below): a grammar that
+fails this check is rejected with a clear diagnostic before anything is
+written to disk.
+
 ## The generated `Visitor` trait
 
-For `decls.bnf`, `bindings/rust/visitor.rs` has one method per kind
+Open `bindings/rust/visitor.rs`. For `decls.bnf` it has one method per kind
 (`visit_program`, `visit_decl`, `visit_expr`, `visit_ident`, `visit_num`), a
 `visit()` dispatcher matching on `node.kind()`, and five ANTLR-mirroring
 helper methods with sensible default bodies. The `decl` kind has two fields,
@@ -229,7 +228,7 @@ every named node in the tree without touching a single per-kind method.
 
 ## Running it
 
-No edits needed:
+Try it — no edits needed:
 
 ```sh
 $ cd decls
@@ -249,8 +248,10 @@ Say you want the list of names declared by a `decls.bnf` program, ignoring
 any identifiers that appear only on the right-hand side of `=`. Override
 `visit_ident` to capture a leaf's own text, and override `visit_decl` to
 visit *only* its `target` field — skipping `value` entirely, so a name used
-inside an expression never gets collected as if it were a declaration. This
-can replace `examples/walk.rs`, or live alongside it as a second example:
+inside an expression never gets collected as if it were a declaration. Save
+the following as `examples/decl_extractor.rs` inside `decls/` — no need to
+touch `Cargo.toml`, Cargo picks up any file dropped into `examples/`
+automatically, so it can live alongside `walk.rs` as a second example:
 
 Every `visit_*` method receives a `SourceNode`, which bundles the
 `tree_sitter::Node` with the source text it was parsed from — so
@@ -294,7 +295,30 @@ fn main() {
 `visit_program`'s default body (`children_visitor`) already does the right
 thing: it visits every `decl`, and `combine`'s `flatten` concatenates their
 results. Given `x = 1; y = x;`, `DeclExtractor` returns `["x", "y"]` — the
-declared names, not `x`'s later use as a value.
+declared names, not `x`'s later use as a value. Run it with
+`cargo run --example decl_extractor` from inside `decls/`; it exits silently
+if the extracted names match, and panics on its own `assert_eq!` otherwise.
+
+## Regenerating after a grammar change
+
+You've now hand-edited the scaffolded crate twice — once implicitly, by
+adding `examples/decl_extractor.rs`, and it's natural to eventually want a
+hand-written `Visitor` implementation registered in `lib.rs` too. So it's
+worth knowing what happens the next time you change `decls.bnf` and rerun
+the same command.
+
+Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
+`src/*`, `bindings/rust/build.rs`, and `bindings/rust/visitor.rs` are
+regenerated every time so they always track the current grammar, but
+`tree-sitter.json`, `Cargo.toml`, `bindings/rust/lib.rs`,
+`examples/walk.rs`, `queries/highlights.scm`, and `.gitignore` are only
+ever written once — if they already exist, `scaffold` leaves them alone,
+so hand-written code (and any highlighting refinements — see
+[Refine the highlights skeleton](06-end-to-end.md#step-5--refine-the-highlights-skeleton))
+survives a grammar change. Since `queries/highlights.scm` is frozen after
+its first write, it won't pick up new rules on its own; regenerate it
+explicitly with `ts-bnf-tool highlights -o queries/highlights.scm` when the
+grammar gains rules you want highlighted.
 
 ## Typed node structs (`--ast-types`)
 
@@ -314,6 +338,8 @@ injected fields are spelled with a leading underscore — both so that a
 grammar rule or field genuinely named `pragma`, `text`, `build_error`, or
 `source_node` can never collide with these fixed, tool-injected names; see
 "A note on vocabulary" below.
+
+Try it on `decls.bnf`:
 
 ```sh
 ts-bnf-tool scaffold --name decls --ast-types decls.bnf
@@ -464,10 +490,10 @@ substitute. A `merge` entry naming the root rule in its `from` list is
 rejected up front, the same as an invalid `target`; use `passthrough` for
 the root rule instead if you want to rename its struct.
 
-Given a grammar with a `program -> items: (for_statement | while_statement |
-repeat_statement)* doc: comment ;` rule and the config above,
+Suppose your grammar has a `program -> items: (for_statement | while_statement
+| repeat_statement)* doc: comment ;` rule. Running
 `ts-bnf-tool scaffold --ast-types --merge-config ast-merge.toml grammar.bnf`
-generates:
+with the config above generates:
 
 ```rust
 pub struct Program {
