@@ -231,6 +231,29 @@ fn generate_writes_queries_highlights_scm() {
 }
 
 #[test]
+/// `-o` is a short alias for `--output-dir` on `convert --generate` (#379).
+fn generate_output_dir_short_flag_works() {
+    let path = write_tmp("ts_bnf_gen_short_flag.bnf", CLEAN_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_short_flag_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["convert", "--generate", "-o"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "convert --generate -o must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out_dir.join("queries").join("highlights.scm").exists(),
+        "-o must be honored as the output directory"
+    );
+}
+
+#[test]
 /// Rerunning `convert --generate` over an existing output directory must not
 /// clobber a hand-edited `queries/highlights.scm` — the tutorial invites
 /// users to refine that file by hand after the first generation (#375).
@@ -1274,6 +1297,36 @@ fn scaffold_writes_full_crate_layout() {
     let walk_rs = std::fs::read_to_string(out_dir.join("examples/walk.rs")).unwrap();
     assert!(walk_rs.contains("use mylang::visitor::{SourceNode, Visitor};"));
     assert!(walk_rs.contains("fn combine(&mut self, _results: Vec<()>)"));
+}
+
+#[test]
+/// `-o` is a short alias for `--output-dir` on `scaffold`, matching the
+/// tutorial's quick-reference example (#379).
+fn scaffold_output_dir_short_flag_works() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_short_flag.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_short_flag_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .args(["scaffold", "--name", "mylang", "-o"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "scaffold -o must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out_dir.join("Cargo.toml").exists(),
+        "-o must be honored as the output directory"
+    );
 }
 
 #[test]
