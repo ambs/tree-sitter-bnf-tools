@@ -197,6 +197,27 @@ pub fn run_ast_example(crate_dir: &Path, input: &str) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+/// Runs `cargo run --example <example>` (no CLI argument) with `crate_dir`
+/// as the working directory — for a scaffolded crate's example that, unlike
+/// `walk`/`ast`, takes no input file and hardcodes its own sample source
+/// (e.g. a doc-example override copied verbatim into `examples/`). Panics if
+/// the subprocess does not exit successfully. Returns the captured stdout.
+pub fn run_example(crate_dir: &Path, example: &str) -> String {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let out = Command::new(&cargo)
+        .args(["run", "--quiet", "--example", example])
+        .current_dir(crate_dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "generated crate's `cargo run --example {example}` failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
 /// Writes `input` to a file under `out_dir` and runs `tree-sitter parse` on it
 /// with `out_dir` as the working directory, so the CLI picks up the grammar
 /// generated there. Panics if the parse subprocess does not exit successfully.
