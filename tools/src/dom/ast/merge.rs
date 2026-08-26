@@ -10,6 +10,7 @@ use crate::util::find_first_name_collision;
 /// Deserialized directly from TOML via `serde`, so field names here are the
 /// config file's own key names, not chosen for Rust-side convenience.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MergeConfig {
     /// Kinds to collapse into one Rust `enum`, one entry per resulting enum.
     #[serde(default)]
@@ -26,6 +27,7 @@ pub struct MergeConfig {
 /// One `merge` entry: several source kinds collapsing into one Rust `enum`
 /// named `target`, each kind becoming its own variant.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MergeEntry {
     /// The generated enum's Rust type name.
     pub target: String,
@@ -36,6 +38,7 @@ pub struct MergeEntry {
 /// One `passthrough` entry: a single kind emitted under a different Rust
 /// type name, its own derived fields unchanged.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PassthroughEntry {
     /// The grammar kind being renamed.
     pub kind: String,
@@ -280,6 +283,63 @@ mod tests {
     #[test]
     fn parse_merge_config_rejects_malformed_toml() {
         assert!(parse_merge_config("not = [valid").is_err());
+    }
+
+    /// A typo'd top-level table name (`[[passthough]]` instead of
+    /// `[[passthrough]]`) is a parse error naming the offending key, not a
+    /// silently-ignored extra array that leaves the config looking valid
+    /// but incomplete (#377).
+    #[test]
+    fn parse_merge_config_rejects_unknown_top_level_table() {
+        let source = r#"
+            [[passthough]]
+            kind = "comment"
+            target = "Comment"
+        "#;
+        let err = parse_merge_config(source).err().unwrap();
+        assert!(
+            err.contains("passthough"),
+            "error must name the unknown table 'passthough'; got: {err}"
+        );
+    }
+
+    /// A typo'd key inside `[[merge]]` (`kinds` instead of `from`) is a
+    /// parse error naming it, rather than silently defaulting `from` to
+    /// empty and leaving the entry inert (#377).
+    #[test]
+    fn parse_merge_config_rejects_unknown_key_in_merge_entry() {
+        let source = r#"
+            [[merge]]
+            target = "Loop"
+            kinds = ["for_statement"]
+        "#;
+        let err = parse_merge_config(source).err().unwrap();
+        assert!(
+            err.contains("kinds"),
+            "error must name the unknown key 'kinds'; got: {err}"
+        );
+    }
+
+    /// A top-level `ignore` key placed *after* a `[[merge]]` table binds to
+    /// that table in TOML, not to the document root — the exact trap the
+    /// tutorial's documented key ordering exists to avoid (#377). With
+    /// `deny_unknown_fields` this is a parse error naming `ignore` as
+    /// unexpected on `MergeEntry`, rather than a silently-empty
+    /// `config.ignore`.
+    #[test]
+    fn parse_merge_config_rejects_ignore_misplaced_after_merge_table() {
+        let source = r#"
+            [[merge]]
+            target = "Loop"
+            from = ["for_statement", "while_statement", "repeat_statement"]
+
+            ignore = ["*"]
+        "#;
+        let err = parse_merge_config(source).err().unwrap();
+        assert!(
+            err.contains("ignore"),
+            "error must name the unexpected key 'ignore'; got: {err}"
+        );
     }
 
     // ── check_merge_config ──────────────────────────────────────────────
