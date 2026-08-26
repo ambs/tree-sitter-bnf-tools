@@ -1,5 +1,17 @@
 # Generating a processing scaffold
 
+**Prerequisites.** `scaffold` shells out to the `tree-sitter` CLI to generate
+the C parser, and the generated crate's `build.rs` later compiles
+`src/parser.c` through a C compiler when you `cargo build`/`cargo run` it.
+Beyond `ts-bnf-tool` itself, you need:
+
+- `tree-sitter-cli` >= 0.25 on `PATH` (`npm install -g tree-sitter-cli`) — the
+  generated crate targets ABI 15, which requires that version. Without it,
+  `scaffold` itself fails with `failed to run tree-sitter: No such file or
+  directory`.
+- a working C compiler (`cc`/`gcc`/`clang`) — without it, `cargo build`/
+  `cargo run` on the generated crate fails compiling `src/parser.c`.
+
 `ts-bnf-tool scaffold` scaffolds a complete, self-contained Rust crate for
 parsing and traversing a BNF-described language: the tree-sitter parser, an
 ANTLR-style `Visitor<'tree>` trait — one `visit_*` method per node kind, a
@@ -35,10 +47,10 @@ written to disk.
 Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
 `src/*`, `bindings/rust/build.rs`, and `bindings/rust/visitor.rs` are
 regenerated every time so they always track the current grammar, but
-`Cargo.toml`, `bindings/rust/lib.rs`, `examples/walk.rs`,
-`queries/highlights.scm`, and `.gitignore` are only ever written once — if
-they already exist, `scaffold` leaves them alone, so hand-written code (and
-any highlighting refinements — see
+`tree-sitter.json`, `Cargo.toml`, `bindings/rust/lib.rs`,
+`examples/walk.rs`, `queries/highlights.scm`, and `.gitignore` are only
+ever written once — if they already exist, `scaffold` leaves them alone,
+so hand-written code (and any highlighting refinements — see
 [Refine the highlights skeleton](06-end-to-end.md#step-5--refine-the-highlights-skeleton))
 survives a grammar change. Since `queries/highlights.scm` is frozen after
 its first write, it won't pick up new rules on its own; regenerate it
@@ -62,6 +74,7 @@ num -> /[0-9]+/ ;
 
 ```
 decls/
+├── .gitignore
 ├── Cargo.toml
 ├── grammar.js
 ├── tree-sitter.json
@@ -205,6 +218,7 @@ every named node in the tree without touching a single per-kind method.
 No edits needed:
 
 ```sh
+$ cd decls
 $ echo 'x = 1;
 y = x;' > sample.decls
 $ cargo run --example walk -- sample.decls
@@ -291,6 +305,21 @@ grammar rule or field genuinely named `pragma`, `text`, `build_error`, or
 ts-bnf-tool scaffold --name decls --ast-types decls.bnf
 ```
 
+This adds two files on top of the tree shown earlier:
+
+```
+decls/
+├── …
+├── bindings/rust/
+│   ├── ast.rs        (new)
+│   ├── build.rs
+│   ├── lib.rs
+│   └── visitor.rs
+└── examples/
+    ├── ast.rs         (new)
+    └── walk.rs
+```
+
 For `decls.bnf` (the running example from earlier in this tutorial),
 `bindings/rust/ast.rs` gets one struct per kind. `decl` has two fields, so
 its `TryFrom` impl builds both from the parsed node:
@@ -340,6 +369,7 @@ scaffolded `examples/ast.rs` does, the same bar `examples/walk.rs` already
 meets:
 
 ```sh
+$ cd decls
 $ printf 'x = 1;\ny = x;\n' > sample.decls
 $ cargo run --example ast -- sample.decls
 sample.decls:
@@ -411,6 +441,14 @@ Rust `struct`/`enum` name, so it must be a valid, non-keyword Rust
 identifier (e.g. `Loop`, not `loop`, `my-loop`, or an empty string) —
 `scaffold` rejects the config up front otherwise, rather than emitting
 non-compiling Rust.
+
+One kind can't be merged away, though: the grammar's own root rule. The
+scaffolded `examples/ast.rs` needs one concrete, nameable root type to
+construct (`use {crate}::ast::{RootKind};`) — a kind claimed by a `merge`
+entry becomes a private variant of that entry's enum, which isn't a usable
+substitute. A `merge` entry naming the root rule in its `from` list is
+rejected up front, the same as an invalid `target`; use `passthrough` for
+the root rule instead if you want to rename its struct.
 
 Given a grammar with a `program -> items: (for_statement | while_statement |
 repeat_statement)* doc: comment ;` rule and the config above,

@@ -58,6 +58,12 @@ cat json.bnf | ts-bnf-tool convert --name json - > grammar.js
 
 ## Step 4 — generate a ready-to-use tree-sitter project
 
+**Prerequisite:** `--generate` shells out to the `tree-sitter` CLI to produce
+the C parser, so `tree-sitter-cli` >= 0.25 must be on `PATH` (`npm install -g
+tree-sitter-cli`) — the ABI 15 output this step produces requires that
+version. Without it, this step fails with `failed to run tree-sitter: No
+such file or directory`.
+
 `--generate` writes `grammar.js`, a skeleton `queries/highlights.scm`, and a
 minimal `tree-sitter.json` to a directory, then runs `tree-sitter generate` to
 produce the C parser:
