@@ -40,6 +40,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reported to stderr (advisory only — it still generates normally as an
   ordinary baseline struct); `ignore = ["*"]` opts out of this report
   entirely (#342).
+- `convert --generate`: `-o` is now a short alias for `--output-dir`,
+  matching `-o`'s meaning as "write output here" on `railroad`/`graph`/
+  `highlights`/`rename` (#379).
 
 ### Fixed
 - `convert`/`convert --generate`/`scaffold`: a hyphenated grammar name

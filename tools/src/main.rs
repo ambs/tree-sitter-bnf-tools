@@ -44,7 +44,7 @@ enum Subcommands {
         #[arg(long)]
         name: Option<String>,
         /// Output directory for --generate (default: ./<name>)
-        #[arg(long, requires = "generate")]
+        #[arg(long, short = 'o', requires = "generate")]
         output_dir: Option<String>,
         /// Skip static checks; suppress all warnings and convert unconditionally
         #[arg(long, short = 'n')]
@@ -151,7 +151,7 @@ enum Subcommands {
         /// Input BNF file, or `-` to read from stdin
         filename: String,
         /// Output directory for the generated crate (default: ./<name>)
-        #[arg(long)]
+        #[arg(long, short = 'o')]
         output_dir: Option<String>,
         /// Grammar/crate name (default: filename stem)
         #[arg(long)]
