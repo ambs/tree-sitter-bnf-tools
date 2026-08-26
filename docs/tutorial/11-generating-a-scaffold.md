@@ -1,9 +1,29 @@
 # Generating a processing scaffold
 
-**Prerequisites.** `scaffold` shells out to the `tree-sitter` CLI to generate
-the C parser, and the generated crate's `build.rs` later compiles
-`src/parser.c` through a C compiler when you `cargo build`/`cargo run` it.
-Beyond `ts-bnf-tool` itself, you need:
+## What `scaffold` is for
+
+Writing a tree-sitter-backed language tool by hand means juggling several
+things before you can process a single file: running `tree-sitter generate`,
+wiring up a Rust crate around the generated C parser, and writing a traversal
+that walks the resulting tree without missing a node kind. `ts-bnf-tool
+scaffold` does all of that for you. Point it at a `.bnf` grammar and it
+produces a complete, self-contained Rust crate for parsing and traversing the
+described language: the tree-sitter parser, an ANTLR-style `Visitor<'tree>`
+trait — one `visit_*` method per node kind, a central `visit()` dispatcher,
+and a `combine`-based fold so you only write the bodies you care about — and
+a runnable example. `cd` into the output directory and
+`cargo run --example walk -- <file>` works immediately, with no edits.
+
+This is a Rust-only feature for now — the subcommand's name is deliberately
+target-language-neutral, since a future target might scaffold a module or
+package instead of a crate.
+
+## Prerequisites
+
+`scaffold` shells out to the `tree-sitter` CLI to generate the C parser, and
+the generated crate's `build.rs` later compiles `src/parser.c` through a C
+compiler when you `cargo build`/`cargo run` it. Beyond `ts-bnf-tool` itself,
+you need:
 
 - `tree-sitter-cli` >= 0.25 on `PATH` (`npm install -g tree-sitter-cli`) — the
   generated crate targets ABI 15, which requires that version. Without it,
@@ -12,15 +32,7 @@ Beyond `ts-bnf-tool` itself, you need:
 - a working C compiler (`cc`/`gcc`/`clang`) — without it, `cargo build`/
   `cargo run` on the generated crate fails compiling `src/parser.c`.
 
-`ts-bnf-tool scaffold` scaffolds a complete, self-contained Rust crate for
-parsing and traversing a BNF-described language: the tree-sitter parser, an
-ANTLR-style `Visitor<'tree>` trait — one `visit_*` method per node kind, a
-central `visit()` dispatcher, and a `combine`-based fold so you only write
-the bodies you care about — and a runnable example. `cd` into the output
-directory and `cargo run --example walk -- <file>` works immediately, with
-no edits. This is a Rust-only feature for now — the subcommand's name is
-deliberately target-language-neutral, since a future target might scaffold
-a module or package instead of a crate.
+## Basic usage
 
 ```sh
 ts-bnf-tool scaffold grammar.bnf                # crate in ./<name>
@@ -43,6 +55,8 @@ generating — diagnostics never gate output — but it does check that no two
 rules would generate the same `visit_*` method (see below): a grammar that
 fails this check is rejected with a clear diagnostic before anything is
 written to disk.
+
+## Regenerating after a grammar change
 
 Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
 `src/*`, `bindings/rust/build.rs`, and `bindings/rust/visitor.rs` are
