@@ -243,7 +243,7 @@ const RULE_GAP: i64 = 16;
 ///
 /// # Safety note
 /// Rule names are interpolated directly into SVG without escaping.  This is safe
-/// because BNF rule names match `[A-Za-z_][A-Za-z0-9_-]*` and contain no XML-special
+/// because BNF rule names match `[A-Za-z_][A-Za-z0-9_]*` and contain no XML-special
 /// characters.
 pub fn emit_single_file(
     grammar: &super::types::Grammar,
@@ -369,7 +369,7 @@ pub fn emit_single_file(
 ///
 /// # Safety note
 /// Rule names are interpolated into file-system paths without sanitisation.  This is
-/// safe because BNF rule names match `[A-Za-z_][A-Za-z0-9_-]*` and contain no
+/// safe because BNF rule names match `[A-Za-z_][A-Za-z0-9_]*` and contain no
 /// path-separator or other shell-special characters.
 pub fn emit_split(
     grammar: &super::types::Grammar,

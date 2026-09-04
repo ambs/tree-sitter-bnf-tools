@@ -4,7 +4,10 @@ description = "A simple BNF syntax parser"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
+# Pinned: bindings/rust/lib.rs's `extern "C" { ... }` block requires
+# `unsafe extern "C"` under edition 2024; bump both together, or not at all.
 edition = "2021"
+rust-version = "1.90"
 readme = "README.md"
 keywords = ["incremental", "parsing", "tree-sitter", "bnf"]
 categories = ["parser-implementations", "parsing", "text-editors"]
@@ -23,6 +26,9 @@ include = [
 
 [lib]
 path = "bindings/rust/lib.rs"
+
+[lints]
+workspace = true
 
 [dependencies]
 tree-sitter-language = "0.1"

@@ -16,7 +16,7 @@ editor? See the **[editor setup guide](docs/editors.md)**.
 
 | Directory | Description |
 |-----------|-------------|
-| `tree-sitter-bnf/` | Tree-sitter grammar and language bindings (Rust, Node.js, C) |
+| `tree-sitter-bnf/` | Tree-sitter grammar and language bindings (Rust, C) |
 | `tools/` | `ts-bnf-tool` CLI — converts BNF files to tree-sitter notation |
 | `grammar/` | The BNF dialect described in itself, with generated diagrams |
 

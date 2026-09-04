@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 fn main() {
     let src_dir = std::path::Path::new("src");
 
