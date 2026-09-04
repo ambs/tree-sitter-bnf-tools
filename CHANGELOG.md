@@ -44,6 +44,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   matching `-o`'s meaning as "write output here" on `railroad`/`graph`/
   `highlights`/`rename` (#379).
 
+### Changed
+- `tree-sitter-bnf` and `ts-bnf-tool` now declare `rust-version = "1.90"`,
+  the actual minimum toolchain required by their current dependency graphs
+  (#411).
+
+### Removed
+- `tree-sitter-bnf`'s Node.js language binding scaffolding
+  (`bindings/node/`, `package.json`): it was never functional (mismatched
+  `nan`/`node-addon-api` templates, no build/test in CI, never published to
+  npm) and `tree-sitter.json` already declared `"node": false` (#411).
+
 ### Fixed
 - `convert`/`convert --generate`/`scaffold`: a hyphenated grammar name
   (from `--name`, or an ordinary filename stem like `my-lang.bnf`) is now

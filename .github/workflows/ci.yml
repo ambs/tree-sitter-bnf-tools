@@ -45,8 +45,7 @@ jobs:
       - run: make test
       - run: make audit
       - run: cargo package -p tree-sitter-bnf --no-verify --allow-dirty
-      # ts-bnf-tool packaging requires tree-sitter-bnf to be on crates.io first;
-      # add `cargo package -p ts-bnf-tool --no-verify --allow-dirty` here after first publish.
+      - run: cargo package -p ts-bnf-tool --no-verify --allow-dirty
 
   coverage:
     name: Coverage

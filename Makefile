@@ -11,7 +11,7 @@ BNF_SELFCHECK_DIR := target/bnf-selfcheck
 
 .DEFAULT_GOAL := help
 
-.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish install grammar grammar-check bnf-self-check audit
+.PHONY: help generate test-grammar ts-version-check build release test check typecheck lint fmt fmt-check clean publish publish-guard install grammar grammar-check bnf-self-check audit
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -125,7 +125,20 @@ fmt-check: ## Check formatting without modifying
 install: $(PARSER_C) ## Install ts-bnf-tool locally (cargo install --path)
 	$(CARGO) install --path tools
 
-publish: ## Publish crates to crates.io (tree-sitter-bnf first, then ts-bnf-tool)
+# cargo publish needs --allow-dirty because tree-sitter-bnf/src/ (generated
+# parser output) is gitignored yet listed in Cargo.toml's `include`, so cargo
+# always sees it as uncommitted. This guard makes sure --allow-dirty isn't
+# also hiding a real, unrelated uncommitted change: `git status --porcelain`
+# already excludes gitignored paths, so any output here is unexpected.
+publish-guard: ## Fail if the working tree has uncommitted changes beyond the gitignored generated files
+	@dirty=$$(git status --porcelain); \
+	if [ -n "$$dirty" ]; then \
+		echo "publish: working tree has uncommitted changes; commit or stash them before publishing:" >&2; \
+		echo "$$dirty" >&2; \
+		exit 1; \
+	fi
+
+publish: publish-guard ## Publish crates to crates.io (tree-sitter-bnf first, then ts-bnf-tool)
 	$(CARGO) publish -p tree-sitter-bnf --allow-dirty
 	@echo "Waiting for crates.io index to update..."
 	sleep 30
