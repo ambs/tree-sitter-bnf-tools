@@ -47,13 +47,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `tree-sitter-bnf` and `ts-bnf-tool` now declare `rust-version = "1.90"`,
   the actual minimum toolchain required by their current dependency graphs
-  (#411).
+  (#412).
 
 ### Removed
 - `tree-sitter-bnf`'s Node.js language binding scaffolding
   (`bindings/node/`, `package.json`): it was never functional (mismatched
   `nan`/`node-addon-api` templates, no build/test in CI, never published to
-  npm) and `tree-sitter.json` already declared `"node": false` (#411).
+  npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
 - `convert`/`convert --generate`/`scaffold`: a hyphenated grammar name
