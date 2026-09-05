@@ -45,6 +45,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `highlights`/`rename` (#379).
 
 ### Fixed
+- `graph`: unknown `--start` rule and missing Graphviz `dot` errors no longer
+  print a doubled `error: error:` prefix (#408).
 - `convert`/`convert --generate`/`scaffold`: a hyphenated grammar name
   (from `--name`, or an ordinary filename stem like `my-lang.bnf`) is now
   accepted instead of rejected — `check_grammar_name` validates the

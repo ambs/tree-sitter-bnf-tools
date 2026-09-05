@@ -104,7 +104,7 @@ pub fn build_graph(
 
     let start: String = match start_rule {
         Some(sr) if !defined.contains(sr) => {
-            return Err(format!("error: rule '{sr}' not found in grammar"));
+            return Err(format!("rule '{sr}' not found in grammar"));
         }
         Some(sr) => sr.to_string(),
         None => grammar.root_rule().unwrap_or("").to_string(),
@@ -255,8 +255,7 @@ pub fn run_graphviz(dot_input: &str, format: &str) -> Result<Vec<u8>, Box<dyn Er
         .spawn()
         .map_err(|e| -> Box<dyn Error> {
             if e.kind() == std::io::ErrorKind::NotFound {
-                "error: `dot` not found on PATH; install Graphviz: https://graphviz.org/download/"
-                    .into()
+                "`dot` not found on PATH; install Graphviz: https://graphviz.org/download/".into()
             } else {
                 e.into()
             }
@@ -370,7 +369,12 @@ mod tests {
     /// `--start` with a rule name not in the grammar returns an error.
     fn start_unknown_rule_returns_error() {
         let g = Grammar::from_rules([p("root", GrammarNode::TerminalPattern("/x/".into()))]);
-        assert!(build_graph(&g, Some("missing")).is_err());
+        let err = match build_graph(&g, Some("missing")) {
+            Err(e) => e,
+            Ok(_) => panic!("expected an error for an unknown start rule"),
+        };
+        assert_eq!(err, "rule 'missing' not found in grammar");
+        assert!(!err.starts_with("error:"));
     }
 
     #[test]
