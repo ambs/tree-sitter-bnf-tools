@@ -2798,7 +2798,7 @@ fn graph_start_prunes_unreachable() {
 }
 
 #[test]
-/// `--start` with an unknown rule name exits non-zero.
+/// `--start` with an unknown rule name exits non-zero with a single `error:` prefix.
 fn graph_start_unknown_rule_exits_nonzero() {
     let path = write_tmp("ts_bnf_graph_bad_start.bnf", GRAPH_BNF);
     let out = tool()
@@ -2807,6 +2807,15 @@ fn graph_start_unknown_rule_exits_nonzero() {
         .output()
         .unwrap();
     assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: rule 'no_such_rule' not found in grammar"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error: error:"),
+        "doubled error prefix: {stderr}"
+    );
 }
 
 #[test]
@@ -2879,7 +2888,14 @@ fn graph_svg_without_dot_on_path_errors() {
         .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.contains("`dot` not found on PATH"));
+    assert!(
+        stderr.contains("error: `dot` not found on PATH"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error: error:"),
+        "doubled error prefix: {stderr}"
+    );
 }
 
 #[test]
