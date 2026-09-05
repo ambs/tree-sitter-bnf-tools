@@ -369,10 +369,7 @@ mod tests {
     /// `--start` with a rule name not in the grammar returns an error.
     fn start_unknown_rule_returns_error() {
         let g = Grammar::from_rules([p("root", GrammarNode::TerminalPattern("/x/".into()))]);
-        let err = match build_graph(&g, Some("missing")) {
-            Err(e) => e,
-            Ok(_) => panic!("expected an error for an unknown start rule"),
-        };
+        let err = build_graph(&g, Some("missing")).err().unwrap();
         assert_eq!(err, "rule 'missing' not found in grammar");
         assert!(!err.starts_with("error:"));
     }
