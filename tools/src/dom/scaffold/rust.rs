@@ -32,6 +32,7 @@ pub(super) fn render(
     no_header: bool,
     visitor_source: String,
     ast_data: Option<(String, String)>,
+    bundled_bnf_paths: &[PathBuf],
 ) -> Vec<ScaffoldFile> {
     let identifier_name = hyphens_to_underscores(name);
     let mut files = vec![
@@ -67,6 +68,14 @@ pub(super) fn render(
             // as the grammar evolves — and the tutorial-editable files
             // above already establish the pattern for content like this:
             // written once, then left for the user to extend (#376).
+            preserve_existing: true,
+        },
+        ScaffoldFile {
+            path: PathBuf::from("Makefile"),
+            content: makefile(bundled_bnf_paths),
+            // Hand-editable, like `Cargo.toml`/`lib.rs`/`.gitignore` above —
+            // written once, then left for the user to extend with their own
+            // targets.
             preserve_existing: true,
         },
     ];
@@ -127,6 +136,48 @@ fn cargo_toml(name: &str) -> String {
 
         [workspace]
     "#}
+}
+
+/// Renders the generated crate's `Makefile`: a single `generate` target that
+/// reruns `ts-bnf-tool scaffold .` whenever any bundled `.bnf` file or
+/// `ts-bnf-tool.toml` changes. No flags are baked into the recipe — every
+/// setting `scaffold` needs (`name`, `--ast-types`, `--merge-config`) is
+/// already recorded in `ts-bnf-tool.toml`, which directory-mode `scaffold`
+/// reads back on its own (see `resolve_scaffold_target` in `main.rs`).
+///
+/// Tracks staleness against `bindings/rust/visitor.rs` alone — the one file
+/// a `scaffold` run always produces — rather than one target per derived
+/// file (`grammar.js`, `src/parser.c`, `bindings/rust/ast.rs`): pre-GNU-4.3
+/// `make` runs a shared recipe once per stale target when several targets
+/// share it, not once overall, and every one of these outputs is always
+/// regenerated together by the same single command anyway, so one canary
+/// file is exactly as correct as tracking all of them, with no
+/// GNU-Make-version-specific features or stamp file needed.
+///
+/// `bundled_bnf_paths` (root first, then its `%include` closure, from
+/// [`super::bundle_grammar_sources`]) becomes the prerequisite list, and its
+/// first entry — the root grammar's own bundled path — names itself in the
+/// `generate` target's comment.
+fn makefile(bundled_bnf_paths: &[PathBuf]) -> String {
+    let root = bundled_bnf_paths
+        .first()
+        .expect("bundled_bnf_paths always includes at least the root grammar")
+        .display();
+    let prereqs = bundled_bnf_paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    formatdoc! {"
+        BNF_TOOL ?= ts-bnf-tool
+
+        generate: bindings/rust/visitor.rs ## Regenerate grammar.js, src/parser.c, and bindings/rust/{{visitor,ast}}.rs from {root}
+
+        bindings/rust/visitor.rs: {prereqs} ts-bnf-tool.toml
+        \t$(BNF_TOOL) scaffold .
+
+        .PHONY: generate
+    "}
 }
 
 /// Renders the generated crate's `bindings/rust/build.rs` — compiles

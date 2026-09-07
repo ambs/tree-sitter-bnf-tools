@@ -136,16 +136,25 @@ For a real-world example, the BNF dialect's own grammar
 
 `ts-bnf-tool scaffold` turns a `.bnf` grammar into a complete, self-contained
 Rust crate — the tree-sitter parser plus an ANTLR-style `Visitor<'tree>`
-trait and a runnable example — with no edits needed:
+trait and a runnable example — with no edits needed. The recommended
+workflow is in-place: create the crate's folder, put the grammar there, then
+scaffold into that same folder:
 
 ```sh
-ts-bnf-tool scaffold decls.bnf
-cd decls && cargo run --example walk -- sample.decls
+mkdir decls && cd decls
+# write decls.bnf here
+ts-bnf-tool scaffold -o . decls.bnf
+cargo run --example walk -- sample.decls
 ```
 
 (shells out to the `tree-sitter` CLI, so `tree-sitter-cli` >= 0.25 must be on
 `PATH` — `npm install -g tree-sitter-cli`; the generated crate also needs a C
 compiler to build `src/parser.c`.)
+
+The grammar is bundled into the crate alongside a `ts-bnf-tool.toml`
+recording how it was scaffolded and a `Makefile` with a `generate` target —
+edit the bundled `.bnf` and run `make generate` (or `ts-bnf-tool scaffold .`,
+no flags needed) to regenerate everything derived from it.
 
 `--ast-types` additionally emits `bindings/rust/ast.rs`, one owned typed
 Rust struct per grammar rule; `--merge-config <path>` collapses a group of

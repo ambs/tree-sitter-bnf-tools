@@ -9,13 +9,15 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 
 use ts_bnf_tool::dom::analysis::{FirstTerminal, first_sets};
+use ts_bnf_tool::dom::ast::merge::MergeConfig;
 use ts_bnf_tool::dom::rename_grammar;
+use ts_bnf_tool::dom::scaffold::config::parse_scaffold_config;
 use ts_bnf_tool::dom::summary::GrammarSummary;
 use ts_bnf_tool::dom::{
-    Diagnostic, Grammar, GrammarJs, Highlights, ParseError, Severity, parse_merge_config,
-    run_generate, run_scaffold, uncovered_kinds,
+    Diagnostic, Grammar, GrammarJs, Highlights, ParseError, ScaffoldRequest, Severity,
+    parse_merge_config, run_generate, run_scaffold, uncovered_kinds,
 };
-use ts_bnf_tool::util::{hyphens_to_underscores, syntax_error_diagnostics};
+use ts_bnf_tool::util::{hyphens_to_underscores, resolve_output_dir, syntax_error_diagnostics};
 use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
 
 /// Top-level CLI for `ts-bnf-tool`.
@@ -147,10 +149,24 @@ enum Subcommands {
     /// processing a BNF-described language: the tree-sitter parser, an
     /// ANTLR-style Visitor<'tree> trait, and a runnable example that
     /// traverses a file with no code edits needed.
+    ///
+    /// Bundles a copy of the grammar — and any `%include`d files, preserving
+    /// their relative paths — into the generated crate, alongside a
+    /// `ts-bnf-tool.toml` recording how it was scaffolded and a `Makefile`
+    /// that reruns this command whenever the bundled grammar changes. To
+    /// regenerate later, point `target` at the crate's own directory instead
+    /// of repeating the filename and flags (`ts-bnf-tool scaffold .`, or
+    /// `make generate` inside the crate) — settings are read back from
+    /// `ts-bnf-tool.toml`, and any flag given again overrides what's
+    /// recorded there.
     Scaffold {
-        /// Input BNF file, or `-` to read from stdin
-        filename: String,
-        /// Output directory for the generated crate (default: ./<name>)
+        /// A `.bnf` grammar (or `-` for stdin) to scaffold from, or the
+        /// directory of an already-scaffolded crate to regenerate using its
+        /// recorded `ts-bnf-tool.toml` settings
+        target: String,
+        /// Output directory for the generated crate (default: ./<name>).
+        /// Not allowed when `target` is a directory — the crate to
+        /// regenerate is already named by `target` itself.
         #[arg(long, short = 'o')]
         output_dir: Option<String>,
         /// Grammar/crate name (default: filename stem)
@@ -258,11 +274,170 @@ fn grammar_name(filename: &str, override_name: Option<&str>) -> String {
         if filename == "-" {
             return "grammar".to_string();
         }
+
         Path::new(filename)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("grammar")
             .to_string()
+    })
+}
+
+/// The settings `scaffold` actually runs with, after resolving its `target`
+/// positional against any `ts-bnf-tool.toml` already recorded in the
+/// destination directory.
+struct ScaffoldTarget {
+    /// Path to the grammar file to actually read from disk (always the
+    /// already-bundled copy once a config exists; `target` itself
+    /// otherwise).
+    grammar_path: String,
+    /// The value to hand `run_scaffold` as its `output_dir` (`-o`).
+    output_dir: Option<String>,
+    /// Effective grammar/crate name.
+    name: String,
+    /// Effective `--ast-types` setting.
+    ast_types: bool,
+    /// Effective `--merge-config`, already parsed.
+    merge_config: Option<MergeConfig>,
+    /// `true` when a `ts-bnf-tool.toml` already existed in the resolved
+    /// output directory before this run (directory mode, or a file-mode
+    /// rerun) — `false` only for a genuinely first-ever scaffold into a
+    /// fresh directory.
+    already_bundled: bool,
+}
+
+/// Reads and parses the file named by `--merge-config`, if given.
+fn load_cli_merge_config(path: Option<&str>) -> Result<Option<MergeConfig>, Box<dyn Error>> {
+    path.map(|path| -> Result<MergeConfig, Box<dyn Error>> {
+        let source = fs::read_to_string(path)?;
+        parse_merge_config(&source).map_err(Into::into)
+    })
+    .transpose()
+}
+
+/// Resolves scaffold settings for directory mode: `target` names an
+/// already-scaffolded crate, so everything is read from its
+/// `ts-bnf-tool.toml` (a CLI-given `name`/`ast_types`/merge config
+/// overrides/extends the recorded value; see plan step 2).
+fn resolve_directory_scaffold_target(
+    target: &str,
+    name: Option<&str>,
+    ast_types: bool,
+    cli_merge_config: Option<MergeConfig>,
+) -> Result<ScaffoldTarget, Box<dyn Error>> {
+    let dir = PathBuf::from(target);
+    let config_path = dir.join("ts-bnf-tool.toml");
+    if !config_path.exists() {
+        return Err(format!(
+            "not a scaffolded crate: no ts-bnf-tool.toml found in {}",
+            dir.display()
+        )
+        .into());
+    }
+    let config = parse_scaffold_config(&fs::read_to_string(&config_path)?)?;
+    Ok(ScaffoldTarget {
+        grammar_path: dir.join(&config.grammar).display().to_string(),
+        output_dir: Some(target.to_string()),
+        name: name.map(str::to_string).unwrap_or(config.name),
+        ast_types: config.ast_types || ast_types,
+        merge_config: cli_merge_config.or(config.merge_config),
+        already_bundled: true,
+    })
+}
+
+/// Resolves `scaffold`'s positional `target` into the effective settings to
+/// scaffold with, dispatching on whether `target` names a directory (a rerun
+/// of an already-scaffolded crate, read from its `ts-bnf-tool.toml`) or a
+/// grammar file/`-` (today's from-scratch behavior, plus a check against any
+/// config already sitting in the resolved output directory).
+///
+/// This is currently hardcoded to Rust's scaffold shape: `ast_types` and
+/// `merge_config` are concepts specific to the Rust AST-types emitter
+/// (`dom::ast::rust`), baked directly into [`ScaffoldTarget`] and
+/// `ts-bnf-tool.toml`. A second target language will need a different
+/// approach here — e.g. a language-tagged/enum'd settings shape — rather
+/// than adding more Rust-only fields alongside these.
+fn resolve_scaffold_target(
+    target: &str,
+    output_dir: Option<&str>,
+    name: Option<&str>,
+    ast_types: bool,
+    merge_config_path: Option<&str>,
+) -> Result<ScaffoldTarget, Box<dyn Error>> {
+    let cli_merge_config = load_cli_merge_config(merge_config_path)?;
+
+    if Path::new(target).is_dir() {
+        if output_dir.is_some() {
+            return Err(
+                "-o doesn't make sense when regenerating an existing scaffolded \
+                         crate; pass the crate's directory as the target instead"
+                    .into(),
+            );
+        }
+        return resolve_directory_scaffold_target(target, name, ast_types, cli_merge_config);
+    }
+
+    resolve_file_scaffold_target(target, output_dir, name, ast_types, cli_merge_config)
+}
+
+/// Resolves scaffold settings for file mode: `target` is a `.bnf` path, `-`
+/// for stdin, or a path that doesn't exist yet. Once the resolved output
+/// directory already has a `ts-bnf-tool.toml`, `target`'s basename must
+/// match its recorded `grammar` (see plan step 2's mismatch refusal) and
+/// codegen always reads the already-bundled copy, never `target` itself.
+fn resolve_file_scaffold_target(
+    target: &str,
+    output_dir: Option<&str>,
+    name: Option<&str>,
+    ast_types: bool,
+    cli_merge_config: Option<MergeConfig>,
+) -> Result<ScaffoldTarget, Box<dyn Error>> {
+    let computed_name = grammar_name(target, name);
+    let dir = resolve_output_dir(output_dir, &computed_name);
+    let config_path = dir.join("ts-bnf-tool.toml");
+    let existing_config = if config_path.exists() {
+        Some(parse_scaffold_config(&fs::read_to_string(&config_path)?)?)
+    } else {
+        None
+    };
+
+    let grammar_path = match &existing_config {
+        Some(config) => {
+            let target_basename = Path::new(target)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(target);
+            if target_basename != config.grammar {
+                return Err(format!(
+                    "a different grammar file ('{}') is already bundled in {}; scaffold \
+                     again with that file, or remove/rename it first if you mean to \
+                     replace it",
+                    config.grammar,
+                    dir.display()
+                )
+                .into());
+            }
+            dir.join(&config.grammar).display().to_string()
+        }
+        None => target.to_string(),
+    };
+
+    let already_bundled = existing_config.is_some();
+    let effective_name = name
+        .map(str::to_string)
+        .or_else(|| existing_config.as_ref().map(|c| c.name.clone()))
+        .unwrap_or(computed_name);
+    let effective_ast_types = existing_config.as_ref().is_some_and(|c| c.ast_types) || ast_types;
+    let effective_merge_config =
+        cli_merge_config.or_else(|| existing_config.and_then(|c| c.merge_config));
+
+    Ok(ScaffoldTarget {
+        grammar_path,
+        output_dir: output_dir.map(str::to_string),
+        name: effective_name,
+        ast_types: effective_ast_types,
+        merge_config: effective_merge_config,
+        already_bundled,
     })
 }
 
@@ -277,22 +452,24 @@ fn load_grammar_source(filename: &str) -> Result<String, Box<dyn Error>> {
     Ok(source)
 }
 
-/// Parses `filename` into a grammar DOM.
+/// Parses `source_code` — already read from `filename` (or `"-"` for stdin) —
+/// into a grammar DOM. `filename` is used only for diagnostics and to resolve
+/// `%include` paths; it is not read again here.
 ///
 /// When `run_checks` is `true`, the returned [`Vec<Diagnostic>`] contains all diagnostics
 /// from cross-reference and static checks.  When `false`, checks are suppressed and the
 /// returned vec is always empty.
-fn parse_file(
+fn parse_source(
+    source_code: &str,
     filename: &str,
     run_checks: bool,
 ) -> Result<(Grammar, Vec<Diagnostic>), Box<dyn Error>> {
-    let source_code = load_grammar_source(filename)?;
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_bnf::LANGUAGE.into())
         .expect("Error loading BNF grammar");
     let tree = parser
-        .parse(&source_code, None)
+        .parse(source_code, None)
         .ok_or(ParseError::ParseFailed)?;
     let root_node = tree.root_node();
 
@@ -303,7 +480,7 @@ fn parse_file(
     };
 
     let ctx = SourceFile {
-        source: &source_code,
+        source: source_code,
         filename,
         path,
     };
@@ -318,6 +495,19 @@ fn parse_file(
     } else {
         Ok((grammar, Vec::new()))
     }
+}
+
+/// Parses `filename` into a grammar DOM.
+///
+/// When `run_checks` is `true`, the returned [`Vec<Diagnostic>`] contains all diagnostics
+/// from cross-reference and static checks.  When `false`, checks are suppressed and the
+/// returned vec is always empty.
+fn parse_file(
+    filename: &str,
+    run_checks: bool,
+) -> Result<(Grammar, Vec<Diagnostic>), Box<dyn Error>> {
+    let source_code = load_grammar_source(filename)?;
+    parse_source(&source_code, filename, run_checks)
 }
 
 /// Formats a single [`FirstTerminal`] for display: its raw string value as stored.
@@ -530,16 +720,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
 
         Subcommands::Scaffold {
-            filename,
+            target,
             output_dir,
             name,
             no_header,
             ast_types,
             merge_config,
         } => {
-            let (grammar, _) = parse_file(&filename, false)?;
-            let name = grammar_name(&filename, name.as_deref());
-            let name_diagnostics = check_grammar_name(&name);
+            let resolved = resolve_scaffold_target(
+                &target,
+                output_dir.as_deref(),
+                name.as_deref(),
+                ast_types,
+                merge_config.as_deref(),
+            )?;
+            let root_source = load_grammar_source(&resolved.grammar_path)?;
+            let (grammar, _) = parse_source(&root_source, &resolved.grammar_path, false)?;
+
+            let name_diagnostics = check_grammar_name(&resolved.name);
             if !name_diagnostics.is_empty() {
                 for d in &name_diagnostics {
                     eprintln!("{d}");
@@ -550,22 +748,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                         .into(),
                 );
             }
-            let merge_config = merge_config
-                .map(|path| -> Result<_, Box<dyn Error>> {
-                    let source = fs::read_to_string(&path)?;
-                    parse_merge_config(&source).map_err(Into::into)
-                })
-                .transpose()?;
-            run_scaffold(
-                &grammar,
-                &name,
-                source_label(&filename),
-                output_dir.as_deref(),
+            run_scaffold(&ScaffoldRequest {
+                grammar: &grammar,
+                name: &resolved.name,
+                source: source_label(&resolved.grammar_path),
+                output_dir: resolved.output_dir.as_deref(),
                 no_header,
-                ast_types,
-                merge_config.as_ref(),
-            )?;
-            if let Some(config) = &merge_config {
+                ast_types: resolved.ast_types,
+                merge_config: resolved.merge_config.as_ref(),
+                root_filename: &resolved.grammar_path,
+                root_source: &root_source,
+                already_bundled: resolved.already_bundled,
+            })?;
+            if let Some(config) = &resolved.merge_config {
                 for kind in uncovered_kinds(&grammar, config) {
                     eprintln!(
                         "warning: kind '{kind}' is not covered by --merge-config \

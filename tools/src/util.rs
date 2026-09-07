@@ -1,9 +1,18 @@
+use std::path::PathBuf;
+
 use tree_sitter::Node;
 
 use crate::{
     dom::{Diagnostic, directive::loc_col},
     visitors::SourceFile,
 };
+
+/// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
+pub fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
+    output_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(grammar_name))
+}
 
 /// Removes all `comment` tokens from `source` and normalises surrounding whitespace.
 ///

@@ -2,14 +2,14 @@ use std::error::Error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use indoc::formatdoc;
 
 use crate::dom::NameOrLiteral;
 use crate::dom::highlights::Highlights;
-use crate::util::to_camelcase;
+use crate::util::{resolve_output_dir, to_camelcase};
 
 use super::types::Grammar;
 
@@ -227,13 +227,6 @@ impl Display for GrammarJs<'_> {
     }
 }
 
-/// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
-pub fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
-    output_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(grammar_name))
-}
-
 /// Writes a skeleton `highlights.scm` to `queries_dir` if one does not
 /// already exist.
 ///
@@ -318,6 +311,8 @@ pub fn run_generate(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::dom::GrammarNode::TerminalLiteral;
     use crate::dom::test_utils::{cg, di, p, p_named};
