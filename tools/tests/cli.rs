@@ -417,6 +417,42 @@ fn generate_without_tree_sitter_on_path_errors() {
 }
 
 #[test]
+#[cfg(unix)]
+/// A `tree-sitter` on PATH that exists but can't be executed (a permission
+/// error, not a missing-binary one) is a different `io::ErrorKind` than
+/// `NotFound` — it must not be reported as "not found on PATH" (#403).
+fn generate_with_unexecutable_tree_sitter_on_path_errors() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = write_tmp("ts_bnf_gen_noexec.bnf", CLEAN_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_noexec_project");
+    let _ = fs::remove_dir_all(&out_dir);
+    let fake_bin_dir = std::env::temp_dir().join("ts_bnf_gen_noexec_bin");
+    fs::create_dir_all(&fake_bin_dir).unwrap();
+    let fake_ts = fake_bin_dir.join("tree-sitter");
+    fs::write(&fake_ts, "").unwrap();
+    fs::set_permissions(&fake_ts, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let out = tool()
+        .env("PATH", &fake_bin_dir)
+        .args(["convert", "--generate", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.contains("not found on PATH"),
+        "a permission error must not be reported as not-found: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error: error:"),
+        "doubled error prefix: {stderr}"
+    );
+}
+
+#[test]
 fn generate_produces_abi_15_with_tree_sitter_json() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
