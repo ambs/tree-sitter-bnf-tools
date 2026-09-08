@@ -125,11 +125,14 @@ fn visit_grammar_inner(
             "rule" => {
                 let prod = visit_rule(&mut grammar, &child, ctx)?;
                 if grammar.productions.contains_key(&prod.name) {
-                    grammar.parse_diagnostics.push(Diagnostic::warning(format!(
-                        "rule '{}' is defined more than once ({})",
-                        prod.name,
-                        loc(&prod.filename, prod.line)
-                    )));
+                    grammar.parse_diagnostics.push(
+                        Diagnostic::warning(format!(
+                            "rule '{}' is defined more than once ({})",
+                            prod.name,
+                            loc(&prod.filename, prod.line)
+                        ))
+                        .with_location(&prod.filename, prod.line),
+                    );
                 }
                 grammar.record_own_first_rule(&prod.name);
                 grammar.productions.insert(prod.name.clone(), prod);
@@ -1004,6 +1007,54 @@ mod tests {
                 .any(|d| d.severity == Severity::Warning
                     && d.message.contains("defined more than once")),
             "expected duplicate-rule warning, got {diags:?}"
+        );
+    }
+
+    #[test]
+    /// A rule declared in the parent file *before* the `%include` line, and also
+    /// defined in the included file, is a duplicate `merge_from` itself must catch
+    /// (#319 coverage gap): unlike `include_duplicate_rule_emits_warning` above,
+    /// where the parent's own rule comes *after* the `%include` (so the ordinary
+    /// same-file duplicate check in `visit_grammar_inner` fires first), this
+    /// ordering means `self.productions` already has the name when `merge_from`
+    /// runs, so its own "defined more than once" check is the one that must fire.
+    fn include_duplicate_rule_before_include_emits_warning() {
+        write_tmp("inc_dup_before_b.bnf", "foo -> 'b' ;");
+        let a = write_tmp(
+            "inc_dup_before_a.bnf",
+            "foo -> 'a' ;\n%include \"inc_dup_before_b.bnf\"\nroot -> foo ;",
+        );
+        let (grammar, diags) = parse_path(&a).unwrap();
+        assert!(grammar.productions.contains_key("foo"));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.severity == Severity::Warning
+                    && d.message.contains("defined more than once")),
+            "expected duplicate-rule warning, got {diags:?}"
+        );
+    }
+
+    #[test]
+    /// A `%word` declared in both the parent file and an included file is a
+    /// conflict `merge_from` must catch via `declare_word` (#319 coverage gap):
+    /// distinct from `duplicate_word_directive_emits_error` above, which covers
+    /// two `%word` directives in the *same* file.
+    fn include_word_conflict_emits_error() {
+        write_tmp("inc_word_conflict_b.bnf", "%word second\nsecond -> /b/ ;");
+        let a = write_tmp(
+            "inc_word_conflict_a.bnf",
+            "%word first\nfirst -> /a/ ;\n%include \"inc_word_conflict_b.bnf\"\nroot -> first ;",
+        );
+        let (grammar, diags) = parse_path(&a).unwrap();
+        assert_eq!(
+            grammar.word.as_ref().map(|w| w.name.as_str()),
+            Some("first")
+        );
+        assert!(
+            diags.iter().any(|d| d.severity == Severity::Error
+                && d.message.contains("%word declared more than once")),
+            "expected duplicate-%word error, got {diags:?}"
         );
     }
 

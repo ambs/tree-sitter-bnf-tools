@@ -158,7 +158,11 @@ fn collect_syntax_errors(node: &Node<'_>, ctx: &SourceFile<'_>, messages: &mut V
             format!("syntax error at {pragma}: missing '{}'", node.kind())
         };
 
-        messages.push(Diagnostic::error(message));
+        messages.push(
+            Diagnostic::error(message)
+                .with_location(filename, pos.row + 1)
+                .with_column(pos.column + 1),
+        );
         return;
     }
 
@@ -373,6 +377,10 @@ mod tests {
 
     #[test]
     /// A single ERROR node yields one error diagnostic with file:line:col and a snippet.
+    ///
+    /// Also checks the structured location fields (#319): unlike checks driven off
+    /// `Production`/`DirectiveItem` bookkeeping, this one is driven off a tree-sitter
+    /// node position, so `column` is populated too.
     fn syntax_single_error_reports_location_and_snippet() {
         let diags = syntax_diags("root => 'a' ;\n", "g.bnf");
         assert_eq!(diags.len(), 1);
@@ -381,6 +389,9 @@ mod tests {
             diags[0].message,
             "syntax error at g.bnf:1:1 near 'root => 'a' ;'"
         );
+        assert_eq!(diags[0].file.as_deref(), Some("g.bnf"));
+        assert_eq!(diags[0].line, Some(1));
+        assert_eq!(diags[0].column, Some(1));
     }
 
     #[test]
@@ -445,6 +456,9 @@ mod tests {
 
     #[test]
     /// Stdin input ("-") omits the file part, falling back to loc()'s "line N" form.
+    ///
+    /// Also checks the structured location field (#319): `file` is `None`, matching
+    /// the text's own omission of a filename.
     fn syntax_stdin_omits_filename() {
         let diags = syntax_diags("root => 'a' ;\n", "-");
         assert_eq!(diags.len(), 1);
@@ -452,5 +466,6 @@ mod tests {
             diags[0].message,
             "syntax error at line 1:1 near 'root => 'a' ;'"
         );
+        assert_eq!(diags[0].file, None);
     }
 }
