@@ -370,6 +370,53 @@ fn generate_does_not_overwrite_existing_tree_sitter_json() {
 }
 
 #[test]
+/// `--generate` without the `tree-sitter` CLI on PATH exits non-zero with an
+/// install hint, and leaves grammar.js/queries/tree-sitter.json behind with
+/// a note explaining they're there (#403).
+fn generate_without_tree_sitter_on_path_errors() {
+    let path = write_tmp("ts_bnf_gen_notreesitter.bnf", CLEAN_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_notreesitter_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .env("PATH", "")
+        .args(["convert", "--generate", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: `tree-sitter` not found on PATH"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("npm install -g tree-sitter-cli"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error: error:"),
+        "doubled error prefix: {stderr}"
+    );
+    assert!(
+        stderr.contains("grammar.js") && stderr.contains(&out_dir.display().to_string()),
+        "stderr missing partial-output note: {stderr}"
+    );
+    assert!(
+        out_dir.join("grammar.js").exists(),
+        "grammar.js should be left behind, matching the note"
+    );
+    assert!(
+        out_dir.join("queries").join("highlights.scm").exists(),
+        "queries/highlights.scm should be left behind, matching the note"
+    );
+    assert!(
+        out_dir.join("tree-sitter.json").exists(),
+        "tree-sitter.json should be left behind, matching the note"
+    );
+}
+
+#[test]
 fn generate_produces_abi_15_with_tree_sitter_json() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip

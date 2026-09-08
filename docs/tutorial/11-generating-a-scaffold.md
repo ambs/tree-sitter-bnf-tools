@@ -27,8 +27,8 @@ you need:
 
 - `tree-sitter-cli` >= 0.25 on `PATH` (`npm install -g tree-sitter-cli`) — the
   generated crate targets ABI 15, which requires that version. Without it,
-  `scaffold` itself fails with `failed to run tree-sitter: No such file or
-  directory`.
+  `scaffold` itself fails with `` `tree-sitter` not found on PATH ``, naming
+  the install command above.
 - a working C compiler (`cc`/`gcc`/`clang`) — without it, `cargo build`/
   `cargo run` on the generated crate fails compiling `src/parser.c`.
 - `ts-bnf-tool` itself, installed and on `PATH` — the generated `Makefile`'s
