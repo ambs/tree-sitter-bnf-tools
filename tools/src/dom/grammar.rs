@@ -587,18 +587,21 @@ impl Grammar {
     pub(crate) fn merge_from(&mut self, mut other: Grammar) {
         let other_word = other.take_word();
         for (name, prod) in other.productions {
-            if self.productions.contains_key(&name) {
+            if let Some(existing) = self.productions.get(&name) {
                 self.parse_diagnostics.push(
                     Diagnostic::warning(format!("rule '{name}' is defined more than once"))
                         .with_location(&prod.filename, prod.line),
                 );
+                self.parse_diagnostics.push(
+                    Diagnostic::warning(format!("previous definition of rule '{name}' is here"))
+                        .with_location(&existing.filename, existing.line),
+                );
             }
             self.productions.insert(name, prod);
         }
-        if let Some(word) = other_word
-            && let Some(diag) = self.declare_word(word)
-        {
-            self.parse_diagnostics.push(diag);
+        if let Some(word) = other_word {
+            let diags = self.declare_word(word);
+            self.parse_diagnostics.extend(diags);
         }
         self.conflicts.extend(other.conflicts);
         self.precedences.extend(other.precedences);
@@ -1477,13 +1480,22 @@ mod tests {
     }
 
     #[test]
-    /// Declaring `%axiom` more than once in the same source is a parse-time error.
+    /// Declaring `%axiom` more than once in the same source is a parse-time error,
+    /// and a second diagnostic points at where the first `%axiom` was declared
+    /// (#319 follow-up: naming only the new declaration leaves the original
+    /// unfindable when the two are far apart, e.g. across an `%include`).
     fn duplicate_axiom_is_an_error() {
         let src = "%axiom foo\n%axiom bar\nfoo -> 'x' ;\nbar -> 'y' ;\n";
         let (_, diags) = crate::visitors::parse_source(src).unwrap();
         assert!(diags.iter().any(|d| {
             d.severity == Severity::Error && d.message.contains("%axiom declared more than once")
         }));
+        assert!(
+            diags.iter().any(
+                |d| d.message.contains("previous %axiom declaration is here") && d.line == Some(1)
+            ),
+            "expected a previous-declaration diagnostic at line 1, got {diags:?}"
+        );
     }
 
     // ── count_undefined_refs ──────────────────────────────────────────────────
