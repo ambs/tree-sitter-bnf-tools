@@ -73,8 +73,10 @@ node   -> factor ('*' factor)* ;
 factor -> /[0-9]+/ | '(' expr ')' ;
 ```
 
-`rename` exits non-zero if the source rule does not exist or the target name is
-already taken, so it is safe to use in scripts.
+`rename` exits non-zero if the source rule does not exist, the target name is
+already taken, or the target isn't a well-formed rule name (`[A-Za-z_]
+[A-Za-z0-9_]*` — no leading digit, no spaces or punctuation), so it is safe to
+use in scripts. Nothing is written until all three checks pass.
 
 ### `rename` options
 

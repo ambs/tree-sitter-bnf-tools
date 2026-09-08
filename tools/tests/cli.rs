@@ -1153,6 +1153,52 @@ fn rename_in_place_rewrites_file() {
     );
 }
 
+/// A target name that isn't a valid rule name is rejected before the
+/// source file is ever touched — the exact `-i` repro from #399, which
+/// previously overwrote the file with unparseable BNF and exited 0.
+#[test]
+fn rename_in_place_invalid_target_leaves_file_untouched() {
+    let path = write_tmp("ts_bnf_rename_invalid_inplace.bnf", CLEAN_BNF);
+    let original = fs::read_to_string(&path).unwrap();
+    let out = tool()
+        .args(["rename", "--in-place"])
+        .arg(&path)
+        .args(["expr", "9bad"])
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "must exit non-zero for an invalid target name"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("9bad"),
+        "stderr must name the invalid target: {stderr}"
+    );
+    let after = fs::read_to_string(&path).unwrap();
+    assert_eq!(after, original, "source file must be left untouched");
+}
+
+/// A target name with a space is rejected in the default (stdout) mode too.
+#[test]
+fn rename_invalid_target_with_space_exits_nonzero() {
+    let path = write_tmp("ts_bnf_rename_invalid_space.bnf", CLEAN_BNF);
+    let out = tool()
+        .args(["rename"])
+        .arg(&path)
+        .args(["expr", "a b"])
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "must exit non-zero for a target name containing a space"
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "no output must be produced for a rejected rename"
+    );
+}
+
 #[test]
 fn highlights_emits_scheme_header() {
     let path = write_tmp("ts_bnf_hl.bnf", HIGHLIGHTS_BNF);

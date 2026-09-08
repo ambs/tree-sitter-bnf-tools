@@ -3,14 +3,36 @@ use crate::dom::NameOrLiteral;
 use super::nodes::GrammarNode;
 use super::types::Grammar;
 
+/// Returns `true` if `name` matches the BNF dialect's own `nonTerminal`
+/// token (`tree-sitter-bnf/grammar.js`'s `/[A-Za-z_][A-Za-z0-9_]*/`) — the
+/// only shape a rule name can be written back as and still parse.
+///
+/// Deliberately ASCII-only, matching that token exactly: broader charsets
+/// like `char::is_alphabetic()`/`is_alphanumeric()` (used for JS
+/// identifiers elsewhere in this crate) would accept names the BNF grammar
+/// itself rejects.
+fn is_valid_rule_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Renames rule `old` to `new` throughout `grammar`: the definition key and name field,
 /// all RHS `NonTerminal` references in every rule body, every directive list that can
 /// reference rule names, and the `rhs_nonterminals` cache.
 ///
-/// Returns `Err` if `old` is not defined or `new` is already defined.
+/// Returns `Err` if `old` is not defined, `new` is not a well-formed rule
+/// name (#399), or `new` is already defined.
 pub fn rename_grammar(grammar: &mut Grammar, old: &str, new: &str) -> Result<(), String> {
     if !grammar.productions.contains_key(old) {
         return Err(format!("rule '{old}' is not defined"));
+    }
+    if !is_valid_rule_name(new) {
+        return Err(format!(
+            "'{new}' is not a valid rule name; names must match [A-Za-z_][A-Za-z0-9_]*"
+        ));
     }
     if grammar.productions.contains_key(new) {
         return Err(format!("rule '{new}' is already defined"));
@@ -202,6 +224,48 @@ mod tests {
             err.contains("'unknown'"),
             "error must name the missing rule; got: {err}"
         );
+    }
+
+    /// A target name starting with a digit is rejected before anything is
+    /// renamed — it would silently corrupt the output (#399).
+    #[test]
+    fn error_when_new_starts_with_digit() {
+        let mut g = Grammar::from_rules([p("expr", nt("x"))]);
+        let err = rename_grammar(&mut g, "expr", "9bad").unwrap_err();
+        assert!(
+            err.contains("'9bad'"),
+            "error must name the invalid target; got: {err}"
+        );
+        assert!(
+            g.productions.contains_key("expr"),
+            "rejected rename must not touch the grammar"
+        );
+    }
+
+    /// A target name containing a space is rejected (#399).
+    #[test]
+    fn error_when_new_contains_space() {
+        let mut g = Grammar::from_rules([p("expr", nt("x"))]);
+        let err = rename_grammar(&mut g, "expr", "a b").unwrap_err();
+        assert!(
+            err.contains("'a b'"),
+            "error must name the invalid target; got: {err}"
+        );
+    }
+
+    /// An empty target name is rejected (#399).
+    #[test]
+    fn error_when_new_is_empty() {
+        let mut g = Grammar::from_rules([p("expr", nt("x"))]);
+        assert!(rename_grammar(&mut g, "expr", "").is_err());
+    }
+
+    /// A target name starting with `_` (tree-sitter's hidden-rule
+    /// convention) is a perfectly valid rule name and must still succeed.
+    #[test]
+    fn underscore_prefixed_target_name_is_valid() {
+        let mut g = Grammar::from_rules([p("expr", nt("x"))]);
+        assert!(rename_grammar(&mut g, "expr", "_hidden").is_ok());
     }
 
     /// The `rhs_nonterminals` cache is updated to reflect the rename.

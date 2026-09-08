@@ -76,6 +76,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
+- `rename` now rejects a target rule name that doesn't match the BNF
+  dialect's own rule-name syntax (`[A-Za-z_][A-Za-z0-9_]*`) — e.g. one
+  starting with a digit, or containing a space — with an error and a
+  non-zero exit, before anything is written. Previously it accepted any
+  string and wrote it straight through: with `--in-place` this silently
+  overwrote the source file with BNF that no longer parses, while exiting
+  0 (#399).
 - `tree-sitter-bnf`'s published package metadata (`Cargo.toml`,
   `tree-sitter.json`, and the C build scaffolding's `CMakeLists.txt`/
   `Makefile`) now points at this repository instead of the tree-sitter
