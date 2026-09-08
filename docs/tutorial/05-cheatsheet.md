@@ -28,7 +28,7 @@
 | `%supertypes r` | `supertypes: $ => [$.r]` | Supertype declaration |
 | `%extras /x/, r` | `extras: $ => [/x/, $.r]` | Extra tokens |
 | `%externals r, 'lit'` | `externals: $ => [$.r, 'lit']` | External scanner tokens |
-| `%reserved set: [r, 'lit']` | `reserved: ($) => ({ set: ($) => [$.r, 'lit'] })` | Reserved-word set declaration |
+| `%reserved set: [r, 'lit']` | `reserved: { set: ($) => [$.r, 'lit'] }` | Reserved-word set declaration |
 | `%include "f.bnf"` | *(merges the file's rules and directives)* | File inclusion |
 | `# comment` | *(removed)* | Line comment |
 

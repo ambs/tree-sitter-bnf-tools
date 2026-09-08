@@ -148,10 +148,10 @@ literals — empty brackets declare a set with no reserved words:
 generates:
 
 ```js
-reserved: ($) => ({
+reserved: {
   keywords: ($) => [$.if, $.else, 'while'],
   propertyName: ($) => [],
-}),
+},
 ```
 
 Multiple `%reserved` directives are additive — each adds sets to the list;
