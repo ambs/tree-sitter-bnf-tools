@@ -67,6 +67,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
+- `ts-bnf-tool --version`/`-V` now report the tool's version instead of
+  erroring with "unexpected argument" (#407).
 - `graph`: unknown `--start` rule and missing Graphviz `dot` errors no longer
   print a doubled `error: error:` prefix (#408, thanks @cestercian).
 - `convert`/`convert --generate`/`scaffold`: a hyphenated grammar name
