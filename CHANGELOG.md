@@ -67,6 +67,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
+- `tree-sitter-bnf`'s published package metadata (`Cargo.toml`,
+  `tree-sitter.json`, and the C build scaffolding's `CMakeLists.txt`/
+  `Makefile`) now points at this repository instead of the tree-sitter
+  grammar template's placeholder
+  (`https://github.com/tree-sitter/tree-sitter-bnf`) — previously the
+  crates.io page for `tree-sitter-bnf` linked to an unrelated repo.
+  `tree-sitter.json`'s hardcoded version is also bumped to match the
+  current `0.5.0` workspace version (#400).
 - `convert`/`scaffold`: a grammar using `%reserved` emitted
   `` reserved: ($) => ({...}) `` — a callback returning an object — which
   `tree-sitter generate` rejects with `Grammar's 'reserved' property must

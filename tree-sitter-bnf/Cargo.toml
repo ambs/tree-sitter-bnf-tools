@@ -11,7 +11,7 @@ rust-version = "1.90"
 readme = "README.md"
 keywords = ["incremental", "parsing", "tree-sitter", "bnf"]
 categories = ["parser-implementations", "parsing", "text-editors"]
-repository = "https://github.com/tree-sitter/tree-sitter-bnf"
+repository = "https://github.com/ambs/tree-sitter-bnf-tools"
 autoexamples = false
 
 build = "bindings/rust/build.rs"
