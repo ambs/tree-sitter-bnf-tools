@@ -89,3 +89,31 @@ rule -> (a | b %prec 2) ;
 %axiom root
 # <- @keyword
 #      ^^^^ @variable
+
+%word ident
+# <- @keyword
+#     ^^^^^ @variable
+
+%externals tok1, tok2
+# <- @keyword
+#          ^^^^ @variable
+#              ^ @punctuation.delimiter
+#                ^^^^ @variable
+
+%precedences [a, b]
+# <- @keyword
+#            ^ @punctuation.bracket
+#             ^ @variable
+#              ^ @punctuation.delimiter
+#                ^ @variable
+#                 ^ @punctuation.bracket
+
+%reserved kw: [a, b]
+# <- @keyword
+#         ^^ @variable
+#           ^ @punctuation.delimiter
+#             ^ @punctuation.bracket
+#              ^ @variable
+#               ^ @punctuation.delimiter
+#                 ^ @variable
+#                  ^ @punctuation.bracket
