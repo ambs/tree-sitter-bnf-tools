@@ -28,6 +28,10 @@ pub enum ParseError {
     IncludeNotFound(String),
     /// A `%include` chain forms a cycle; carries the path that was seen twice.
     IncludeCycle(String),
+    /// A rule body nests groups/quantifiers/annotations deeper than the
+    /// recursive-descent visitor can safely walk without overflowing the
+    /// stack (#409); carries the configured limit.
+    NestingTooDeep(u32),
 }
 
 impl Display for ParseError {
@@ -57,6 +61,9 @@ impl Display for ParseError {
             }
             ParseError::IncludeCycle(path) => {
                 write!(f, "circular %include detected: {}", path)
+            }
+            ParseError::NestingTooDeep(limit) => {
+                write!(f, "expression nesting too deep (limit {})", limit)
             }
         }
     }

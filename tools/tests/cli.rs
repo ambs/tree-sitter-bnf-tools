@@ -3850,3 +3850,52 @@ fn version_short_flag_reports_crate_version() {
         format!("ts-bnf-tool {}", env!("CARGO_PKG_VERSION"))
     );
 }
+
+// ── deep nesting (#409) ─────────────────────────────────────────────────────
+
+/// A rule body nested 2000 parenthesised groups deep — the exact reproduction
+/// from #409, previously a raw SIGABRT (exit 134) with no diagnostic on every
+/// subcommand.
+fn deeply_nested_bnf() -> String {
+    format!("a -> {}'x'{} ;", "(".repeat(2000), ")".repeat(2000))
+}
+
+#[test]
+/// `check` on a pathologically deep grammar exits with a clean diagnostic
+/// instead of aborting.
+fn check_deeply_nested_grammar_reports_diagnostic_not_abort() {
+    let path = write_tmp("ts_bnf_deep_nesting.bnf", &deeply_nested_bnf());
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert_ne!(
+        out.status.code(),
+        Some(134),
+        "must not abort (SIGABRT/stack overflow): {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: expression nesting too deep (limit"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+/// `convert` on the same pathologically deep grammar also exits cleanly —
+/// the guard lives in the shared visitor, not per-subcommand (#409).
+fn convert_deeply_nested_grammar_reports_diagnostic_not_abort() {
+    let path = write_tmp("ts_bnf_deep_nesting_convert.bnf", &deeply_nested_bnf());
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert_ne!(
+        out.status.code(),
+        Some(134),
+        "must not abort (SIGABRT/stack overflow): {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: expression nesting too deep (limit"),
+        "stderr: {stderr}"
+    );
+}
