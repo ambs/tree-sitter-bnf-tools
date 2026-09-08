@@ -3,8 +3,8 @@ $(error Windows is not supported)
 endif
 
 LANGUAGE_NAME := tree-sitter-bnf
-HOMEPAGE_URL := https://github.com/tree-sitter/tree-sitter-bnf
-VERSION := 0.1.0
+HOMEPAGE_URL := https://github.com/ambs/tree-sitter-bnf-tools
+VERSION := 0.5.0
 
 # repository
 SRC_DIR := src

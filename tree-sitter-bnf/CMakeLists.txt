@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.13)
 
 project(tree-sitter-bnf
-        VERSION "0.1.0"
+        VERSION "0.5.0"
         DESCRIPTION "A simple BNF syntax parser"
-        HOMEPAGE_URL "https://github.com/tree-sitter/tree-sitter-bnf"
+        HOMEPAGE_URL "https://github.com/ambs/tree-sitter-bnf-tools"
         LANGUAGES C)
 
 option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
