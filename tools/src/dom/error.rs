@@ -47,7 +47,7 @@ impl Display for ParseError {
             ParseError::SyntaxError(diags) => {
                 let msgs = diags
                     .iter()
-                    .map(|d| d.message.as_str())
+                    .map(Diagnostic::located_message)
                     .collect::<Vec<_>>()
                     .join("\n");
                 write!(f, "{}", msgs)

@@ -56,20 +56,3 @@ pub struct ReservedEntry {
     /// Source filename where this directive appears (empty string if unknown).
     pub filename: String,
 }
-
-/// Formats a source location for use in diagnostic messages.
-///
-/// Returns `"filename:line"` when `filename` is non-empty, or `"line N"` otherwise.
-/// The result is suitable for embedding in parentheses: `format!("... ({loc})")`.
-pub(crate) fn loc(filename: &str, line: usize) -> String {
-    if filename.is_empty() {
-        format!("line {line}")
-    } else {
-        format!("{filename}:{line}")
-    }
-}
-
-/// Formats a source location like [`loc`], with a column appended: `"filename:line:col"`.
-pub(crate) fn loc_col(filename: &str, line: usize, col: usize) -> String {
-    format!("{}:{col}", loc(filename, line))
-}

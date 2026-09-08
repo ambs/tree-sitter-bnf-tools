@@ -74,6 +74,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   silently swapping it in (#395).
 
 ### Changed
+- `check --json` diagnostics now carry source location as structured
+  `file`/`line`/`column` fields instead of baking it into `message` text —
+  e.g. `{"severity":"warning","message":"rule 'unused' is never
+  referenced","line":3}` rather than a `"message"` ending in `(line 3)`.
+  Consumers that parsed a location back out of `message` should read these
+  fields instead. Fields are omitted when a diagnostic has no location to
+  report. Plain-text (`check`, and every other subcommand's syntax-error
+  output) is unaffected for most diagnostics — the same `(file:line)`/`(line
+  N)` suffix is still rendered, now computed from the structured fields at
+  display time — except syntax-error messages, whose location moves from a
+  leading `syntax error at file:line:col ...` to a trailing `... (file:line:col)`
+  suffix, consistent with every other diagnostic (#319).
 - `tree-sitter-bnf` and `ts-bnf-tool` now declare `rust-version = "1.90"`,
   the actual minimum toolchain required by their current dependency graphs
   (#412).

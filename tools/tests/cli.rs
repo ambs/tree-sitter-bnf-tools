@@ -3874,14 +3874,16 @@ const TWO_SYNTAX_ERRORS_BNF: &str = indoc! {"
 "};
 
 #[test]
-/// `check` reports syntax errors on stderr with file:line:col and a snippet, exiting 2.
+/// `check` reports syntax errors on stderr with a snippet and a `(file:line:col)`
+/// suffix, exiting 2. The suffix is computed at display time from the
+/// diagnostic's structured location fields (#319), not baked into the message.
 fn check_syntax_error_reports_location_and_snippet() {
     let path = write_tmp("ts_bnf_check_synerr.bnf", SYNTAX_ERROR_BNF);
     let out = tool().args(["check"]).arg(&path).output().unwrap();
     assert_eq!(out.status.code(), Some(2), "expected exit 2");
     let stderr = String::from_utf8(out.stderr).unwrap();
     let expected = format!(
-        "error: syntax error at {}:1:1 near 'root => 'a' ;'",
+        "error: syntax error near 'root => 'a' ;' ({}:1:1)",
         path.display()
     );
     assert!(
@@ -3891,8 +3893,10 @@ fn check_syntax_error_reports_location_and_snippet() {
 }
 
 #[test]
-/// `check --json` diagnostics carry the location inside the message.
-fn check_json_syntax_error_carries_location() {
+/// `check --json` diagnostics carry the location as structured `file`/`line`/`column`
+/// fields (#319), not embedded in `message` — the exact schema change the issue that
+/// introduced these fields called for.
+fn check_json_syntax_error_carries_structured_location() {
     let path = write_tmp("ts_bnf_check_synerr_json.bnf", SYNTAX_ERROR_BNF);
     let out = tool()
         .args(["check", "--json"])
@@ -3905,11 +3909,10 @@ fn check_json_syntax_error_carries_location() {
     let arr = parsed["diagnostics"].as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["severity"], "error");
-    let message = arr[0]["message"].as_str().unwrap();
-    assert!(
-        message.contains(":1:1 near 'root => 'a' ;'"),
-        "message missing location: {message}"
-    );
+    assert_eq!(arr[0]["message"], "syntax error near 'root => 'a' ;'");
+    assert_eq!(arr[0]["file"], path.display().to_string());
+    assert_eq!(arr[0]["line"], 1);
+    assert_eq!(arr[0]["column"], 1);
 }
 
 #[test]
@@ -3920,16 +3923,16 @@ fn check_reports_multiple_syntax_errors() {
     assert_eq!(out.status.code(), Some(2), "expected exit 2");
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert_eq!(
-        stderr.matches("syntax error at").count(),
+        stderr.matches("syntax error").count(),
         2,
         "expected two located diagnostics: {stderr}"
     );
     assert!(
-        stderr.contains(":1:8: missing 'pattern'"),
+        stderr.contains(&format!("missing 'pattern' ({}:1:8)", path.display())),
         "stderr: {stderr}"
     );
     assert!(
-        stderr.contains(":3:7: missing 'pattern'"),
+        stderr.contains(&format!("missing 'pattern' ({}:3:7)", path.display())),
         "stderr: {stderr}"
     );
 }
@@ -3942,7 +3945,8 @@ fn convert_syntax_error_aborts_with_located_message() {
     assert_eq!(out.status.code(), Some(1), "expected exit 1");
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(
-        stderr.contains("error: syntax error at") && stderr.contains(":1:1 near"),
+        stderr.contains("error: syntax error near")
+            && stderr.contains(&format!("({}:1:1)", path.display())),
         "stderr missing located message: {stderr}"
     );
 }

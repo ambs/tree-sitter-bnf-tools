@@ -33,8 +33,14 @@ ts-bnf-tool check --json json.bnf
 ```
 
 ```json
-{"diagnostics":[{"severity":"warning","message":"rule 'unused' is never referenced (line 3)"}]}
+{"diagnostics":[{"severity":"warning","message":"rule 'unused' is never referenced","line":3}]}
 ```
+
+`file`/`line`/`column` are structured location fields, present whenever the
+diagnostic has a concrete source position to point at (omitted otherwise, as
+for the `undefined rule reference 'foo'` example above). The plain-text form
+still renders the same location as a `(file:line)`/`(line N)` suffix on the
+message.
 
 ### Syntax errors
 
@@ -47,8 +53,8 @@ value -> 'b'
 ```
 
 ```
-error: syntax error at broken.bnf:1:6 near '=> 'a' ;'
-error: syntax error at broken.bnf:2:13: missing ';'
+error: syntax error near '=> 'a' ;' (broken.bnf:1:6)
+error: syntax error: missing ';' (broken.bnf:2:13)
 ```
 
 At most 10 syntax errors are listed; any excess is summarised in a final
