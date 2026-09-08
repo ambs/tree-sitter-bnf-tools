@@ -3741,3 +3741,29 @@ fn convert_syntax_error_aborts_with_located_message() {
         "stderr missing located message: {stderr}"
     );
 }
+
+// ── --version ────────────────────────────────────────────────────────────────
+
+#[test]
+/// `--version` reports the crate name and version, and exits 0 (#407).
+fn version_flag_reports_crate_version() {
+    let out = tool().arg("--version").output().unwrap();
+    assert!(out.status.success(), "expected exit 0");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        stdout.trim(),
+        format!("ts-bnf-tool {}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+/// `-V` is accepted as a short alias for `--version` (#407).
+fn version_short_flag_reports_crate_version() {
+    let out = tool().arg("-V").output().unwrap();
+    assert!(out.status.success(), "expected exit 0");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        stdout.trim(),
+        format!("ts-bnf-tool {}", env!("CARGO_PKG_VERSION"))
+    );
+}

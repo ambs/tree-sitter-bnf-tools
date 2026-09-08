@@ -22,7 +22,7 @@ use ts_bnf_tool::visitors::{SourceFile, visit_grammar};
 
 /// Top-level CLI for `ts-bnf-tool`.
 #[derive(Parser, Debug)]
-#[command(about = "BNF grammar analysis and conversion tool")]
+#[command(version, about = "BNF grammar analysis and conversion tool")]
 struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
