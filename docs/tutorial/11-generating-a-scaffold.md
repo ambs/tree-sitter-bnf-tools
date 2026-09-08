@@ -31,11 +31,26 @@ you need:
   directory`.
 - a working C compiler (`cc`/`gcc`/`clang`) — without it, `cargo build`/
   `cargo run` on the generated crate fails compiling `src/parser.c`.
+- `ts-bnf-tool` itself, installed and on `PATH` — the generated `Makefile`'s
+  `generate` target invokes it directly (`$(BNF_TOOL) scaffold .`, with
+  `BNF_TOOL` defaulting to `ts-bnf-tool`), not through `cargo run`. Override
+  `BNF_TOOL` (e.g. `make BNF_TOOL=/path/to/ts-bnf-tool generate`) if it
+  isn't installed globally.
 
 ## Basic usage
 
-The best way to see what `scaffold` does is to run it. Save this tiny
-declaration language as `decls.bnf`:
+The best way to see what `scaffold` does is to run it. The recommended
+workflow is **in-place**: create the crate's folder first, put the grammar
+inside it, then point `scaffold` at that same folder — source and
+destination end up being the same file, so there's only ever one copy of
+the grammar to keep in sync.
+
+```sh
+mkdir decls && cd decls
+```
+
+Save this tiny declaration language as `decls.bnf` (you're now inside
+`decls/`, so this is `decls/decls.bnf` from outside it):
 
 ```bnf
 # decls.bnf: a tiny declaration language
@@ -50,18 +65,21 @@ It describes programs made of `name = value;` declarations: a `program` is
 zero or more `decl`s, and each `decl` names a `target` identifier and gives
 it a `value`, which is either another identifier or a number.
 
-Now scaffold it:
+Now scaffold it, in place — from inside `decls/`:
 
 ```sh
-ts-bnf-tool scaffold --name decls decls.bnf
+ts-bnf-tool scaffold -o . decls.bnf
 ```
 
-This creates a `decls/` directory:
+This fills in the `decls/` directory around the grammar you just wrote:
 
 ```
 decls/
 ├── .gitignore
 ├── Cargo.toml
+├── Makefile
+├── ts-bnf-tool.toml
+├── decls.bnf
 ├── grammar.js
 ├── tree-sitter.json
 ├── queries/highlights.scm
@@ -79,9 +97,18 @@ decls/
 
 Have a look inside. The `grammar.js`/`queries/`/`tree-sitter.json`/`src/`
 files are exactly what `convert --generate` already produces — the real
-`tree-sitter generate` output, unchanged. `scaffold` adds the
-`bindings/rust/` and `examples/` directories on top:
+`tree-sitter generate` output, unchanged. `scaffold` adds `decls.bnf` (the
+bundled grammar — here it's the same file you just wrote, since this is the
+in-place workflow), `ts-bnf-tool.toml`, `Makefile`, plus the `bindings/rust/`
+and `examples/` directories, on top:
 
+- **`decls.bnf`** — the bundled grammar. This is the copy `scaffold` always
+  regenerates from; edit it, then rerun `scaffold` to update the crate.
+- **`ts-bnf-tool.toml`** — records how the crate was scaffolded (the bundled
+  grammar's filename, the crate name, and whether `--ast-types` was used),
+  written once and hand-editable afterwards.
+- **`Makefile`** — a `generate` target that reruns `scaffold` whenever
+  `decls.bnf` or `ts-bnf-tool.toml` change.
 - **`bindings/rust/lib.rs`** — the parser bindings (`LANGUAGE`, `NODE_TYPES`,
   same shape as any `tree-sitter generate`-produced crate), a `pub mod
   visitor;`, and a `parse` convenience function. This file is only ever
@@ -122,8 +149,8 @@ ts-bnf-tool scaffold --no-header grammar.bnf    # suppress generated-file commen
 ```
 
 `--name` also affects wording in the generated trait's own doc comment; it
-defaults to the input filename's stem — `decls.bnf`'s stem is already
-`decls`, so passing `--name decls` above was for clarity, not necessity. A
+defaults to the input filename's stem, which is why the `decls.bnf` example
+above needed no `--name` at all — its stem is already `decls`. A
 hyphenated name — `my-lang`, the idiomatic Cargo package-name separator, and
 an ordinary filename stem — is fine: `Cargo.toml`'s `[package] name` keeps
 the hyphen, while the tree-sitter grammar name, the generated C parser
@@ -228,10 +255,9 @@ every named node in the tree without touching a single per-kind method.
 
 ## Running it
 
-Try it — no edits needed:
+Try it — no edits needed (still inside `decls/`):
 
 ```sh
-$ cd decls
 $ echo 'x = 1;
 y = x;' > sample.decls
 $ cargo run --example walk -- sample.decls
@@ -299,13 +325,13 @@ declared names, not `x`'s later use as a value. Run it with
 `cargo run --example decl_extractor` from inside `decls/`; it exits silently
 if the extracted names match, and panics on its own `assert_eq!` otherwise.
 
-## Regenerating after a grammar change
+## Keeping the grammar in sync
 
 You've now hand-edited the scaffolded crate twice — once implicitly, by
 adding `examples/decl_extractor.rs`, and it's natural to eventually want a
 hand-written `Visitor` implementation registered in `lib.rs` too. So it's
-worth knowing what happens the next time you change `decls.bnf` and rerun
-the same command.
+worth knowing what happens the next time you change `decls.bnf` and want to
+regenerate everything derived from it.
 
 Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
 `src/*`, `bindings/rust/build.rs`, and `bindings/rust/visitor.rs` are
@@ -319,6 +345,83 @@ survives a grammar change. Since `queries/highlights.scm` is frozen after
 its first write, it won't pick up new rules on its own; regenerate it
 explicitly with `ts-bnf-tool highlights -o queries/highlights.scm` when the
 grammar gains rules you want highlighted.
+
+### `make generate`
+
+The scaffolded `Makefile` wraps a rerun in one target, so there's nothing to
+remember — from inside `decls/`:
+
+```sh
+$ make generate
+```
+
+This reruns `ts-bnf-tool scaffold .` whenever `decls.bnf` or
+`ts-bnf-tool.toml` is newer than `bindings/rust/visitor.rs`, and is a no-op
+otherwise. Just editing `decls.bnf` and running `make generate` again is
+the whole workflow from here on.
+
+### Rerunning without repeating anything
+
+`ts-bnf-tool scaffold .` (what `make generate` runs) is itself worth
+knowing: pointing `scaffold` at the crate's own *directory*, instead of its
+grammar file, reruns it using whatever `ts-bnf-tool.toml` already
+recorded — the bundled grammar's filename, `--name`, `--ast-types`,
+`--merge-config` — with no flags needed at all. A flag given anyway
+overrides what's recorded and updates `ts-bnf-tool.toml` to match, except
+`--ast-types`, a one-way switch: it can be added on a later rerun but never
+removed.
+
+### The mismatch guard
+
+Once a crate has a bundled grammar recorded, rerunning `scaffold` (pointed
+at a `.bnf` file rather than the directory) with a *different* filename is
+refused outright, rather than silently swapping the bundled grammar or
+ignoring the new file:
+
+```
+$ ts-bnf-tool scaffold --output-dir decls other.bnf
+error: a different grammar file ('decls.bnf') is already bundled in decls; scaffold again with that file, or remove/rename it first if you mean to replace it
+```
+
+Files pulled in via `%include` aren't covered by this guard — they're
+freely re-bundled as the include graph changes (see below).
+
+### Bundling `%include`d files
+
+If `decls.bnf` itself `%include`s another file, `scaffold` bundles the
+*whole* include closure, not just the root file: each included file lands
+at the same path relative to the crate root that it had relative to the
+root grammar's own directory, and the `%include` directive itself is copied
+unchanged — it already resolves correctly from its new location, since
+`%include` paths are always relative to the file that names them. Unlike
+the root grammar, included files are **not** covered by the mismatch guard
+above; the include graph is freely re-bundled every time it changes, with
+no refusal.
+
+An `%include` that resolves *outside* the root grammar's own directory tree
+is left external instead of being bundled or rewritten — `scaffold` still
+succeeds, but warns:
+
+```
+note: /path/outside/child.bnf is outside /path/to/decls; leaving it unbundled
+```
+
+### Non-in-place scaffolding
+
+Pointing `scaffold` at an external `.bnf` and a *fresh* output directory —
+today's original default, still fully supported — still bundles a copy on
+that first run, but now prints a note reminding you which copy is live from
+here on:
+
+```
+$ ts-bnf-tool scaffold --name decls --output-dir decls path/to/decls.bnf
+bundled a copy of decls.bnf into decls; edit that copy from now on — path/to/decls.bnf is no longer read
+```
+
+From that point on there are *two* copies of the grammar on disk — the
+original external file and the bundled one inside `decls/` — and only the
+bundled copy is ever read again. The in-place workflow from the start of
+this chapter avoids that split entirely, by making them the same file.
 
 ## Typed node structs (`--ast-types`)
 
@@ -339,10 +442,10 @@ grammar rule or field genuinely named `pragma`, `text`, `build_error`, or
 `source_node` can never collide with these fixed, tool-injected names; see
 "A note on vocabulary" below.
 
-Try it on `decls.bnf`:
+Try it — still inside `decls/`:
 
 ```sh
-ts-bnf-tool scaffold --name decls --ast-types decls.bnf
+ts-bnf-tool scaffold --ast-types -o . decls.bnf
 ```
 
 This adds two files on top of the tree shown earlier:
@@ -409,7 +512,6 @@ scaffolded `examples/ast.rs` does, the same bar `examples/walk.rs` already
 meets:
 
 ```sh
-$ cd decls
 $ printf 'x = 1;\ny = x;\n' > sample.decls
 $ cargo run --example ast -- sample.decls
 sample.decls:

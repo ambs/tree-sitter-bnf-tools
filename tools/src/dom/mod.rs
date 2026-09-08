@@ -53,7 +53,7 @@ pub use highlights::Highlights;
 pub use nodes::{GrammarNode, PrecKind, PrecLevel};
 pub use production::Production;
 pub use rename::rename_grammar;
-pub use scaffold::{ScaffoldCrate, ScaffoldFile, render_scaffold, run_scaffold};
+pub use scaffold::{ScaffoldCrate, ScaffoldFile, ScaffoldRequest, render_scaffold, run_scaffold};
 pub use summary::{FirstSetStats, GrammarSummary};
 pub use types::Grammar;
 pub use visitor::check_visitor;

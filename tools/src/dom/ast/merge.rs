@@ -9,7 +9,7 @@ use crate::util::find_first_name_collision;
 ///
 /// Deserialized directly from TOML via `serde`, so field names here are the
 /// config file's own key names, not chosen for Rust-side convenience.
-#[derive(serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MergeConfig {
     /// Kinds to collapse into one Rust `enum`, one entry per resulting enum.
@@ -26,7 +26,7 @@ pub struct MergeConfig {
 
 /// One `merge` entry: several source kinds collapsing into one Rust `enum`
 /// named `target`, each kind becoming its own variant.
-#[derive(serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MergeEntry {
     /// The generated enum's Rust type name.
@@ -37,7 +37,7 @@ pub struct MergeEntry {
 
 /// One `passthrough` entry: a single kind emitted under a different Rust
 /// type name, its own derived fields unchanged.
-#[derive(serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PassthroughEntry {
     /// The grammar kind being renamed.

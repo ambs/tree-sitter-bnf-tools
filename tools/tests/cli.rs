@@ -1435,6 +1435,661 @@ fn scaffold_rerun_preserves_user_edits_but_regenerates_visitor() {
     );
 }
 
+// ── scaffold bundling / ts-bnf-tool.toml (#395) ─────────────────────────────
+
+#[test]
+/// The recommended workflow (#395): create the crate's folder first, put the
+/// `.bnf` there, then point `scaffold -o .` at that same folder. Source and
+/// destination are then the same file, so no copy ever happens — no
+/// "bundled a copy" note is printed, and no second `.bnf` appears alongside
+/// the one the user already put there. `ts-bnf-tool.toml` is still written,
+/// recording the grammar's own basename.
+fn scaffold_in_place_bundles_nothing_extra_and_prints_no_note() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_in_place_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let bnf_path = out_dir.join("decls.bnf");
+    std::fs::write(&bnf_path, SCAFFOLD_BNF).unwrap();
+
+    let out = tool()
+        .args(["scaffold", "--name", "decls", "-o"])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "in-place scaffold must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("bundled a copy"),
+        "in-place scaffold must not print the 'bundled a copy' note, since \
+         source and destination are the same file: {stderr}"
+    );
+
+    let bnf_files: Vec<_> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name())
+        .filter(|name| name.to_string_lossy().ends_with(".bnf"))
+        .collect();
+    assert_eq!(
+        bnf_files,
+        vec![std::ffi::OsString::from("decls.bnf")],
+        "in-place scaffold must not bundle a second copy of the grammar"
+    );
+
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(
+        config.contains("grammar = \"decls.bnf\""),
+        "ts-bnf-tool.toml must record the bundled grammar's own basename: {config}"
+    );
+    assert!(
+        config.contains("name = \"decls\""),
+        "ts-bnf-tool.toml must record the crate name: {config}"
+    );
+}
+
+#[test]
+/// The default (non-in-place) workflow (#395): pointing `scaffold` at an
+/// external `.bnf` and a fresh output directory bundles a copy of the
+/// grammar into that directory, writes `ts-bnf-tool.toml` recording it, and
+/// prints the one-line stderr note telling the user to edit the bundled
+/// copy from now on.
+fn scaffold_default_bundles_copy_and_prints_note() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_bundle_default.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_bundle_default_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "scaffold must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("bundled a copy"),
+        "a fresh non-in-place scaffold must print the 'bundled a copy' note: {stderr}"
+    );
+
+    let bundled_path = out_dir.join("ts_bnf_scaffold_bundle_default.bnf");
+    assert!(
+        bundled_path.exists(),
+        "the grammar must be bundled into the output directory under its own basename"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&bundled_path).unwrap(),
+        SCAFFOLD_BNF,
+        "the bundled copy must match the original grammar's content byte-for-byte"
+    );
+
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(
+        config.contains("grammar = \"ts_bnf_scaffold_bundle_default.bnf\""),
+        "ts-bnf-tool.toml must record the bundled grammar's own basename: {config}"
+    );
+}
+
+#[test]
+/// Directory-mode rerun (#395): pointing `scaffold` at an already-scaffolded
+/// crate's directory (`ts-bnf-tool scaffold .`, no flags at all) regenerates
+/// it using the settings recorded in its `ts-bnf-tool.toml`, without
+/// repeating the grammar filename or `--name`. Also covers the accompanying
+/// hard error: combining a directory target with `-o` doesn't make sense,
+/// since the positional already unambiguously names the directory.
+fn scaffold_directory_mode_rerun_regenerates_using_recorded_config() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_dir_mode.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_dir_mode_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let first = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "first scaffold run must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let visitor_rs_path = out_dir.join("bindings/rust/visitor.rs");
+    std::fs::write(&visitor_rs_path, "GARBAGE").unwrap();
+
+    // `-o` combined with a directory target is a hard error.
+    let rejected_output_dir =
+        std::env::temp_dir().join("ts_bnf_scaffold_dir_mode_should_not_be_used");
+    let _ = std::fs::remove_dir_all(&rejected_output_dir);
+    let bad = tool()
+        .args(["scaffold", "-o"])
+        .arg(&rejected_output_dir)
+        .arg(&out_dir)
+        .output()
+        .unwrap();
+    assert!(
+        !bad.status.success(),
+        "-o combined with a directory target must fail"
+    );
+    let bad_stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        bad_stderr.contains("doesn't make sense"),
+        "the error must explain that -o doesn't make sense here: {bad_stderr}"
+    );
+    assert!(
+        !rejected_output_dir.exists(),
+        "the rejected -o path must never be written to"
+    );
+
+    // No flags at all: everything comes from the recorded ts-bnf-tool.toml.
+    let second = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    assert!(
+        second.status.success(),
+        "directory-mode rerun must succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let visitor_rs_after = std::fs::read_to_string(&visitor_rs_path).unwrap();
+    assert!(
+        !visitor_rs_after.contains("GARBAGE")
+            && visitor_rs_after.contains("pub trait Visitor<'tree>"),
+        "directory-mode rerun must still regenerate visitor.rs from the bundled grammar: \
+         {visitor_rs_after}"
+    );
+
+    let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo_toml.contains("name = \"mylang\""),
+        "directory-mode rerun must keep using the recorded crate name: {cargo_toml}"
+    );
+}
+
+#[test]
+/// The mismatch refusal (#395): once a crate has a bundled grammar recorded
+/// in `ts-bnf-tool.toml`, rerunning `scaffold` (file mode) with a
+/// *different* `.bnf` filename must fail with a clear error naming both
+/// files, rather than silently swapping the bundled grammar or ignoring the
+/// new one — and it must write nothing at all, not even a partial update.
+fn scaffold_rerun_with_different_grammar_filename_is_refused() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let first_path = write_tmp("ts_bnf_scaffold_mismatch_first.bnf", SCAFFOLD_BNF);
+    let second_path = write_tmp("ts_bnf_scaffold_mismatch_second.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_mismatch_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let first = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&first_path)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "first scaffold run must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let config_path = out_dir.join("ts-bnf-tool.toml");
+    let config_before = std::fs::read_to_string(&config_path).unwrap();
+    let mut entries_before: Vec<_> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name())
+        .collect();
+    entries_before.sort();
+
+    let second = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&second_path)
+        .output()
+        .unwrap();
+    assert!(
+        !second.status.success(),
+        "scaffolding with a different grammar filename must fail"
+    );
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains("ts_bnf_scaffold_mismatch_first.bnf") && stderr.contains("already bundled"),
+        "the error must name the already-bundled grammar file: {stderr}"
+    );
+
+    let config_after = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(
+        config_before, config_after,
+        "ts-bnf-tool.toml must be left untouched after a refused rerun"
+    );
+    let mut entries_after: Vec<_> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name())
+        .collect();
+    entries_after.sort();
+    assert_eq!(
+        entries_before, entries_after,
+        "a refused rerun must write nothing — no new file must appear in the output directory"
+    );
+}
+
+#[test]
+/// Directory-mode `scaffold` (#395) requires a `ts-bnf-tool.toml` in the
+/// target directory to read its settings back from. Pointing it at a plain
+/// directory that was never scaffolded must fail with a clear error rather
+/// than panicking or silently doing nothing.
+fn scaffold_directory_without_config_is_refused() {
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_no_config_dir");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let out = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    assert!(
+        !out.status.success(),
+        "scaffolding a directory with no ts-bnf-tool.toml must fail"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not a scaffolded crate"),
+        "the error must explain that the directory has no recorded config: {stderr}"
+    );
+}
+
+#[test]
+/// The concrete regression test for "codegen always reads the bundled
+/// copy" (#395): once a grammar is bundled, hand-editing the *bundled*
+/// copy and rerunning `scaffold` with the same filename must regenerate
+/// from the hand-edited content — not the stale, unmodified content of the
+/// original external file the tool was first pointed at.
+fn scaffold_rerun_uses_hand_edited_bundled_copy_not_stale_external_file() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_hand_edit.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_hand_edit_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let first = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "first scaffold run must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    // Hand-edit the *bundled* copy only — the original external file at
+    // `path` is left with its stale, original ('=') content.
+    let bundled_path = out_dir.join("ts_bnf_scaffold_hand_edit.bnf");
+    let edited = indoc! {"
+        program -> decl* ;
+        decl -> target: ident ':=' value: ident ';' ;
+        ident -> /[a-z]+/ ;
+    "};
+    std::fs::write(&bundled_path, edited).unwrap();
+
+    let second = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "second scaffold run must succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let grammar_js = std::fs::read_to_string(out_dir.join("grammar.js")).unwrap();
+    assert!(
+        grammar_js.contains("':='"),
+        "regeneration must reflect the hand-edited bundled copy's ':=' token: {grammar_js}"
+    );
+    assert!(
+        !grammar_js.contains("'='"),
+        "regeneration must not fall back to the stale external file's '=' token: {grammar_js}"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        SCAFFOLD_BNF,
+        "the original external file itself must never be modified by scaffold"
+    );
+}
+
+#[test]
+/// `%include` bundling (#395): the whole include closure is bundled, each
+/// file preserving its path relative to the root `.bnf`'s own directory —
+/// here the included file lives in a subdirectory of the root, so the
+/// bundled copy must land at the same relative subdirectory path, not
+/// flattened alongside the root. The copied `%include` directive must still
+/// resolve correctly from its new location, which a rerun (pointed at the
+/// same, now-bundled, root file) exercises directly.
+fn scaffold_bundles_include_closure_preserving_relative_paths() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let source_dir = std::env::temp_dir().join("ts_bnf_scaffold_include_source");
+    let _ = std::fs::remove_dir_all(&source_dir);
+    std::fs::create_dir_all(source_dir.join("sub")).unwrap();
+
+    let child_bnf = "b_rule -> 'y' ;\n";
+    std::fs::write(source_dir.join("sub/child.bnf"), child_bnf).unwrap();
+    let root_path = source_dir.join("root.bnf");
+    std::fs::write(&root_path, "root -> b_rule ;\n%include \"sub/child.bnf\"\n").unwrap();
+
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_include_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let first = tool()
+        .args(["scaffold", "--name", "inclang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&root_path)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "first scaffold run must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let bundled_child_path = out_dir.join("sub/child.bnf");
+    assert!(
+        bundled_child_path.exists(),
+        "the included file must be bundled preserving its relative subdirectory path"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&bundled_child_path).unwrap(),
+        child_bnf,
+        "the bundled included file's content must match the original"
+    );
+
+    let bundled_root = std::fs::read_to_string(out_dir.join("root.bnf")).unwrap();
+    assert!(
+        bundled_root.contains("%include \"sub/child.bnf\""),
+        "the bundled root file must keep its %include directive unchanged: {bundled_root}"
+    );
+
+    // A no-flags rerun must be able to re-resolve the %include from the
+    // bundled root file's own (now-in-crate) location.
+    let second = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    assert!(
+        second.status.success(),
+        "rerunning against the bundled root must re-resolve the copied %include: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let visitor_rs = std::fs::read_to_string(out_dir.join("bindings/rust/visitor.rs")).unwrap();
+    assert!(
+        visitor_rs.contains("fn visit_b_rule("),
+        "the included file's rule must still make it into the generated visitor: {visitor_rs}"
+    );
+}
+
+#[test]
+/// An `%include` resolving *outside* the root file's own directory tree
+/// (#395) is left external rather than bundled or rewritten: `scaffold`
+/// still succeeds, but prints a warning naming the escaping file instead of
+/// copying it into the crate.
+fn scaffold_include_outside_root_dir_left_unbundled_with_warning() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let root_dir = std::env::temp_dir().join("ts_bnf_scaffold_escape_root_dir");
+    let outside_dir = std::env::temp_dir().join("ts_bnf_scaffold_escape_outside_dir");
+    let _ = std::fs::remove_dir_all(&root_dir);
+    let _ = std::fs::remove_dir_all(&outside_dir);
+    std::fs::create_dir_all(&root_dir).unwrap();
+    std::fs::create_dir_all(&outside_dir).unwrap();
+
+    std::fs::write(outside_dir.join("child.bnf"), "b_rule -> 'y' ;\n").unwrap();
+    let root_path = root_dir.join("root.bnf");
+    std::fs::write(
+        &root_path,
+        "root -> b_rule ;\n%include \"../ts_bnf_scaffold_escape_outside_dir/child.bnf\"\n",
+    )
+    .unwrap();
+
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_escape_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = tool()
+        .args(["scaffold", "--name", "outlang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&root_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "scaffold must still succeed despite the escaping %include: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("child.bnf") && stderr.contains("outside") && stderr.contains("unbundled"),
+        "a warning must name the escaping file and say it's left unbundled: {stderr}"
+    );
+
+    assert!(
+        !out_dir.join("child.bnf").exists(),
+        "the escaping included file must not be copied into the crate"
+    );
+}
+
+#[test]
+/// Passing `--ast-types` on a rerun (#395) patches `ts-bnf-tool.toml` in
+/// place (one-way-switch semantics — it can be added later, never removed)
+/// and writes `bindings/rust/ast.rs`; a *subsequent* rerun that repeats
+/// neither the filename nor `--ast-types` (directory mode, no flags at all)
+/// still regenerates `ast.rs`, picking the setting up from the patched
+/// config.
+fn scaffold_ast_types_added_on_rerun_updates_config_and_sticks_without_repeating_flag() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_ast_config_update.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_ast_config_update_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let first = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "first scaffold run (without --ast-types) must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let config_before = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(
+        config_before.contains("ast_types = false"),
+        "ts-bnf-tool.toml must record ast_types = false before --ast-types is ever passed: \
+         {config_before}"
+    );
+    assert!(!out_dir.join("bindings/rust/ast.rs").exists());
+
+    let second = tool()
+        .args([
+            "scaffold",
+            "--name",
+            "mylang",
+            "--ast-types",
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "second scaffold run (adding --ast-types) must succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let config_after = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(
+        config_after.contains("ast_types = true"),
+        "ts-bnf-tool.toml must be patched in place to ast_types = true: {config_after}"
+    );
+    assert!(out_dir.join("bindings/rust/ast.rs").exists());
+
+    // Remove ast.rs, then rerun in directory mode with no flags at all —
+    // the recorded ast_types = true must be enough to regenerate it.
+    std::fs::remove_file(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    let third = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    assert!(
+        third.status.success(),
+        "directory-mode rerun must succeed: {}",
+        String::from_utf8_lossy(&third.stderr)
+    );
+    assert!(
+        out_dir.join("bindings/rust/ast.rs").exists(),
+        "directory-mode rerun must regenerate ast.rs from the recorded ast_types \
+         setting, without --ast-types being passed again"
+    );
+}
+
+#[test]
+/// The generated `Makefile` (#395) actually regenerates derived files when
+/// the bundled grammar changes. Checked structurally, per
+/// [[feedback_avoid_brittle_signature_string_tests]]: actually touch the
+/// bundled `.bnf`, run `make generate` inside the scaffolded crate, and
+/// assert `grammar.js`/`src/parser.c` changed — never assert on the
+/// Makefile's exact text. `BNF_TOOL` is overridden to the freshly-built
+/// test binary so the recipe doesn't depend on an installed `ts-bnf-tool`
+/// being on `PATH`.
+fn scaffold_makefile_generate_regenerates_derived_files_on_grammar_change() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_makefile.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_makefile_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let scaffold_out = tool()
+        .args(["scaffold", "--name", "mylang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        scaffold_out.status.success(),
+        "scaffold must succeed: {}",
+        String::from_utf8_lossy(&scaffold_out.stderr)
+    );
+    assert!(
+        out_dir.join("Makefile").exists(),
+        "scaffold must write a Makefile"
+    );
+
+    let grammar_js_path = out_dir.join("grammar.js");
+    let parser_c_path = out_dir.join("src/parser.c");
+    let grammar_js_before = std::fs::read_to_string(&grammar_js_path).unwrap();
+    let parser_c_before = std::fs::read_to_string(&parser_c_path).unwrap();
+
+    // macOS ships GNU Make 3.81 (frozen pre-GPLv3), which only compares
+    // prerequisite/target mtimes to 1-second resolution — unlike Linux's
+    // GNU Make 4.x. Without this sleep, the edit below can land in the same
+    // second as `scaffold`'s own writes above, making `visitor.rs` look
+    // already up to date and skipping the recipe entirely.
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // Touch the *bundled* grammar (not the original external file).
+    let bundled_path = out_dir.join("ts_bnf_scaffold_makefile.bnf");
+    let edited = SCAFFOLD_BNF.replace('=', ":=");
+    std::fs::write(&bundled_path, &edited).unwrap();
+
+    let make = std::process::Command::new("make")
+        .arg(format!("BNF_TOOL={}", env!("CARGO_BIN_EXE_ts-bnf-tool")))
+        .arg("generate")
+        .current_dir(&out_dir)
+        .output()
+        .unwrap();
+    assert!(
+        make.status.success(),
+        "make generate must succeed: stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&make.stdout),
+        String::from_utf8_lossy(&make.stderr)
+    );
+
+    let grammar_js_after = std::fs::read_to_string(&grammar_js_path).unwrap();
+    let parser_c_after = std::fs::read_to_string(&parser_c_path).unwrap();
+    assert_ne!(
+        grammar_js_before, grammar_js_after,
+        "make generate must regenerate grammar.js after the bundled grammar changed"
+    );
+    assert_ne!(
+        parser_c_before, parser_c_after,
+        "make generate must regenerate src/parser.c after the bundled grammar changed"
+    );
+
+    // A second `make generate` with nothing changed is a no-op.
+    let make_again = std::process::Command::new("make")
+        .arg(format!("BNF_TOOL={}", env!("CARGO_BIN_EXE_ts-bnf-tool")))
+        .arg("generate")
+        .current_dir(&out_dir)
+        .output()
+        .unwrap();
+    assert!(make_again.status.success());
+    assert_eq!(
+        grammar_js_after,
+        std::fs::read_to_string(&grammar_js_path).unwrap(),
+        "a second make generate with nothing changed must be a no-op"
+    );
+}
+
 #[test]
 /// `--no-header` suppresses the generated-file comment on the Rust files
 /// this subcommand hand-authors, including `bindings/rust/build.rs` (#376).
@@ -2437,6 +3092,51 @@ fn check_reads_clean_grammar_from_stdin() {
     assert!(
         out.status.success(),
         "check via stdin must succeed for clean grammar"
+    );
+}
+
+#[test]
+/// `scaffold -` bundles the grammar read from stdin as `grammar.bnf` (#395)
+/// — there's no source filename to reuse, unlike scaffolding from a file.
+fn scaffold_from_stdin_bundles_as_grammar_bnf() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_stdin_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let mut child = tool()
+        .args(["scaffold", "--name", "stdinlang", "--output-dir"])
+        .arg(&out_dir)
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(SCAFFOLD_BNF.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "scaffold via stdin must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out_dir.join("grammar.bnf").exists(),
+        "the bundled grammar read from stdin must be named grammar.bnf"
+    );
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(
+        config.contains("grammar.bnf"),
+        "ts-bnf-tool.toml must record the bundled grammar.bnf filename: {config}"
     );
 }
 

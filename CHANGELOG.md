@@ -43,6 +43,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `convert --generate`: `-o` is now a short alias for `--output-dir`,
   matching `-o`'s meaning as "write output here" on `railroad`/`graph`/
   `highlights`/`rename` (#379).
+- `scaffold` now bundles the grammar's own `.bnf` — including any
+  `%include`d files, preserving their relative paths — into the generated
+  crate, alongside a new `ts-bnf-tool.toml` recording how it was scaffolded
+  (the bundled grammar's filename, `--name`, `--ast-types`, and
+  `--merge-config`) and a `Makefile` with a `generate` target that reruns
+  `scaffold` whenever the bundled grammar or `ts-bnf-tool.toml` changes.
+  Pointing `scaffold` at the crate's own directory instead of a `.bnf` file
+  reruns it using the settings recorded in `ts-bnf-tool.toml`, with no
+  flags needed; a rerun refuses to proceed if the `.bnf` filename given
+  names a different file than the one already bundled, rather than
+  silently swapping it in (#395).
 
 ### Changed
 - `tree-sitter-bnf` and `ts-bnf-tool` now declare `rust-version = "1.90"`,
