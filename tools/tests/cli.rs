@@ -823,6 +823,82 @@ fn generate_word_keyword_distinguished_from_prefixed_identifier() {
     );
 }
 
+// ── %reserved real-CLI test (#416) ───────────────────────────────────────────
+
+/// The issue #416 reproduction: a global `%reserved` set containing `'if'`.
+/// Reserving `if` means the lexer must prefer the literal token over
+/// `identifier`'s pattern wherever both could apply, not just where `'if'`
+/// is grammatically expected.
+const RESERVED_BNF: &str = indoc! {"
+    %word identifier
+    %reserved global: ['if']
+
+    source_file -> 'if' identifier | identifier ;
+    identifier -> /[a-z]+/ ;
+"};
+
+#[test]
+/// `%reserved` previously made `tree-sitter generate` fail outright with
+/// `Grammar's 'reserved' property must be an object` (#416) because the
+/// converter emitted `reserved: ($) => ({...})` — a callback returning an
+/// object — instead of a plain object. Generation must now succeed, and the
+/// reserved word must actually take effect at parse time: `foo` and `if foo`
+/// parse cleanly, but `if if` is rejected because the second `if` can't
+/// satisfy `identifier` once `if` is reserved.
+fn generate_reserved_directive_object_shape_and_parse_behavior() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::generate(
+        "ts_bnf_gen_reserved_project",
+        Some("reservedtest"),
+        RESERVED_BNF,
+    );
+
+    let grammar_js = fs::read_to_string(out_dir.join("grammar.js")).unwrap();
+    assert!(
+        grammar_js.contains("  reserved: {"),
+        "reserved must be a plain object, not a callback: {grammar_js}"
+    );
+    assert!(
+        !grammar_js.contains("reserved: ($) =>"),
+        "reserved must not be wrapped in a callback: {grammar_js}"
+    );
+
+    let plain = support::parse(&out_dir, "foo");
+    assert!(
+        !plain.contains("ERROR"),
+        "expected no ERROR for 'foo'; got: {plain}"
+    );
+
+    let if_plain = support::parse(&out_dir, "if foo");
+    assert!(
+        !if_plain.contains("ERROR"),
+        "expected no ERROR for 'if foo'; got: {if_plain}"
+    );
+
+    // `tree-sitter parse` exits non-zero when the tree contains an ERROR
+    // node, so this uses a raw `Command` instead of `support::parse` (which
+    // asserts success) — the rejection itself is the thing under test.
+    let if_if_path = out_dir.join("sample-if-if.txt");
+    fs::write(&if_if_path, "if if").unwrap();
+    let if_if_out = Command::new("tree-sitter")
+        .arg("parse")
+        .arg(&if_if_path)
+        .current_dir(&out_dir)
+        .output()
+        .unwrap();
+    let if_if = String::from_utf8_lossy(&if_if_out.stdout);
+    assert!(
+        if_if.contains("ERROR"),
+        "'if if' must be rejected — the second 'if' is reserved and cannot \
+         satisfy identifier; got: {if_if}"
+    );
+}
+
 // ── %precedences real-CLI test (#268) ────────────────────────────────────────
 
 /// Grammar with a classic `+`/`*` operator-precedence ambiguity.

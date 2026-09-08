@@ -67,6 +67,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
+- `convert`/`scaffold`: a grammar using `%reserved` emitted
+  `` reserved: ($) => ({...}) `` — a callback returning an object — which
+  `tree-sitter generate` rejects with `Grammar's 'reserved' property must
+  be an object.`, breaking every grammar using `%reserved` even though
+  `check`/`convert --strict` both reported success. `reserved` is now
+  emitted as a plain object, matching what tree-sitter actually requires
+  (#416, thanks @nu11ptr for the precise repro and root-cause diagnosis).
 - A rule body nested thousands of parenthesised groups deep no longer
   crashes every subcommand with a raw stack overflow (SIGABRT, exit 134)
   and no diagnostic. `check`/`convert`/`firsts`/`format`/`highlights`/

@@ -40,9 +40,14 @@ impl GrammarJs<'_> {
     }
 
     /// Emits the `reserved:` directive, if the grammar declares any sets.
+    ///
+    /// `reserved` itself must be a plain object mapping each set name to its
+    /// own `($) => [...]` callback — not a callback returning that object,
+    /// which tree-sitter rejects with "Grammar's 'reserved' property must be
+    /// an object" (#416).
     fn fmt_reserved(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if !self.grammar.reserved_sets.is_empty() {
-            writeln!(f, "  reserved: ($) => ({{")?;
+            writeln!(f, "  reserved: {{")?;
             for entry in &self.grammar.reserved_sets {
                 let items = entry
                     .rule_names
@@ -55,7 +60,7 @@ impl GrammarJs<'_> {
                     .join(", ");
                 writeln!(f, "    {}: ($) => [{}],", entry.set_name, items)?;
             }
-            writeln!(f, "  }}),")?;
+            writeln!(f, "  }},")?;
             writeln!(f)?;
         }
         Ok(())
@@ -704,10 +709,11 @@ mod tests {
             re("propertyName", &[], 0),
         ];
         let out = s(&g, "g").to_string();
-        assert!(out.contains("  reserved: ($) => ({"));
+        assert!(out.contains("  reserved: {"));
+        assert!(!out.contains("  reserved: ($) =>"));
         assert!(out.contains("    keywords: ($) => [$.if_kw, 'else'],"));
         assert!(out.contains("    propertyName: ($) => [],"));
-        assert!(out.contains("  }),"));
+        assert!(out.contains("  },\n"));
     }
 
     #[test]
