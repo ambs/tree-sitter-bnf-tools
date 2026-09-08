@@ -31,10 +31,14 @@
 ; Directives
 "%axiom" @keyword
 "%conflicts" @keyword
+"%externals" @keyword
 "%include" @keyword
 "%inline" @keyword
+"%precedences" @keyword
+"%reserved" @keyword
 "%supertypes" @keyword
 "%extras" @keyword
+"%word" @keyword
 "[" @punctuation.bracket
 "]" @punctuation.bracket
 
@@ -42,6 +46,8 @@
 "->" @operator
 "|" @operator
 ";" @punctuation.delimiter
+"," @punctuation.delimiter
+":" @punctuation.delimiter
 "(" @punctuation.bracket
 ")" @punctuation.bracket
 "<<" @punctuation.bracket

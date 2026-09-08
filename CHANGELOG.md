@@ -67,6 +67,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
+- `tree-sitter-bnf/queries/highlights.scm` now captures all 10 directive
+  keywords as `@keyword` — `%word`, `%externals`, `%precedences`, and
+  `%reserved` previously got no capture at all and rendered unstyled in any
+  editor using these queries. The `,` and `:` list-separator tokens used by
+  several directives are now captured as `@punctuation.delimiter` too
+  (#401).
 - The required `tree-sitter-cli` minimum version is now stated consistently
   everywhere (`Makefile`, `Cargo.toml`, `README.md`) as `>= 0.25` — the
   actual requirement for the ABI 15 output `convert --generate`/`scaffold`
