@@ -124,13 +124,20 @@ fn visit_grammar_inner(
         match child.kind() {
             "rule" => {
                 let prod = visit_rule(&mut grammar, &child, ctx)?;
-                if grammar.productions.contains_key(&prod.name) {
+                if let Some(existing) = grammar.productions.get(&prod.name) {
                     grammar.parse_diagnostics.push(
                         Diagnostic::warning(format!(
                             "rule '{}' is defined more than once",
                             prod.name
                         ))
                         .with_location(&prod.filename, prod.line),
+                    );
+                    grammar.parse_diagnostics.push(
+                        Diagnostic::warning(format!(
+                            "previous definition of rule '{}' is here",
+                            prod.name
+                        ))
+                        .with_location(&existing.filename, existing.line),
                     );
                 }
                 grammar.record_own_first_rule(&prod.name);
@@ -164,15 +171,13 @@ fn visit_grammar_inner(
             }
             "wordDirective" => {
                 let item = visit_simple_directive(&child, ctx);
-                if let Some(diag) = grammar.declare_word(item) {
-                    grammar.parse_diagnostics.push(diag);
-                }
+                let diags = grammar.declare_word(item);
+                grammar.parse_diagnostics.extend(diags);
             }
             "axiomDirective" => {
                 let item = visit_simple_directive(&child, ctx);
-                if let Some(diag) = grammar.declare_axiom(item) {
-                    grammar.parse_diagnostics.push(diag);
-                }
+                let diags = grammar.declare_axiom(item);
+                grammar.parse_diagnostics.extend(diags);
             }
             "includeDirective" => {
                 visit_include_directive(&mut grammar, &child, ctx, state)?;
@@ -1007,6 +1012,28 @@ mod tests {
                     && d.message.contains("defined more than once")),
             "expected duplicate-rule warning, got {diags:?}"
         );
+        // Reproduces the issue #319 follow-up comment's repro: the warning must
+        // not name only one of the two colliding sites (previously always
+        // `inc_dup_a.bnf`, even when the actual duplicate lives in the included
+        // file) — a second diagnostic must point at the other one.
+        assert!(
+            diags.iter().any(|d| d
+                .file
+                .as_deref()
+                .is_some_and(|f| f.ends_with("inc_dup_a.bnf"))
+                && d.line == Some(2)),
+            "expected a diagnostic at the new definition (inc_dup_a.bnf:2), got {diags:?}"
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("previous definition")
+                    && d.file
+                        .as_deref()
+                        .is_some_and(|f| f.ends_with("inc_dup_b.bnf"))
+                    && d.line == Some(1)),
+            "expected a previous-definition diagnostic at inc_dup_b.bnf:1, got {diags:?}"
+        );
     }
 
     #[test]
@@ -1032,6 +1059,27 @@ mod tests {
                     && d.message.contains("defined more than once")),
             "expected duplicate-rule warning, got {diags:?}"
         );
+        // Both colliding sites must be named (#319 follow-up comment): the new
+        // definition comes from the included file, the previous one from the
+        // parent's own, earlier declaration.
+        assert!(
+            diags.iter().any(|d| d
+                .file
+                .as_deref()
+                .is_some_and(|f| f.ends_with("inc_dup_before_b.bnf"))
+                && d.line == Some(1)),
+            "expected a diagnostic at the new definition (inc_dup_before_b.bnf:1), got {diags:?}"
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("previous definition")
+                    && d.file
+                        .as_deref()
+                        .is_some_and(|f| f.ends_with("inc_dup_before_a.bnf"))
+                    && d.line == Some(1)),
+            "expected a previous-definition diagnostic at inc_dup_before_a.bnf:1, got {diags:?}"
+        );
     }
 
     #[test]
@@ -1054,6 +1102,16 @@ mod tests {
             diags.iter().any(|d| d.severity == Severity::Error
                 && d.message.contains("%word declared more than once")),
             "expected duplicate-%word error, got {diags:?}"
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("previous %word declaration is here")
+                    && d.file
+                        .as_deref()
+                        .is_some_and(|f| f.ends_with("inc_word_conflict_a.bnf"))
+                    && d.line == Some(1)),
+            "expected a previous-declaration diagnostic at inc_word_conflict_a.bnf:1, got {diags:?}"
         );
     }
 
@@ -1552,6 +1610,13 @@ mod tests {
             "expected duplicate-%word error, got {diags:?}"
         );
         assert_eq!(g.word.as_ref().map(|w| w.name.as_str()), Some("foo"));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("previous %word declaration is here")
+                    && d.line == Some(1)),
+            "expected a previous-declaration diagnostic at line 1, got {diags:?}"
+        );
     }
 
     #[test]

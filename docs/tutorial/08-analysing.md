@@ -25,6 +25,12 @@ Checks performed:
 | Unreferenced rule | warning | `warning: rule 'foo' is never referenced (line 4)` |
 | Non-productive rule | **error** | `error: rule 'foo' can never derive a terminal string (line 4)` |
 
+A duplicate rule, `%axiom`, or `%word` produces a second diagnostic alongside
+the one shown above, pointing at the earlier declaration:
+`` warning: previous %axiom declaration is here (line 1) ``. This is what
+lets you find *both* sides of the conflict — especially useful when the two
+declarations come from different files via `%include`.
+
 Pass `--json` to get diagnostics as a JSON object on stdout instead of plain
 text on stderr. Exit codes are not affected:
 

@@ -126,32 +126,40 @@ impl Grammar {
 
     /// Records the `%axiom` directive, enforcing first-declaration-wins.
     ///
-    /// Returns an error diagnostic when an axiom is already declared; the
-    /// existing declaration is kept and the incoming one is discarded.
-    pub(crate) fn declare_axiom(&mut self, item: DirectiveItem) -> Option<Diagnostic> {
-        if self.axiom.is_some() {
-            return Some(
+    /// Returns two diagnostics — the duplicate error, plus a second one
+    /// pointing at where the original `%axiom` was declared — when an axiom
+    /// is already declared; the existing declaration is kept and the
+    /// incoming one is discarded. Returns an empty `Vec` otherwise.
+    pub(crate) fn declare_axiom(&mut self, item: DirectiveItem) -> Vec<Diagnostic> {
+        if let Some(existing) = &self.axiom {
+            return vec![
                 Diagnostic::error("%axiom declared more than once")
                     .with_location(&item.filename, item.line),
-            );
+                Diagnostic::error("previous %axiom declaration is here")
+                    .with_location(&existing.filename, existing.line),
+            ];
         }
         self.axiom = Some(item);
-        None
+        Vec::new()
     }
 
     /// Records the '%word' directive, enforcing first-declaration-wins.
     ///
-    /// Returns an error diagnostic when a word is already reclared; the
-    /// existing declaration is kept and the incoming one is discarded.
-    pub(crate) fn declare_word(&mut self, item: DirectiveItem) -> Option<Diagnostic> {
-        if self.word.is_some() {
-            return Some(
+    /// Returns two diagnostics — the duplicate error, plus a second one
+    /// pointing at where the original `%word` was declared — when a word is
+    /// already declared; the existing declaration is kept and the incoming
+    /// one is discarded. Returns an empty `Vec` otherwise.
+    pub(crate) fn declare_word(&mut self, item: DirectiveItem) -> Vec<Diagnostic> {
+        if let Some(existing) = &self.word {
+            return vec![
                 Diagnostic::error("%word declared more than once")
                     .with_location(&item.filename, item.line),
-            );
+                Diagnostic::error("previous %word declaration is here")
+                    .with_location(&existing.filename, existing.line),
+            ];
         }
         self.word = Some(item);
-        None
+        Vec::new()
     }
 
     /// Returns the raw `%axiom` directive, for line-number diagnostics and
@@ -221,18 +229,38 @@ mod tests {
     #[test]
     fn declare_axiom_first_declaration_wins() {
         let mut g = ab();
-        assert!(g.declare_axiom(di("a", 1)).is_none());
-        let diag = g.declare_axiom(di("b", 2)).expect("duplicate must error");
-        assert!(diag.message.contains("%axiom declared more than once"));
+        assert!(g.declare_axiom(di("a", 1)).is_empty());
+        let diags = g.declare_axiom(di("b", 2));
+        assert_eq!(
+            diags.len(),
+            2,
+            "expected the error plus a previous-location note"
+        );
+        assert!(diags[0].message.contains("%axiom declared more than once"));
+        assert!(
+            diags[1]
+                .message
+                .contains("previous %axiom declaration is here")
+        );
         assert_eq!(g.root_rule(), Some("a"));
     }
 
     #[test]
     fn declare_word_first_declaration_wins() {
         let mut g = ab();
-        assert!(g.declare_word(di("a", 1)).is_none());
-        let diag = g.declare_word(di("b", 2)).expect("duplicate must error");
-        assert!(diag.message.contains("%word declared more than once"));
+        assert!(g.declare_word(di("a", 1)).is_empty());
+        let diags = g.declare_word(di("b", 2));
+        assert_eq!(
+            diags.len(),
+            2,
+            "expected the error plus a previous-location note"
+        );
+        assert!(diags[0].message.contains("%word declared more than once"));
+        assert!(
+            diags[1]
+                .message
+                .contains("previous %word declaration is here")
+        );
         assert_eq!(g.word.as_ref().map(|w| w.name.as_str()), Some("a"));
     }
 
@@ -240,8 +268,13 @@ mod tests {
     fn declare_word_duplicate_returns_error() {
         let mut g = ab();
         g.declare_word(di("a", 1));
-        let diag = g.declare_word(di("a", 2)).expect("duplicate must error");
-        assert!(diag.message.contains("%word declared more than once"));
+        let diags = g.declare_word(di("a", 2));
+        assert!(diags[0].message.contains("%word declared more than once"));
+        assert!(
+            diags[1]
+                .message
+                .contains("previous %word declaration is here")
+        );
     }
 
     #[test]

@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `check` now emits a second diagnostic pointing at the earlier declaration
+  whenever a rule, `%axiom`, or `%word` is declared more than once — e.g.
+  `warning: previous definition of rule 'item' is here (lib.bnf:1)`
+  alongside the existing `warning: rule 'item' is defined more than once
+  (main.bnf:2)`. Previously the message named only the new, conflicting
+  declaration; for a duplicate coming from a different file via `%include`,
+  the other definition was unfindable — sometimes the message even named
+  the *wrong* file, pointing at a correct, single definition while the real
+  duplicate lived in the included file (#319).
 - `tree-sitter-bnf`'s Rust binding (`bindings/rust/lib.rs`) now exports
   `HIGHLIGHTS_QUERY`, `INJECTIONS_QUERY`, `LOCALS_QUERY`, `TAGS_QUERY`,
   `FOLDS_QUERY`, and `INDENTS_QUERY` — the six query files already shipped
