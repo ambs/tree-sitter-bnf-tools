@@ -130,10 +130,13 @@ impl Grammar {
     /// existing declaration is kept and the incoming one is discarded.
     pub(crate) fn declare_axiom(&mut self, item: DirectiveItem) -> Option<Diagnostic> {
         if self.axiom.is_some() {
-            return Some(Diagnostic::error(format!(
-                "%axiom declared more than once ({})",
-                loc(&item.filename, item.line)
-            )));
+            return Some(
+                Diagnostic::error(format!(
+                    "%axiom declared more than once ({})",
+                    loc(&item.filename, item.line)
+                ))
+                .with_location(&item.filename, item.line),
+            );
         }
         self.axiom = Some(item);
         None
@@ -145,10 +148,13 @@ impl Grammar {
     /// existing declaration is kept and the incoming one is discarded.
     pub(crate) fn declare_word(&mut self, item: DirectiveItem) -> Option<Diagnostic> {
         if self.word.is_some() {
-            return Some(Diagnostic::error(format!(
-                "%word declared more than once ({})",
-                loc(&item.filename, item.line)
-            )));
+            return Some(
+                Diagnostic::error(format!(
+                    "%word declared more than once ({})",
+                    loc(&item.filename, item.line)
+                ))
+                .with_location(&item.filename, item.line),
+            );
         }
         self.word = Some(item);
         None

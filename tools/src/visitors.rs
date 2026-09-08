@@ -125,11 +125,14 @@ fn visit_grammar_inner(
             "rule" => {
                 let prod = visit_rule(&mut grammar, &child, ctx)?;
                 if grammar.productions.contains_key(&prod.name) {
-                    grammar.parse_diagnostics.push(Diagnostic::warning(format!(
-                        "rule '{}' is defined more than once ({})",
-                        prod.name,
-                        loc(&prod.filename, prod.line)
-                    )));
+                    grammar.parse_diagnostics.push(
+                        Diagnostic::warning(format!(
+                            "rule '{}' is defined more than once ({})",
+                            prod.name,
+                            loc(&prod.filename, prod.line)
+                        ))
+                        .with_location(&prod.filename, prod.line),
+                    );
                 }
                 grammar.record_own_first_rule(&prod.name);
                 grammar.productions.insert(prod.name.clone(), prod);
