@@ -10,9 +10,35 @@ jobs:
   corpus:
     runs-on: ubuntu-latest
     steps:
+      # grammar-check's staleness heuristic walks git history across
+      # grammar/bnf.bnf and the generated diagrams (Makefile:34-43); a
+      # shallow checkout would make it silently too lenient for a PR whose
+      # later commit updates bnf.bnf without a companion commit updating
+      # the diagrams — exactly the drift this job exists to catch.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
       - run: npm install -g tree-sitter-cli@0.26.9
+      # graphviz provides `dot`, needed only when grammar-check's
+      # git-history shortcut (#296) decides grammar/railroad.svg or
+      # grammar/graph.pdf are actually stale and falls back to
+      # regenerating them — the common case skips this entirely.
+      - name: Install graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
       - run: make test-grammar
+      - run: make grammar-check
+      - run: make bnf-self-check
