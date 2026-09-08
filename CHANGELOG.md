@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `check` (and, by extension, every subcommand that reuses its
+  cross-reference checks — `convert` aborts on it by default) now detects
+  rules that can never derive a terminal string, e.g. `a -> a ;` or a
+  mutual cycle with no terminal escape: `` error: rule 'a' can never derive
+  a terminal string (line N) ``. Previously such a grammar passed `check`
+  clean and only failed once handed to `tree-sitter generate`, with an
+  opaque `Unresolved conflict for symbol sequence` error. Left recursion
+  itself is still not flagged — only rules that are actually unbuildable
+  (#406).
 - `scaffold` subcommand: scaffolds a complete, self-contained Rust crate for
   parsing and traversing a BNF-described language — the tree-sitter parser,
   a generated ANTLR-style `Visitor<'tree>` trait (one documented `visit_*`
@@ -75,6 +84,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   crates.io page for `tree-sitter-bnf` linked to an unrelated repo.
   `tree-sitter.json`'s hardcoded version is also bumped to match the
   current `0.5.0` workspace version (#400).
+- `firsts`: a rule referencing an `%externals`-declared name, directly or
+  transitively, now correctly shows that name as a leading terminal
+  instead of an empty FIRST set — `first_sets()` had no way to represent
+  an external token (it has no BNF-visible body to look up), so it
+  silently contributed nothing (#406).
 - `convert`/`scaffold`: a grammar using `%reserved` emitted
   `` reserved: ($) => ({...}) `` — a callback returning an object — which
   `tree-sitter generate` rejects with `Grammar's 'reserved' property must

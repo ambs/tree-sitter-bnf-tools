@@ -23,6 +23,7 @@ Checks performed:
 | Undefined `%supertypes` rules | **error** | `error: %supertypes references undefined rule 'foo'` |
 | Undefined `%extras` rules | **error** | `error: %extras references undefined rule 'foo'` |
 | Unreferenced rule | warning | `warning: rule 'foo' is never referenced (line 4)` |
+| Non-productive rule | **error** | `error: rule 'foo' can never derive a terminal string (line 4)` |
 
 Pass `--json` to get diagnostics as a JSON object on stdout instead of plain
 text on stderr. Exit codes are not affected:
@@ -79,6 +80,28 @@ See [Shift-reduce conflicts and operator precedence](03-concepts.md#conflicts-pr
 for how to resolve these with `%prec` annotations.
 Ahead-of-time detection of such conflicts is planned separately
 ([#31](https://github.com/ambs/tree-sitter-bnf-tools/issues/31)).
+
+### Non-productive rules
+
+Left recursion is fine, but a rule that can *never* reach a terminal — no
+alternative in its body ever bottoms out at a literal, a pattern, or an
+`%externals` token — is a different, genuine error: `tree-sitter generate`
+rejects it outright with an opaque `Unresolved conflict for symbol
+sequence` error. `check` catches this ahead of time instead:
+
+```bnf
+a -> a ;
+```
+
+```
+error: rule 'a' can never derive a terminal string (line 1)
+```
+
+The same applies to a mutual cycle with no terminal escape (`a -> b ; b ->
+a ;` flags both `a` and `b`). This is unrelated to reachability from the
+root — [unreferenced rules](#unreferenced-rules) above — and unrelated to
+left recursion itself: `expr -> expr '+' term | term ;` is left-recursive
+*and* productive (via `term`), so it is not flagged.
 
 ### Unreferenced rules
 

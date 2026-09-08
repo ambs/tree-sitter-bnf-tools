@@ -34,6 +34,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::directive::NameOrLiteral;
 use super::nodes::GrammarNode;
 use super::types::Grammar;
 
@@ -71,17 +72,28 @@ pub enum FirstTerminal<'g> {
     Literal(&'g str),
     /// A regex pattern terminal, e.g. `/[0-9]+/`.
     Pattern(&'g str),
+    /// A named token declared via `%externals`, e.g. `foo` in `%externals foo`.
+    ///
+    /// Externals have no BNF-visible body — they're resolved by a
+    /// hand-written scanner — so a rule referencing one directly can never
+    /// be assigned a `Literal`/`Pattern` FIRST terminal of its own. Without
+    /// this variant such a rule's FIRST set would come out empty, wrongly
+    /// making it (and anything that reaches it) look non-productive (#406).
+    External(&'g str),
 }
 
 /// Collects the leading terminals of `node` into `result`.
 ///
-/// Uses the current `first` map for non-terminal lookups and `nullable` to
+/// Uses the current `first` map for non-terminal lookups, `externals` to
+/// recognize a reference to a `%externals`-declared name (which has no
+/// entry in `first`, since it has no production body), and `nullable` to
 /// decide whether to continue past a nullable prefix in a sequence.
 /// Returns `true` if `node` itself can produce the empty string.
 fn collect_first<'g>(
     node: &'g GrammarNode,
     first: &HashMap<&str, HashSet<FirstTerminal<'g>>>,
     nullable: &HashSet<&str>,
+    externals: &HashSet<&'g str>,
     result: &mut HashSet<FirstTerminal<'g>>,
 ) -> bool {
     match node {
@@ -96,11 +108,15 @@ fn collect_first<'g>(
         }
 
         // A non-terminal contributes whatever its rule can start with (as
-        // computed so far in `first`).  It is nullable only if the fixpoint
-        // already recorded it as such.
+        // computed so far in `first`). A reference to a `%externals` name
+        // instead contributes that name as an opaque terminal — it has no
+        // entry in `first` to look up. Either way it is nullable only if
+        // the fixpoint already recorded it as such.
         GrammarNode::NonTerminal(name) => {
             if let Some(set) = first.get(name.as_str()) {
                 result.extend(set.iter().cloned());
+            } else if let Some(&external_name) = externals.get(name.as_str()) {
+                result.insert(FirstTerminal::External(external_name));
             }
             nullable.contains(name.as_str())
         }
@@ -111,7 +127,7 @@ fn collect_first<'g>(
         // nullable only if every element is.
         GrammarNode::Sequence(children) => {
             for child in children {
-                if !collect_first(child, first, nullable, result) {
+                if !collect_first(child, first, nullable, externals, result) {
                     return false;
                 }
             }
@@ -123,7 +139,7 @@ fn collect_first<'g>(
         GrammarNode::Choice(children) => {
             let mut any_nullable = false;
             for child in children {
-                if collect_first(child, first, nullable, result) {
+                if collect_first(child, first, nullable, externals, result) {
                     any_nullable = true;
                 }
             }
@@ -133,13 +149,13 @@ fn collect_first<'g>(
         // optional / repeat(zero-or-more): contribute the inner FIRST but are
         // always nullable — the inner expression may be skipped entirely.
         GrammarNode::Optional(inner) | GrammarNode::ZeroOrMore(inner) => {
-            collect_first(inner, first, nullable, result);
+            collect_first(inner, first, nullable, externals, result);
             true
         }
 
         // field, alias, prec are purely structural annotations that do not
         // change which terminal appears first.
-        GrammarNode::Alias(body, _) => collect_first(body, first, nullable, result),
+        GrammarNode::Alias(body, _) => collect_first(body, first, nullable, externals, result),
 
         // repeat1 / token / token.immediate / field / prec / reserved are
         // transparent to FIRST: the first token is determined solely by the
@@ -148,7 +164,7 @@ fn collect_first<'g>(
         // definition).
         _ => node
             .transparent_inner()
-            .is_some_and(|inner| collect_first(inner, first, nullable, result)),
+            .is_some_and(|inner| collect_first(inner, first, nullable, externals, result)),
     }
 }
 
@@ -372,6 +388,14 @@ pub fn left_recursive_rules(grammar: &Grammar) -> Vec<(&str, bool)> {
 /// ```
 pub fn first_sets(grammar: &Grammar) -> HashMap<&str, HashSet<FirstTerminal<'_>>> {
     let nullable = nullable_rules(grammar);
+    let externals: HashSet<&str> = grammar
+        .externals
+        .iter()
+        .filter_map(|e| match e {
+            NameOrLiteral::Name(n) => Some(n.as_str()),
+            NameOrLiteral::Literal(_) => None,
+        })
+        .collect();
 
     // Seed every rule with an empty set.
     let mut first: HashMap<&str, HashSet<FirstTerminal<'_>>> = grammar
@@ -389,7 +413,7 @@ pub fn first_sets(grammar: &Grammar) -> HashMap<&str, HashSet<FirstTerminal<'_>>
         let mut changed = false;
         for prod in grammar.productions.values() {
             let mut new_first = HashSet::new();
-            collect_first(&prod.body, &snapshot, &nullable, &mut new_first);
+            collect_first(&prod.body, &snapshot, &nullable, &externals, &mut new_first);
             let entry = first.get_mut(prod.name.as_str()).unwrap();
             for token in new_first {
                 if entry.insert(token) {

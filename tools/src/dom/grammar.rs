@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::dom::NameOrLiteral;
 
 use super::analysis::{
-    count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats,
+    count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats, first_sets,
 };
 use super::diagnostic::Diagnostic;
 use super::directive::{ConflictGroup, DirectiveItem, PrecedenceGroup, ReservedEntry, loc};
@@ -503,6 +503,33 @@ impl Grammar {
             .collect()
     }
 
+    /// Returns an error for every rule that can never derive a terminal
+    /// string — a rule whose FIRST set is empty (#406).
+    ///
+    /// A rule with no FIRST set never bottoms out at a terminal, directly or
+    /// through the non-terminals it references (e.g. `a -> a ;`, or a mutual
+    /// cycle like `a -> b ; b -> a ;`). Left recursion itself is not an
+    /// error — tree-sitter is GLR and left recursion is the idiomatic style
+    /// — but a rule that provably can never produce anything is: `tree-sitter
+    /// generate` rejects it outright with an unresolved-conflict error, and
+    /// `check` should catch that before the output ever reaches tree-sitter.
+    /// [`first_sets`] already computes exactly this; this reuses it rather
+    /// than adding a new analysis.
+    fn non_productive_check(&self) -> Vec<Diagnostic> {
+        let first = first_sets(self);
+        self.productions
+            .values()
+            .filter(|p| first[p.name.as_str()].is_empty())
+            .map(|p| {
+                Diagnostic::error(format!(
+                    "rule '{}' can never derive a terminal string ({})",
+                    p.name,
+                    loc(&p.filename, p.line)
+                ))
+            })
+            .collect()
+    }
+
     /// Returns the number of non-terminal references in rule bodies that have no definition.
     ///
     /// Exposed for use by the summary builder; the full diagnostic list is produced by [`check`](Self::check).
@@ -608,6 +635,7 @@ impl Grammar {
         diagnostics.extend(self.undefined_refs_check(&known));
         diagnostics.extend(self.reserved_check(&known));
         diagnostics.extend(self.unreachable_rules_check());
+        diagnostics.extend(self.non_productive_check());
         diagnostics.extend(self.prec_name_check());
         diagnostics.extend(self.externals_check());
         diagnostics.extend(self.hidden_start_rule_check());
@@ -1352,6 +1380,64 @@ mod tests {
         let mut g = Grammar::from_rules([p("entry", TerminalLiteral("'x'".into()))]);
         g.declare_axiom(di("entry", 1));
         assert!(g.unreachable_rules_check().is_empty());
+    }
+
+    // ── non_productive_check (#406) ─────────────────────────────────────────────
+
+    #[test]
+    /// A rule that only references itself can never derive a terminal string.
+    fn non_productive_direct_self_reference_errors() {
+        let src = "a -> a ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert_eq!(
+            strs(&g.non_productive_check()),
+            vec!["error: rule 'a' can never derive a terminal string (line 1)"]
+        );
+    }
+
+    #[test]
+    /// A mutual cycle with no terminal escape errors on every rule in it.
+    fn non_productive_mutual_cycle_errors_on_both_rules() {
+        let src = "a -> b ;\nb -> a ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert_eq!(
+            strs(&g.non_productive_check()),
+            vec![
+                "error: rule 'a' can never derive a terminal string (line 1)",
+                "error: rule 'b' can never derive a terminal string (line 2)",
+            ]
+        );
+    }
+
+    #[test]
+    /// Legitimate left recursion with a terminal-reaching alternative is not
+    /// non-productive — left recursion itself is not an error (tree-sitter is
+    /// GLR and left recursion is the idiomatic style); only the inability to
+    /// ever reach a terminal is.
+    fn non_productive_legitimate_left_recursion_stays_clean() {
+        let src = "expr -> expr '+' term | term ;\nterm -> /[0-9]+/ ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert!(g.non_productive_check().is_empty());
+    }
+
+    #[test]
+    /// A rule directly referencing a `%externals`-declared name is productive
+    /// — externals are opaque terminal-like symbols, not rules with a FIRST
+    /// set of their own to look up (#406 regression: this previously came
+    /// out with an empty FIRST set and was wrongly flagged).
+    fn non_productive_direct_external_reference_stays_clean() {
+        let src = "%externals foo\nroot -> foo ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert!(g.non_productive_check().is_empty());
+    }
+
+    #[test]
+    /// A rule that only *transitively* reaches a `%externals` name (through
+    /// another rule) is also productive.
+    fn non_productive_transitive_external_reference_stays_clean() {
+        let src = "%externals foo\nroot -> mid ;\nmid -> foo ;\n";
+        let (g, _) = crate::visitors::parse_source(src).unwrap();
+        assert!(g.non_productive_check().is_empty());
     }
 
     #[test]

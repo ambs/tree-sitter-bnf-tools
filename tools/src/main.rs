@@ -513,7 +513,7 @@ fn parse_file(
 /// Formats a single [`FirstTerminal`] for display: its raw string value as stored.
 fn display_terminal<'a>(t: &'a FirstTerminal<'a>) -> &'a str {
     match t {
-        FirstTerminal::Literal(s) | FirstTerminal::Pattern(s) => s,
+        FirstTerminal::Literal(s) | FirstTerminal::Pattern(s) | FirstTerminal::External(s) => s,
     }
 }
 
