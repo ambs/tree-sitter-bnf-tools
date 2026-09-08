@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `tree-sitter-bnf`'s Rust binding (`bindings/rust/lib.rs`) now exports
+  `HIGHLIGHTS_QUERY`, `INJECTIONS_QUERY`, `LOCALS_QUERY`, `TAGS_QUERY`,
+  `FOLDS_QUERY`, and `INDENTS_QUERY` — the six query files already shipped
+  in the published crate (`Cargo.toml`'s `include` already lists
+  `queries/*`) but previously unreachable from Rust: the grammar
+  template's commented-out block only listed four of them, and left even
+  those commented out. Every other tree-sitter grammar crate exports
+  these, and downstream tools (highlighters, `ctags`-style indexers,
+  anything building a `tree_sitter::Query`) expect to find them (#405).
 - `check` (and, by extension, every subcommand that reuses its
   cross-reference checks — `convert` aborts on it by default) now detects
   rules that can never derive a terminal string, e.g. `a -> a ;` or a
