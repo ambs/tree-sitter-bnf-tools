@@ -370,6 +370,89 @@ fn generate_does_not_overwrite_existing_tree_sitter_json() {
 }
 
 #[test]
+/// `--generate` without the `tree-sitter` CLI on PATH exits non-zero with an
+/// install hint, and leaves grammar.js/queries/tree-sitter.json behind with
+/// a note explaining they're there (#403).
+fn generate_without_tree_sitter_on_path_errors() {
+    let path = write_tmp("ts_bnf_gen_notreesitter.bnf", CLEAN_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_notreesitter_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .env("PATH", "")
+        .args(["convert", "--generate", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: `tree-sitter` not found on PATH"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("npm install -g tree-sitter-cli"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error: error:"),
+        "doubled error prefix: {stderr}"
+    );
+    assert!(
+        stderr.contains("grammar.js") && stderr.contains(&out_dir.display().to_string()),
+        "stderr missing partial-output note: {stderr}"
+    );
+    assert!(
+        out_dir.join("grammar.js").exists(),
+        "grammar.js should be left behind, matching the note"
+    );
+    assert!(
+        out_dir.join("queries").join("highlights.scm").exists(),
+        "queries/highlights.scm should be left behind, matching the note"
+    );
+    assert!(
+        out_dir.join("tree-sitter.json").exists(),
+        "tree-sitter.json should be left behind, matching the note"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+/// A `tree-sitter` on PATH that exists but can't be executed (a permission
+/// error, not a missing-binary one) is a different `io::ErrorKind` than
+/// `NotFound` — it must not be reported as "not found on PATH" (#403).
+fn generate_with_unexecutable_tree_sitter_on_path_errors() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = write_tmp("ts_bnf_gen_noexec.bnf", CLEAN_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_gen_noexec_project");
+    let _ = fs::remove_dir_all(&out_dir);
+    let fake_bin_dir = std::env::temp_dir().join("ts_bnf_gen_noexec_bin");
+    fs::create_dir_all(&fake_bin_dir).unwrap();
+    let fake_ts = fake_bin_dir.join("tree-sitter");
+    fs::write(&fake_ts, "").unwrap();
+    fs::set_permissions(&fake_ts, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let out = tool()
+        .env("PATH", &fake_bin_dir)
+        .args(["convert", "--generate", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.contains("not found on PATH"),
+        "a permission error must not be reported as not-found: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error: error:"),
+        "doubled error prefix: {stderr}"
+    );
+}
+
+#[test]
 fn generate_produces_abi_15_with_tree_sitter_json() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip

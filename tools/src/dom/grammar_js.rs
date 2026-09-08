@@ -284,6 +284,22 @@ fn write_tree_sitter_json(dir: &Path, name: &str) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+/// Explains, after a failed `tree-sitter generate`, that `dir` already holds
+/// the `grammar.js`/`queries/highlights.scm`/`tree-sitter.json` this
+/// function wrote before invoking `tree-sitter` (#403) — left in place
+/// rather than cleaned up, since `dir` may be a directory the caller
+/// controls (e.g. `scaffold`'s in-place workflow), so blindly deleting its
+/// contents on failure would risk taking other files with it. All three are
+/// safe to leave: rerunning after fixing the underlying problem overwrites
+/// `grammar.js` and completes the crate without re-prompting for anything.
+fn partial_output_note(dir: &Path) -> String {
+    format!(
+        "note: {} already has grammar.js, queries/highlights.scm and tree-sitter.json from this \
+         run but no parser; fix the problem above and rerun to finish it",
+        dir.display()
+    )
+}
+
 /// Writes `grammar.js` and, unless one already exists, a skeleton
 /// `queries/highlights.scm` to the output directory, then runs
 /// `tree-sitter generate` inside it.
@@ -302,9 +318,20 @@ pub fn run_generate(
         .arg("generate")
         .current_dir(&dir)
         .status()
-        .map_err(|e| -> Box<dyn Error> { format!("failed to run tree-sitter: {}", e).into() })?;
+        .map_err(|e| -> Box<dyn Error> {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                format!(
+                    "`tree-sitter` not found on PATH; install tree-sitter-cli >= 0.25: \
+                     npm install -g tree-sitter-cli\n{}",
+                    partial_output_note(&dir)
+                )
+                .into()
+            } else {
+                e.into()
+            }
+        })?;
     if !status.success() {
-        return Err("tree-sitter generate failed".into());
+        return Err(format!("tree-sitter generate failed\n{}", partial_output_note(&dir)).into());
     }
     Ok(())
 }

@@ -73,6 +73,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   editor using these queries. The `,` and `:` list-separator tokens used by
   several directives are now captured as `@punctuation.delimiter` too
   (#401).
+- `convert --generate`/`scaffold`: a missing `tree-sitter` CLI now errors with
+  `` `tree-sitter` not found on PATH; install tree-sitter-cli >= 0.25: npm
+  install -g tree-sitter-cli `` instead of a raw OS error, matching `graph`'s
+  existing treatment of a missing `dot`. Both this and a `tree-sitter
+  generate` failure now also note that `grammar.js`, `queries/highlights.scm`,
+  and `tree-sitter.json` were already written to the output directory and are
+  safe to leave — rerunning once the problem is fixed completes the crate
+  without re-prompting for anything (#403).
 - The required `tree-sitter-cli` minimum version is now stated consistently
   everywhere (`Makefile`, `Cargo.toml`, `README.md`) as `>= 0.25` — the
   actual requirement for the ABI 15 output `convert --generate`/`scaffold`
