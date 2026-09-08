@@ -4,7 +4,11 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
-    /// A hard error: the grammar cannot be used as-is (e.g. left-recursion).
+    /// A hard error: the grammar cannot be used as-is (e.g. an undefined
+    /// rule reference). Left recursion is *not* an example of this — it's a
+    /// supported grammar property, not a defect (see
+    /// [`super::analysis::left_recursive_rules`]'s doc comment); no
+    /// diagnostic is ever emitted for it.
     Error,
     /// A warning: the grammar is suspicious but can still be converted.
     Warning,
@@ -63,9 +67,9 @@ mod tests {
             r#"{"severity":"warning","message":"undefined rule reference 'foo'"}"#
         );
         assert_eq!(
-            serde_json::to_string(&Diagnostic::error("rule 'expr' is directly left-recursive"))
+            serde_json::to_string(&Diagnostic::error("%axiom references undefined rule 'foo'"))
                 .unwrap(),
-            r#"{"severity":"error","message":"rule 'expr' is directly left-recursive"}"#
+            r#"{"severity":"error","message":"%axiom references undefined rule 'foo'"}"#
         );
     }
 }
