@@ -1706,6 +1706,28 @@ fn scaffold_rerun_with_different_grammar_filename_is_refused() {
 }
 
 #[test]
+/// Directory-mode `scaffold` (#395) requires a `ts-bnf-tool.toml` in the
+/// target directory to read its settings back from. Pointing it at a plain
+/// directory that was never scaffolded must fail with a clear error rather
+/// than panicking or silently doing nothing.
+fn scaffold_directory_without_config_is_refused() {
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_no_config_dir");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let out = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    assert!(
+        !out.status.success(),
+        "scaffolding a directory with no ts-bnf-tool.toml must fail"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not a scaffolded crate"),
+        "the error must explain that the directory has no recorded config: {stderr}"
+    );
+}
+
+#[test]
 /// The concrete regression test for "codegen always reads the bundled
 /// copy" (#395): once a grammar is bundled, hand-editing the *bundled*
 /// copy and rerunning `scaffold` with the same filename must regenerate
@@ -2016,6 +2038,13 @@ fn scaffold_makefile_generate_regenerates_derived_files_on_grammar_change() {
     let parser_c_path = out_dir.join("src/parser.c");
     let grammar_js_before = std::fs::read_to_string(&grammar_js_path).unwrap();
     let parser_c_before = std::fs::read_to_string(&parser_c_path).unwrap();
+
+    // macOS ships GNU Make 3.81 (frozen pre-GPLv3), which only compares
+    // prerequisite/target mtimes to 1-second resolution — unlike Linux's
+    // GNU Make 4.x. Without this sleep, the edit below can land in the same
+    // second as `scaffold`'s own writes above, making `visitor.rs` look
+    // already up to date and skipping the recipe entirely.
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     // Touch the *bundled* grammar (not the original external file).
     let bundled_path = out_dir.join("ts_bnf_scaffold_makefile.bnf");
@@ -3063,6 +3092,51 @@ fn check_reads_clean_grammar_from_stdin() {
     assert!(
         out.status.success(),
         "check via stdin must succeed for clean grammar"
+    );
+}
+
+#[test]
+/// `scaffold -` bundles the grammar read from stdin as `grammar.bnf` (#395)
+/// — there's no source filename to reuse, unlike scaffolding from a file.
+fn scaffold_from_stdin_bundles_as_grammar_bnf() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_stdin_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let mut child = tool()
+        .args(["scaffold", "--name", "stdinlang", "--output-dir"])
+        .arg(&out_dir)
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(SCAFFOLD_BNF.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "scaffold via stdin must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out_dir.join("grammar.bnf").exists(),
+        "the bundled grammar read from stdin must be named grammar.bnf"
+    );
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(
+        config.contains("grammar.bnf"),
+        "ts-bnf-tool.toml must record the bundled grammar.bnf filename: {config}"
     );
 }
 
