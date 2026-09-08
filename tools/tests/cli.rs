@@ -3975,3 +3975,56 @@ fn convert_deeply_nested_grammar_reports_diagnostic_not_abort() {
         "stderr: {stderr}"
     );
 }
+
+// ── non-productive rules (#406) ──────────────────────────────────────────────
+
+/// The issue #406 reproduction: a rule that only ever references itself,
+/// with no terminal-reaching alternative.
+const NON_PRODUCTIVE_BNF: &str = "a -> a ;\n";
+
+#[test]
+/// `check` on a non-productive grammar reports the new diagnostic and exits
+/// non-zero, catching the problem `tree-sitter generate` would otherwise
+/// reject with an opaque "Unresolved conflict" error.
+fn check_non_productive_rule_errors() {
+    let path = write_tmp("ts_bnf_non_productive_check.bnf", NON_PRODUCTIVE_BNF);
+    let out = tool().args(["check"]).arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "expected exit 2 for an error");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: rule 'a' can never derive a terminal string"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+/// `convert` on a non-productive grammar aborts before ever producing
+/// `grammar.js` — the same `Severity::Error` handling that already gates
+/// `convert` on other cross-reference errors.
+fn convert_non_productive_rule_aborts() {
+    let path = write_tmp("ts_bnf_non_productive_convert.bnf", NON_PRODUCTIVE_BNF);
+    let out = tool().args(["convert"]).arg(&path).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: rule 'a' can never derive a terminal string"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("conversion aborted"), "stderr: {stderr}");
+}
+
+#[test]
+/// `firsts` still reports the (empty) FIRST set for a non-productive rule
+/// alongside the new diagnostic — informational commands don't gate on
+/// `Severity::Error`, only `convert` does by default.
+fn firsts_non_productive_rule_still_prints_empty_set() {
+    let path = write_tmp("ts_bnf_non_productive_firsts.bnf", NON_PRODUCTIVE_BNF);
+    let out = tool().args(["firsts"]).arg(&path).output().unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("error: rule 'a' can never derive a terminal string"),
+        "stderr: {stderr}"
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("a:"), "stdout: {stdout}");
+}
