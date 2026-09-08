@@ -1,6 +1,6 @@
 CARGO       ?= cargo
 TS          ?= tree-sitter
-TS_MIN      := 0.24.4
+TS_MIN      := 0.25
 GRAMMAR_DIR := tree-sitter-bnf
 PARSER_C    := $(GRAMMAR_DIR)/src/parser.c
 BNF_TOOL    := $(CARGO) run --quiet -p ts-bnf-tool --

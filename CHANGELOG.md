@@ -67,6 +67,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
+- The required `tree-sitter-cli` minimum version is now stated consistently
+  everywhere (`Makefile`, `Cargo.toml`, `README.md`) as `>= 0.25` — the
+  actual requirement for the ABI 15 output `convert --generate`/`scaffold`
+  produce. Previously `make ts-version-check` still gated on the stale
+  `0.24.4`, so a contributor on that version passed the check and only then
+  hit unexplained `scaffold`/`convert --generate` failures (#404).
 - `ts-bnf-tool --version`/`-V` now report the tool's version instead of
   erroring with "unexpected argument" (#407).
 - `graph`: unknown `--start` rule and missing Graphviz `dot` errors no longer
