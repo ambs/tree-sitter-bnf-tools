@@ -177,7 +177,7 @@ make install    # install ts-bnf-tool locally (cargo install --path)
 make clean      # remove build artifacts
 ```
 
-Requires: Rust (stable), `tree-sitter-cli` ≥ 0.24.4 (`npm install -g tree-sitter-cli`),
+Requires: Rust (stable), `tree-sitter-cli` ≥ 0.25 (`npm install -g tree-sitter-cli`),
 `cargo-audit` (`cargo install cargo-audit`).
 
 ## Contributing
