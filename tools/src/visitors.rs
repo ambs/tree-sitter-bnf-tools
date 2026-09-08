@@ -10,6 +10,28 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use tree_sitter::Node;
 
+/// Maximum number of `visit()` calls in a single chain of recursive descent
+/// into one rule body before erroring instead of continuing (#409).
+///
+/// `visit()` is the only recursive re-entry point in this module — every
+/// `GrammarNode` wrapper (`Optional`/`ZeroOrMore`/`OneOrMore`/`Field`/`Prec`/
+/// `Alias`/`Token`/`TokenImmediate`/`Reserved`) can only be constructed by a
+/// `visit()` call, so bounding depth here transitively bounds what any
+/// downstream walker (`dom::format`, `dom::railroad`, `dom::grammar_js`,
+/// `dom::visitor`) ever has to traverse — they need no separate guard. A
+/// pathologically deep rule body (thousands of nested parenthesised groups)
+/// otherwise overflows the stack with no diagnostic.
+///
+/// This counts `visit()` invocations, not source-level nesting "layers" —
+/// one layer of `(...)` passes through `subSeq` -> `ruleBodyInner` ->
+/// `symbolSeqInner` -> `symbol`, i.e. ~4 `visit()` calls per layer
+/// (confirmed empirically for both naked parens and `(x)?` chains). At 1000
+/// that allows roughly 250 real nesting layers — far more than any
+/// realistic grammar needs, per the issue — while staying well below the
+/// observed debug-build crash threshold of ~1500-1600 *layers* (~6000+
+/// `visit()` calls).
+const MAX_NESTING_DEPTH: u32 = 1000;
+
 /// Groups a source file's text, filename, and resolved filesystem path for use throughout the visitor.
 pub struct SourceFile<'a> {
     /// The original source text.
@@ -454,7 +476,7 @@ fn visit_rule(
         .utf8_text(ctx.source.as_bytes())
         .expect("valid UTF-8")
         .to_string();
-    let body = visit(grammar, &rule_body, ctx)?;
+    let body = visit(grammar, &rule_body, ctx, 0)?;
     let line = node.start_position().row + 1;
     let filename = ctx.filename.to_string();
     Ok(Production {
@@ -500,10 +522,11 @@ fn visit_rule_body(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let count = node.child_count() as u32;
     if count == 1 {
-        visit(grammar, &node.child(0).expect("child 0 exists"), ctx)
+        visit(grammar, &node.child(0).expect("child 0 exists"), ctx, depth)
     } else {
         let mut choice = Vec::new();
         let mut i: u32 = 0;
@@ -512,6 +535,7 @@ fn visit_rule_body(
                 grammar,
                 &node.child(i).expect("child index in bounds"),
                 ctx,
+                depth,
             )?);
             i += 2;
         }
@@ -524,6 +548,7 @@ fn visit_symbol(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let symbol = visit(
         grammar,
@@ -531,6 +556,7 @@ fn visit_symbol(
             .child_by_field_name("content")
             .expect("symbol has content field"),
         ctx,
+        depth,
     )?;
     let label = node.child_by_field_name("label").map(|label_node| {
         label_node
@@ -600,6 +626,7 @@ fn visit_symbol_seq(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let prec_annotation = if let Some(n) = node.child_by_field_name("prec") {
         Some(parse_prec_annotation(&n, ctx)?)
@@ -615,10 +642,17 @@ fn visit_symbol_seq(
     };
 
     let body = if symbol_count == 1 {
-        visit(grammar, &node.child(0).expect("child 0 exists"), ctx)?
+        visit(grammar, &node.child(0).expect("child 0 exists"), ctx, depth)?
     } else {
         let seq = (0..symbol_count)
-            .map(|i| visit(grammar, &node.child(i).expect("child index in bounds"), ctx))
+            .map(|i| {
+                visit(
+                    grammar,
+                    &node.child(i).expect("child index in bounds"),
+                    ctx,
+                    depth,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
         Sequence(seq)
     };
@@ -643,6 +677,7 @@ fn visit_symbol_subseq(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     visit(
         grammar,
@@ -650,6 +685,7 @@ fn visit_symbol_subseq(
             .child_by_field_name("body")
             .expect("subSeq has body field"),
         ctx,
+        depth,
     )
 }
 
@@ -658,6 +694,7 @@ fn visit_token_expr(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let inner = visit(
         grammar,
@@ -665,6 +702,7 @@ fn visit_token_expr(
             .child_by_field_name("body")
             .expect("tokenExpr has body field"),
         ctx,
+        depth,
     )?;
     Ok(Token(Box::new(inner)))
 }
@@ -674,6 +712,7 @@ fn visit_token_immediate_expr(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let inner = visit(
         grammar,
@@ -681,6 +720,7 @@ fn visit_token_immediate_expr(
             .child_by_field_name("body")
             .expect("tokenImmediateExpr has body field"),
         ctx,
+        depth,
     )?;
     Ok(TokenImmediate(Box::new(inner)))
 }
@@ -690,6 +730,7 @@ fn visit_prec_group(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let body = visit(
         grammar,
@@ -697,6 +738,7 @@ fn visit_prec_group(
             .child_by_field_name("body")
             .expect("precGroup has body field"),
         ctx,
+        depth,
     )?;
     let annotation = node
         .child_by_field_name("annotation")
@@ -717,6 +759,7 @@ fn visit_reserved_group(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let body = visit(
         grammar,
@@ -724,6 +767,7 @@ fn visit_reserved_group(
             .child_by_field_name("body")
             .expect("reservedGroup has body field"),
         ctx,
+        depth,
     )?;
     let set_name = node
         .child_by_field_name("set")
@@ -744,6 +788,7 @@ fn visit_alias_group(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
     let body = visit(
         grammar,
@@ -751,6 +796,7 @@ fn visit_alias_group(
             .child_by_field_name("body")
             .expect("aliasGroup has body field"),
         ctx,
+        depth,
     )?;
     let alias_node = node
         .child_by_field_name("alias")
@@ -771,26 +817,36 @@ fn visit_alias_group(
 }
 
 /// Dispatches a tree-sitter node to the appropriate typed visitor by node kind.
+///
+/// `depth` is the caller's nesting depth; incremented and checked against
+/// [`MAX_NESTING_DEPTH`] before dispatching (#409) — see that constant's doc
+/// comment for why this single choke point is enough to bound every
+/// downstream walker too.
 fn visit(
     grammar: &mut Grammar,
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
+    depth: u32,
 ) -> Result<GrammarNode, ParseError> {
+    let depth = depth + 1;
+    if depth > MAX_NESTING_DEPTH {
+        return Err(ParseError::NestingTooDeep(MAX_NESTING_DEPTH));
+    }
     match node.kind() {
         "nonTerminal" => Ok(visit_non_terminal(grammar, node, ctx)),
-        "ruleBody" => visit_rule_body(grammar, node, ctx),
-        "symbolSeq" => visit_symbol_seq(grammar, node, ctx),
-        "symbol" => visit_symbol(grammar, node, ctx),
+        "ruleBody" => visit_rule_body(grammar, node, ctx, depth),
+        "symbolSeq" => visit_symbol_seq(grammar, node, ctx, depth),
+        "symbol" => visit_symbol(grammar, node, ctx, depth),
         "pattern" => Ok(visit_pattern(node, ctx)),
         "literal" => Ok(visit_literal(node, ctx)),
-        "subSeq" => visit_symbol_subseq(grammar, node, ctx),
-        "aliasGroup" => visit_alias_group(grammar, node, ctx),
-        "tokenExpr" => visit_token_expr(grammar, node, ctx),
-        "tokenImmediateExpr" => visit_token_immediate_expr(grammar, node, ctx),
-        "precGroup" => visit_prec_group(grammar, node, ctx),
-        "reservedGroup" => visit_reserved_group(grammar, node, ctx),
-        "ruleBodyInner" => visit_rule_body(grammar, node, ctx),
-        "symbolSeqInner" => visit_symbol_seq(grammar, node, ctx),
+        "subSeq" => visit_symbol_subseq(grammar, node, ctx, depth),
+        "aliasGroup" => visit_alias_group(grammar, node, ctx, depth),
+        "tokenExpr" => visit_token_expr(grammar, node, ctx, depth),
+        "tokenImmediateExpr" => visit_token_immediate_expr(grammar, node, ctx, depth),
+        "precGroup" => visit_prec_group(grammar, node, ctx, depth),
+        "reservedGroup" => visit_reserved_group(grammar, node, ctx, depth),
+        "ruleBodyInner" => visit_rule_body(grammar, node, ctx, depth),
+        "symbolSeqInner" => visit_symbol_seq(grammar, node, ctx, depth),
         kind => Err(ParseError::UnknownNodeKind(kind.to_string())),
     }
 }
@@ -1110,6 +1166,32 @@ mod tests {
             err.to_string()
                 .contains("syntax error at line 1:1 near 'root => 'a' ;'")
         );
+    }
+
+    #[test]
+    /// A rule body nested far past MAX_NESTING_DEPTH returns a located
+    /// diagnostic instead of overflowing the stack (#409).
+    fn deeply_nested_rule_body_reports_diagnostic_not_overflow() {
+        let src = format!("a -> {}'x'{} ;", "(".repeat(2000), ")".repeat(2000));
+        let err = parse_source(&src).map(|_| ()).unwrap_err();
+        assert!(
+            matches!(err, ParseError::NestingTooDeep(limit) if limit == MAX_NESTING_DEPTH),
+            "expected NestingTooDeep({MAX_NESTING_DEPTH}), got {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("expression nesting too deep (limit {MAX_NESTING_DEPTH})")
+        );
+    }
+
+    #[test]
+    /// A rule body nested well within MAX_NESTING_DEPTH still parses fine —
+    /// the guard doesn't reject ordinary, if unusually deep, grammars.
+    fn moderately_nested_rule_body_still_parses() {
+        let src = format!("a -> {}'x'{} ;", "(".repeat(50), ")".repeat(50));
+        let (grammar, diagnostics) = parse_source(&src).unwrap();
+        assert!(diagnostics.is_empty());
+        assert_eq!(grammar.productions.len(), 1);
     }
 
     // ── merge directives ──────────────────────────────────────────────────────

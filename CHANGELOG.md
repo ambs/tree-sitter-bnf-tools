@@ -67,6 +67,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   npm) and `tree-sitter.json` already declared `"node": false` (#412).
 
 ### Fixed
+- A rule body nested thousands of parenthesised groups deep no longer
+  crashes every subcommand with a raw stack overflow (SIGABRT, exit 134)
+  and no diagnostic. `check`/`convert`/`firsts`/`format`/`highlights`/
+  `railroad`/`graph`/`scaffold` now all report `` error: expression
+  nesting too deep (limit 1000) `` and exit cleanly instead (#409).
 - `tree-sitter-bnf/queries/highlights.scm` now captures all 10 directive
   keywords as `@keyword` — `%word`, `%externals`, `%precedences`, and
   `%reserved` previously got no capture at all and rendered unstyled in any
