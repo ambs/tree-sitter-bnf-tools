@@ -2,10 +2,7 @@ use std::path::PathBuf;
 
 use tree_sitter::Node;
 
-use crate::{
-    dom::{Diagnostic, directive::loc_col},
-    visitors::SourceFile,
-};
+use crate::{dom::Diagnostic, visitors::SourceFile};
 
 /// Returns the output directory: the explicit path if given, or `<grammar_name>` as a default.
 pub fn resolve_output_dir(output_dir: Option<&str>, grammar_name: &str) -> PathBuf {
@@ -144,18 +141,18 @@ fn snippet(text: &str) -> String {
 fn collect_syntax_errors(node: &Node<'_>, ctx: &SourceFile<'_>, messages: &mut Vec<Diagnostic>) {
     if node.is_error() || node.is_missing() {
         let pos = node.start_position();
-        // Stdin has no meaningful filename; fall back to loc()'s bare "line N" form.
+        // Stdin has no meaningful filename; fall back to the bare "line N" form
+        // Diagnostic's Display already uses when `file` is unset.
         let filename = if ctx.filename == "-" {
             ""
         } else {
             ctx.filename
         };
-        let pragma = loc_col(filename, pos.row + 1, pos.column + 1);
         let text = node.utf8_text(ctx.source.as_bytes()).expect("valid UTF-8");
         let message = if node.is_error() {
-            format!("syntax error at {pragma} near '{}'", snippet(text))
+            format!("syntax error near '{}'", snippet(text))
         } else {
-            format!("syntax error at {pragma}: missing '{}'", node.kind())
+            format!("syntax error: missing '{}'", node.kind())
         };
 
         messages.push(
@@ -376,22 +373,24 @@ mod tests {
     }
 
     #[test]
-    /// A single ERROR node yields one error diagnostic with file:line:col and a snippet.
-    ///
-    /// Also checks the structured location fields (#319): unlike checks driven off
-    /// `Production`/`DirectiveItem` bookkeeping, this one is driven off a tree-sitter
-    /// node position, so `column` is populated too.
+    /// A single ERROR node yields one error diagnostic with a snippet, plus
+    /// structured `file`/`line`/`column` fields — unlike checks driven off
+    /// `Production`/`DirectiveItem` bookkeeping, this one is driven off a
+    /// tree-sitter node position, so `column` is populated too. The location
+    /// is no longer baked into `message` (#319): it's rendered as a suffix
+    /// at `Display` time, from those same fields.
     fn syntax_single_error_reports_location_and_snippet() {
         let diags = syntax_diags("root => 'a' ;\n", "g.bnf");
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, crate::dom::Severity::Error);
-        assert_eq!(
-            diags[0].message,
-            "syntax error at g.bnf:1:1 near 'root => 'a' ;'"
-        );
+        assert_eq!(diags[0].message, "syntax error near 'root => 'a' ;'");
         assert_eq!(diags[0].file.as_deref(), Some("g.bnf"));
         assert_eq!(diags[0].line, Some(1));
         assert_eq!(diags[0].column, Some(1));
+        assert_eq!(
+            diags[0].to_string(),
+            "error: syntax error near 'root => 'a' ;' (g.bnf:1:1)"
+        );
     }
 
     #[test]
@@ -399,7 +398,11 @@ mod tests {
     fn syntax_missing_node_reports_expected_kind() {
         let diags = syntax_diags("root -> 'a'\n", "g.bnf");
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].message, "syntax error at g.bnf:1:12: missing ';'");
+        assert_eq!(diags[0].message, "syntax error: missing ';'");
+        assert_eq!(
+            diags[0].to_string(),
+            "error: syntax error: missing ';' (g.bnf:1:12)"
+        );
     }
 
     #[test]
@@ -418,12 +421,12 @@ mod tests {
         let diags = syntax_diags("root -> ;\n\nfoo -> ;\n", "g.bnf");
         assert_eq!(diags.len(), 2);
         assert_eq!(
-            diags[0].message,
-            "syntax error at g.bnf:1:8: missing 'pattern'"
+            diags[0].to_string(),
+            "error: syntax error: missing 'pattern' (g.bnf:1:8)"
         );
         assert_eq!(
-            diags[1].message,
-            "syntax error at g.bnf:3:7: missing 'pattern'"
+            diags[1].to_string(),
+            "error: syntax error: missing 'pattern' (g.bnf:3:7)"
         );
     }
 
@@ -435,9 +438,13 @@ mod tests {
         assert_eq!(diags.len(), MAX_SYNTAX_ERRORS + 1);
         assert_eq!(diags.last().unwrap().message, "… and 5 more syntax errors");
         assert!(
+            diags.last().unwrap().file.is_none(),
+            "summary line has no location"
+        );
+        assert!(
             diags[MAX_SYNTAX_ERRORS - 1]
-                .message
-                .starts_with("syntax error at g.bnf:10:")
+                .to_string()
+                .starts_with("error: syntax error: missing 'pattern' (g.bnf:10:")
         );
     }
 
@@ -448,24 +455,19 @@ mod tests {
         let diags = syntax_diags(&src, "g.bnf");
         assert_eq!(diags.len(), 1);
         let head: String = src.chars().take(30).collect();
-        assert_eq!(
-            diags[0].message,
-            format!("syntax error at g.bnf:1:1 near '{head}…'")
-        );
+        assert_eq!(diags[0].message, format!("syntax error near '{head}…'"));
     }
 
     #[test]
-    /// Stdin input ("-") omits the file part, falling back to loc()'s "line N" form.
-    ///
-    /// Also checks the structured location field (#319): `file` is `None`, matching
-    /// the text's own omission of a filename.
+    /// Stdin input ("-") omits the file part, falling back to the bare "line N" form:
+    /// `file` stays `None` (#319), and the rendered suffix drops the filename.
     fn syntax_stdin_omits_filename() {
         let diags = syntax_diags("root => 'a' ;\n", "-");
         assert_eq!(diags.len(), 1);
-        assert_eq!(
-            diags[0].message,
-            "syntax error at line 1:1 near 'root => 'a' ;'"
-        );
         assert_eq!(diags[0].file, None);
+        assert_eq!(
+            diags[0].to_string(),
+            "error: syntax error near 'root => 'a' ;' (line 1:1)"
+        );
     }
 }

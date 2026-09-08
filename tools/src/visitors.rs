@@ -1,6 +1,6 @@
 use crate::dom::GrammarNode::{self, *};
 use crate::dom::ParseError::SyntaxError;
-use crate::dom::directive::{ConflictGroup, DirectiveItem, NameOrLiteral, loc};
+use crate::dom::directive::{ConflictGroup, DirectiveItem, NameOrLiteral};
 use crate::dom::{
     Diagnostic, Grammar, ParseError, PrecKind, PrecLevel, PrecedenceGroup, Production,
     ReservedEntry,
@@ -127,9 +127,8 @@ fn visit_grammar_inner(
                 if grammar.productions.contains_key(&prod.name) {
                     grammar.parse_diagnostics.push(
                         Diagnostic::warning(format!(
-                            "rule '{}' is defined more than once ({})",
-                            prod.name,
-                            loc(&prod.filename, prod.line)
+                            "rule '{}' is defined more than once",
+                            prod.name
                         ))
                         .with_location(&prod.filename, prod.line),
                     );
@@ -1215,7 +1214,7 @@ mod tests {
         assert!(matches!(err, ParseError::SyntaxError(_)));
         assert!(
             err.to_string()
-                .contains("syntax error at line 1:1 near 'root => 'a' ;'")
+                .contains("syntax error near 'root => 'a' ;' (line 1:1)")
         );
     }
 

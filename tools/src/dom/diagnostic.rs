@@ -24,8 +24,10 @@ pub enum Severity {
 /// position to point at, `None` for diagnostics that don't (e.g. a
 /// grammar-name validity check). They're additive to `check --json`'s
 /// existing `{severity, message}` shape — omitted from the serialized
-/// output entirely when absent, so existing consumers are unaffected — and
-/// don't yet change what `message`/`Display` render; that's follow-up work.
+/// output entirely when absent, so existing consumers are unaffected.
+/// `message` itself never has a location baked into it: [`Display`](fmt::Display)
+/// (and [`located_message`](Self::located_message)) append it as a suffix,
+/// computed from these fields, at render time.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Diagnostic {
     /// Whether this is a hard error or an advisory warning.
@@ -85,6 +87,31 @@ impl Diagnostic {
         self.column = Some(column);
         self
     }
+
+    /// Renders the `" (location)"` suffix for this diagnostic's `file`/`line`/`column`
+    /// fields, or `""` when there's no location at all. Mirrors the old baked-in-message
+    /// text exactly: `" (file:line)"`/`" (file:line:col)"` when `file` is set, falling
+    /// back to `" (line N)"`/`" (line N:col)"` when it isn't (an unknown source file,
+    /// e.g. a grammar parsed from a string with no path).
+    fn location_suffix(&self) -> String {
+        match (&self.file, self.line, self.column) {
+            (Some(file), Some(line), Some(col)) => format!(" ({file}:{line}:{col})"),
+            (Some(file), Some(line), None) => format!(" ({file}:{line})"),
+            (None, Some(line), Some(col)) => format!(" (line {line}:{col})"),
+            (None, Some(line), None) => format!(" (line {line})"),
+            _ => String::new(),
+        }
+    }
+
+    /// Renders `message` with its location suffix, but no severity prefix.
+    ///
+    /// For embedding into another type's own `Display` — e.g.
+    /// [`ParseError::SyntaxError`](super::ParseError::SyntaxError), which already
+    /// supplies its own "error:" framing upstream and would otherwise double it up
+    /// if it went through this type's own [`Display`](fmt::Display) impl instead.
+    pub(crate) fn located_message(&self) -> String {
+        format!("{}{}", self.message, self.location_suffix())
+    }
 }
 
 impl fmt::Display for Diagnostic {
@@ -93,7 +120,7 @@ impl fmt::Display for Diagnostic {
             Severity::Error => "error",
             Severity::Warning => "warning",
         };
-        write!(f, "{prefix}: {}", self.message)
+        write!(f, "{prefix}: {}", self.located_message())
     }
 }
 
@@ -136,7 +163,8 @@ mod tests {
 
     #[test]
     /// An empty filename means "unknown source file" and is recorded as `None`,
-    /// mirroring how `loc()` falls back to bare "line N" text for the same input.
+    /// so the rendered location suffix falls back to bare "line N" text for
+    /// the same input.
     fn with_location_empty_filename_is_none() {
         let d = Diagnostic::error("msg").with_location("", 3);
         assert_eq!(d.file, None);
@@ -167,5 +195,51 @@ mod tests {
             serde_json::to_string(&d).unwrap(),
             r#"{"severity":"warning","message":"msg","file":"g.bnf","line":3,"column":7}"#
         );
+    }
+
+    // ── Display / located_message: location suffix computed at render time ────
+
+    #[test]
+    /// No location at all: no suffix, just "severity: message".
+    fn display_no_location() {
+        assert_eq!(Diagnostic::error("msg").to_string(), "error: msg");
+    }
+
+    #[test]
+    /// `file` + `line`, no `column`: `" (file:line)"`.
+    fn display_file_and_line() {
+        let d = Diagnostic::warning("msg").with_location("g.bnf", 3);
+        assert_eq!(d.to_string(), "warning: msg (g.bnf:3)");
+    }
+
+    #[test]
+    /// `file` + `line` + `column`: `" (file:line:col)"`.
+    fn display_file_line_and_column() {
+        let d = Diagnostic::error("msg")
+            .with_location("g.bnf", 3)
+            .with_column(7);
+        assert_eq!(d.to_string(), "error: msg (g.bnf:3:7)");
+    }
+
+    #[test]
+    /// No `file` (unknown source), `line` only: falls back to `" (line N)"`.
+    fn display_line_only_no_file() {
+        let d = Diagnostic::warning("msg").with_location("", 3);
+        assert_eq!(d.to_string(), "warning: msg (line 3)");
+    }
+
+    #[test]
+    /// No `file`, `line` + `column`: falls back to `" (line N:col)"`.
+    fn display_line_and_column_no_file() {
+        let d = Diagnostic::error("msg").with_location("", 3).with_column(7);
+        assert_eq!(d.to_string(), "error: msg (line 3:7)");
+    }
+
+    #[test]
+    /// `located_message` is `Display` minus the severity prefix — used by
+    /// `ParseError::SyntaxError`, which supplies its own framing.
+    fn located_message_omits_severity_prefix() {
+        let d = Diagnostic::error("msg").with_location("g.bnf", 3);
+        assert_eq!(d.located_message(), "msg (g.bnf:3)");
     }
 }

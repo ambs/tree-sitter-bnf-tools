@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use crate::dom::{NameOrLiteral, PrecedenceGroup, ReservedEntry};
 
 use super::diagnostic::Diagnostic;
-use super::directive::{ConflictGroup, DirectiveItem, loc};
+use super::directive::{ConflictGroup, DirectiveItem};
 use super::production::Production;
 
 /// The complete grammar: all productions and any declared conflict or inline groups.
@@ -131,11 +131,8 @@ impl Grammar {
     pub(crate) fn declare_axiom(&mut self, item: DirectiveItem) -> Option<Diagnostic> {
         if self.axiom.is_some() {
             return Some(
-                Diagnostic::error(format!(
-                    "%axiom declared more than once ({})",
-                    loc(&item.filename, item.line)
-                ))
-                .with_location(&item.filename, item.line),
+                Diagnostic::error("%axiom declared more than once")
+                    .with_location(&item.filename, item.line),
             );
         }
         self.axiom = Some(item);
@@ -149,11 +146,8 @@ impl Grammar {
     pub(crate) fn declare_word(&mut self, item: DirectiveItem) -> Option<Diagnostic> {
         if self.word.is_some() {
             return Some(
-                Diagnostic::error(format!(
-                    "%word declared more than once ({})",
-                    loc(&item.filename, item.line)
-                ))
-                .with_location(&item.filename, item.line),
+                Diagnostic::error("%word declared more than once")
+                    .with_location(&item.filename, item.line),
             );
         }
         self.word = Some(item);

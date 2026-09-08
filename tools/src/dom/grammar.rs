@@ -6,7 +6,7 @@ use super::analysis::{
     count_leaf_rules, count_left_recursive, count_unique_terminals, first_set_stats, first_sets,
 };
 use super::diagnostic::Diagnostic;
-use super::directive::{ConflictGroup, DirectiveItem, PrecedenceGroup, ReservedEntry, loc};
+use super::directive::{ConflictGroup, DirectiveItem, PrecedenceGroup, ReservedEntry};
 use super::summary::GrammarSummary;
 use super::types::Grammar;
 
@@ -65,11 +65,8 @@ impl Grammar {
         };
 
         vec![
-            Diagnostic::error(format!(
-                "start rule '{root}' cannot be hidden ({reason}) ({})",
-                loc(filename, line)
-            ))
-            .with_location(filename, line),
+            Diagnostic::error(format!("start rule '{root}' cannot be hidden ({reason})"))
+                .with_location(filename, line),
         ]
     }
 
@@ -90,14 +87,13 @@ impl Grammar {
                      filename,
                  }| {
                     known_reserved_sets.insert(set_name.as_str());
-                    let location = loc(filename, *line);
                     rule_names.iter().filter_map(move |item| {
                         if let NameOrLiteral::Name(name) = item
                             && !known.contains(name.as_str())
                         {
                             Some(
                                 Diagnostic::error(format!(
-                                    "%reserved references undefined rule '{name}' ({location})"
+                                    "%reserved references undefined rule '{name}'"
                                 ))
                                 .with_location(filename, *line),
                             )
@@ -116,10 +112,9 @@ impl Grammar {
                  filename,
              }| {
                 if !known_reserved_sets.contains(name.as_str()) {
-                    let location = loc(filename, *line);
                     Some(
                         Diagnostic::error(format!(
-                            "%reserved annotation references undeclared set '{name}' ({location})"
+                            "%reserved annotation references undeclared set '{name}'"
                         ))
                         .with_location(filename, *line),
                     )
@@ -143,8 +138,7 @@ impl Grammar {
                 let production = self.productions.get(name)?;
                 Some(
                     Diagnostic::error(format!(
-                        "%externals declares '{name}', but it is also defined as a rule ({})",
-                        loc(&production.filename, production.line)
+                        "%externals declares '{name}', but it is also defined as a rule"
                     ))
                     .with_location(&production.filename, production.line),
                 )
@@ -185,9 +179,7 @@ impl Grammar {
                     if !named_precedences.contains(name.as_str()) {
                         Some(
                             Diagnostic::error(format!(
-                                "%precedence references undefined precedence literal {} ({})",
-                                name,
-                                loc(filename, *line)
+                                "%precedence references undefined precedence literal {name}"
                             ))
                             .with_location(filename, *line),
                         )
@@ -209,14 +201,13 @@ impl Grammar {
                      line,
                      filename,
                  }| {
-                    let location = loc(filename, *line);
                     rules.iter().filter_map(move |name| {
                         if known.contains(name.as_str()) {
                             return None;
                         }
                         Some(
                             Diagnostic::error(format!(
-                                "%conflicts references undefined rule '{name}' ({location})"
+                                "%conflicts references undefined rule '{name}'"
                             ))
                             .with_location(filename, *line),
                         )
@@ -236,14 +227,13 @@ impl Grammar {
                      line,
                      filename,
                  }| {
-                    let location = loc(filename, *line);
                     items.iter().filter_map(move |item| {
                         if let NameOrLiteral::Name(name) = item
                             && !known.contains(name.as_str())
                         {
                             Some(
                                 Diagnostic::error(format!(
-                                    "%precedences references undefined rule '{name}' ({location})"
+                                    "%precedences references undefined rule '{name}'"
                                 ))
                                 .with_location(filename, *line),
                             )
@@ -272,11 +262,10 @@ impl Grammar {
                      line,
                      filename,
                  }| {
-                    let location = loc(filename, *line);
                     if !known.contains(name.as_str()) {
                         return vec![
                             Diagnostic::error(format!(
-                                "%inline references undefined rule '{name}' ({location})"
+                                "%inline references undefined rule '{name}'"
                             ))
                             .with_location(filename, *line),
                         ];
@@ -285,7 +274,7 @@ impl Grammar {
                     if Some(name.as_str()) == root {
                         diagnostics.push(
                             Diagnostic::error(format!(
-                                "%inline rule '{name}' cannot be the grammar's start rule ({location})"
+                                "%inline rule '{name}' cannot be the grammar's start rule"
                             ))
                             .with_location(filename, *line),
                         );
@@ -297,7 +286,7 @@ impl Grammar {
                     {
                         diagnostics.push(
                             Diagnostic::error(format!(
-                                "%inline rule '{name}' cannot also be declared via %externals ({location})"
+                                "%inline rule '{name}' cannot also be declared via %externals"
                             ))
                             .with_location(filename, *line),
                         );
@@ -307,8 +296,7 @@ impl Grammar {
                     {
                         diagnostics.push(
                             Diagnostic::error(format!(
-                                "%inline rule '{name}' must not be a pure token ({})",
-                                loc(&production.filename, production.line)
+                                "%inline rule '{name}' must not be a pure token"
                             ))
                             .with_location(&production.filename, production.line),
                         );
@@ -336,11 +324,8 @@ impl Grammar {
         };
         if !known.contains(name.as_str()) {
             return vec![
-                Diagnostic::error(format!(
-                    "%word references undefined rule '{name}' ({})",
-                    loc(filename, *line)
-                ))
-                .with_location(filename, *line),
+                Diagnostic::error(format!("%word references undefined rule '{name}'"))
+                    .with_location(filename, *line),
             ];
         }
         let Some(production) = self.productions.get(name) else {
@@ -349,11 +334,8 @@ impl Grammar {
         let mut diagnostics = Vec::new();
         if !production.body.is_pure_token() {
             diagnostics.push(
-                Diagnostic::error(format!(
-                    "%word rule '{name}' must be a pure token ({})",
-                    loc(&production.filename, production.line)
-                ))
-                .with_location(&production.filename, production.line),
+                Diagnostic::error(format!("%word rule '{name}' must be a pure token"))
+                    .with_location(&production.filename, production.line),
             );
         }
         let body = production.body.to_string();
@@ -362,8 +344,7 @@ impl Grammar {
         }) {
             diagnostics.push(
                 Diagnostic::error(format!(
-                    "%word rule '{name}' has the same body as rule '{conflicting_name}' ({})",
-                    loc(&production.filename, production.line)
+                    "%word rule '{name}' has the same body as rule '{conflicting_name}'"
                 ))
                 .with_location(&production.filename, production.line),
             );
@@ -389,8 +370,7 @@ impl Grammar {
                     let Some(production) = self.productions.get(name) else {
                         return vec![
                             Diagnostic::error(format!(
-                                "%supertypes references undefined rule '{name}' ({})",
-                                loc(filename, *line)
+                                "%supertypes references undefined rule '{name}'"
                             ))
                             .with_location(filename, *line),
                         ];
@@ -399,8 +379,7 @@ impl Grammar {
                     if production.body.is_pure_token() {
                         diagnostics.push(
                             Diagnostic::error(format!(
-                                "%supertypes rule '{name}' must not be a pure token ({})",
-                                loc(&production.filename, production.line)
+                                "%supertypes rule '{name}' must not be a pure token"
                             ))
                             .with_location(&production.filename, production.line),
                         );
@@ -408,8 +387,7 @@ impl Grammar {
                     if !production.body.single_choice_options() {
                         diagnostics.push(
                             Diagnostic::error(format!(
-                                "%supertypes rule '{name}' has an alternative with more than one step ({})",
-                                loc(&production.filename, production.line)
+                                "%supertypes rule '{name}' has an alternative with more than one step"
                             ))
                             .with_location(&production.filename, production.line),
                         );
@@ -431,11 +409,8 @@ impl Grammar {
                      line,
                      filename,
                  }| {
-                    Diagnostic::error(format!(
-                        "%extras references undefined rule '{name}' ({})",
-                        loc(filename, *line)
-                    ))
-                    .with_location(filename, *line)
+                    Diagnostic::error(format!("%extras references undefined rule '{name}'"))
+                        .with_location(filename, *line)
                 },
             )
             .collect()
@@ -547,11 +522,8 @@ impl Grammar {
                     .get(name)
                     .map(|p| (p.line, p.filename.as_str()))
                     .unwrap_or((0, ""));
-                Diagnostic::warning(format!(
-                    "rule '{name}' is never referenced ({})",
-                    loc(filename, line)
-                ))
-                .with_location(filename, line)
+                Diagnostic::warning(format!("rule '{name}' is never referenced"))
+                    .with_location(filename, line)
             })
             .collect()
     }
@@ -575,9 +547,8 @@ impl Grammar {
             .filter(|p| first[p.name.as_str()].is_empty())
             .map(|p| {
                 Diagnostic::error(format!(
-                    "rule '{}' can never derive a terminal string ({})",
-                    p.name,
-                    loc(&p.filename, p.line)
+                    "rule '{}' can never derive a terminal string",
+                    p.name
                 ))
                 .with_location(&p.filename, p.line)
             })
@@ -618,12 +589,8 @@ impl Grammar {
         for (name, prod) in other.productions {
             if self.productions.contains_key(&name) {
                 self.parse_diagnostics.push(
-                    Diagnostic::warning(format!(
-                        "rule '{}' is defined more than once ({})",
-                        name,
-                        loc(&prod.filename, prod.line)
-                    ))
-                    .with_location(&prod.filename, prod.line),
+                    Diagnostic::warning(format!("rule '{name}' is defined more than once"))
+                        .with_location(&prod.filename, prod.line),
                 );
             }
             self.productions.insert(name, prod);
@@ -714,11 +681,8 @@ fn check_directive_ref(
             filename,
         }) if !known.contains(rule.as_str()) => {
             vec![
-                Diagnostic::error(format!(
-                    "{name} references undefined rule '{rule}' ({})",
-                    loc(filename, *line)
-                ))
-                .with_location(filename, *line),
+                Diagnostic::error(format!("{name} references undefined rule '{rule}'"))
+                    .with_location(filename, *line),
             ]
         }
         _ => vec![],
