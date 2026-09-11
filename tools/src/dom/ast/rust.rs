@@ -119,10 +119,6 @@ impl RustAst<'_> {
                     /// A multi-shape field's child had a kind outside its declared
                     /// target-kind set.
                     UnexpectedKind { expected: &'static str, found: String },
-                    /// A leaf node's text was not valid UTF-8 — a grammar's own tokenizer
-                    /// should only ever produce valid UTF-8 out of valid UTF-8 source, so
-                    /// this is defensive, not expected in practice.
-                    InvalidUtf8(std::str::Utf8Error),
                 }
             }
         "#};
@@ -150,10 +146,11 @@ impl RustAst<'_> {
 
     /// Emits a second `impl<'tree> super::visitor::SourceNode<'tree>` block
     /// (`visitor.rs` defines the struct itself; this only adds inherent
-    /// methods) with the three helpers every generated `TryFrom` impl
-    /// needs: `child_by_field` and `children_by_field` for single-target
-    /// and `multiple: true` fields respectively, and `text` for a leaf
-    /// kind's own source text.
+    /// methods) with the two helpers every generated `TryFrom` impl needs:
+    /// `child_by_field` and `children_by_field`, for single-target and
+    /// `multiple: true` fields respectively. A leaf kind's `_text: String`
+    /// field instead uses `SourceNode::text()`, already defined in
+    /// `visitor.rs`.
     fn fmt_node_helpers(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let body = indoc! {r#"
             impl<'tree> super::visitor::SourceNode<'tree> {
@@ -174,13 +171,6 @@ impl RustAst<'_> {
                         .children_by_field_name(field_name, &mut cursor)
                         .map(|node| super::visitor::SourceNode { node, source: self.source })
                         .collect()
-                }
-
-                /// This node's own source text — for a leaf kind's `_text: String` field.
-                pub fn text(&self) -> Result<&'tree str, runtime::BuildError> {
-                    self.node
-                        .utf8_text(self.source.as_bytes())
-                        .map_err(runtime::BuildError::InvalidUtf8)
                 }
             }
         "#};
@@ -378,7 +368,7 @@ fn fmt_multi_shape_enum_try_from(
     if has_token {
         match_stmt = formatdoc! {r#"
             if !node.node.is_named() {{
-                return Ok({name}::Token(node.text()?.to_string()));
+                return Ok({name}::Token(node.text().to_string()));
             }}
             {match_stmt}
         "#};
@@ -547,9 +537,9 @@ fn rust_field_ident(field_name: &str) -> String {
 
 /// Builds one field's construction statement inside a `TryFrom` body: a
 /// `multiple` anonymous-token-only field collects every matching child's
-/// `.text()?` into a `Vec<String>`; any other `multiple` field collects via
+/// `.text()` into a `Vec<String>`; any other `multiple` field collects via
 /// `children_by_field` and `.try_into()`s each child into a `Vec`; a single
-/// anonymous-token field reads `.text()?` as a `String`; everything else
+/// anonymous-token field reads `.text()` as a `String`; everything else
 /// (single named or multi-shape) reads one child via `child_by_field` and
 /// `.try_into()`s it into its already-resolved type ([`field_rust_type`]).
 /// The `let` binding is named via [`rust_field_ident`] (escaping a field
@@ -569,8 +559,8 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
             let {field_ident} = node
                 .children_by_field("{field_name}")
                 .into_iter()
-                .map(|c| c.text().map(|t| t.to_string()))
-                .collect::<Result<Vec<_>, _>>()?;
+                .map(|c| c.text().to_string())
+                .collect::<Vec<_>>();
         "#}
     } else if field.multiple {
         formatdoc! {r#"
@@ -585,7 +575,7 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
             let {field_ident} = node
                 .child_by_field("{field_name}")
                 .ok_or(runtime::BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
-                .text()?
+                .text()
                 .to_string();
         "#}
     } else if !target.named.is_empty() {
@@ -938,7 +928,7 @@ pub(crate) fn pascal_case(word: &str) -> String {
 /// Builds one kind's full `impl<'tree> TryFrom<SourceNode<'tree>> for
 /// {struct_name}` block: `let pragma = Pragma::from(node);` first, then one
 /// construction statement per `spec.fields` entry ([`field_try_from`]),
-/// then `let text = node.text()?.to_string();` if `spec.is_leaf`, and
+/// then `let text = node.text().to_string();` if `spec.is_leaf`, and
 /// finally `Ok({struct_name} { pragma, ... })` naming every field built
 /// above, via [`rust_field_ident`] — matching the identifier
 /// [`field_try_from`]'s own `let` binding used, so the struct-literal
@@ -959,7 +949,7 @@ fn fmt_struct_try_from(struct_name: &str, kind: &str, spec: &AstNodeSpec) -> Str
         .map(|f| rust_field_ident(f))
         .collect::<Vec<_>>();
     if spec.is_leaf {
-        fields_try_from.push("let _text = node.text()?.to_string();".to_string());
+        fields_try_from.push("let _text = node.text().to_string();".to_string());
         field_list.push("_text".to_string());
     }
 
@@ -1069,7 +1059,6 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("pub fn child_by_field(&self, field_name: &str)"));
         assert!(out.contains("pub fn children_by_field(&self, field_name: &str)"));
-        assert!(out.contains("pub fn text(&self) -> Result<&'tree str, runtime::BuildError>"));
     }
 
     #[test]
@@ -1079,7 +1068,6 @@ mod tests {
         assert!(out.contains("pub enum BuildError {"));
         assert!(out.contains("MissingField { kind: &'static str, field: &'static str },"));
         assert!(out.contains("UnexpectedKind { expected: &'static str, found: String },"));
-        assert!(out.contains("InvalidUtf8(std::str::Utf8Error),"));
     }
 
     #[test]
@@ -1119,7 +1107,7 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("pub value: String,"));
         assert!(out.contains(".child_by_field(\"value\")"));
-        assert!(out.contains(".text()?"));
+        assert!(out.contains(".text()"));
         assert!(out.contains(".to_string();"));
     }
 
@@ -1273,8 +1261,8 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("pub ops: Vec<String>,"));
         assert!(out.contains(".children_by_field(\"ops\")"));
-        assert!(out.contains(".map(|c| c.text().map(|t| t.to_string()))"));
-        assert!(out.contains(".collect::<Result<Vec<_>, _>>()?;"));
+        assert!(out.contains(".map(|c| c.text().to_string())"));
+        assert!(out.contains(".collect::<Vec<_>>();"));
         assert!(!out.contains(".map(|c| c.try_into())"));
     }
 
@@ -1339,7 +1327,7 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("pub struct Num {"));
         assert!(out.contains("pub _text: String,"));
-        assert!(out.contains("let _text = node.text()?.to_string();"));
+        assert!(out.contains("let _text = node.text().to_string();"));
         assert!(out.contains("Ok(Num { _pragma, _text })"));
     }
 
@@ -1750,7 +1738,7 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("Token(String),"));
         assert!(out.contains("if !node.node.is_named() {"));
-        assert!(out.contains("return Ok(Value::Token(node.text()?.to_string()));"));
+        assert!(out.contains("return Ok(Value::Token(node.text().to_string()));"));
     }
 
     #[test]

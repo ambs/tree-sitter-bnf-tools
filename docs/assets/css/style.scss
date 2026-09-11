@@ -1,0 +1,12 @@
+---
+---
+
+@import "{{ site.theme }}";
+
+// jekyll-theme-cayman's default body text (#606c71) is only 5.4:1 contrast
+// against white — passes bare WCAG AA (4.5:1) but reads noticeably faint
+// for long technical prose. Darken it to GitHub's own default text color
+// (14.7:1 contrast), leaving the rest of the theme untouched.
+body {
+  color: #24292f;
+}
