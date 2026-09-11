@@ -1,3 +1,8 @@
+---
+title: Syntax Walkthrough
+nav_order: 3
+---
+
 # Syntax walkthrough
 
 Every construct of the BNF dialect, one at a time, with the tree-sitter

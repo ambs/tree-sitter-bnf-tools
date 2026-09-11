@@ -1,3 +1,8 @@
+---
+title: Getting Started
+nav_order: 2
+---
+
 # Getting started
 
 This tutorial walks you through `ts-bnf-tool` from scratch — what it does, why

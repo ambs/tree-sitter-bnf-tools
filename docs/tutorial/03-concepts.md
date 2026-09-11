@@ -1,3 +1,8 @@
+---
+title: Tree-sitter Concepts
+nav_order: 4
+---
+
 # Tree-sitter grammar concepts
 
 This page explains the tree-sitter parser-generator mechanisms that the grammar

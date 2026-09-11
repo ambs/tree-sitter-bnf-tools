@@ -1,3 +1,8 @@
+---
+title: Home
+nav_order: 1
+---
+
 # tree-sitter-bnf-tools documentation
 
 A [tree-sitter](https://tree-sitter.github.io/) grammar for BNF, plus

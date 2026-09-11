@@ -1,3 +1,8 @@
+---
+title: Formatting and Refactoring
+nav_order: 10
+---
+
 # Formatting and refactoring
 
 ## Canonical formatting

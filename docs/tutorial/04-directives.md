@@ -1,3 +1,8 @@
+---
+title: Grammar-level Directives
+nav_order: 5
+---
+
 # Grammar-level directives
 
 Directives appear at the top of the file (before or after rules; order does

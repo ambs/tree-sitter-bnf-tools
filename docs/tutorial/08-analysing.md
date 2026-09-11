@@ -1,3 +1,8 @@
+---
+title: Analysing a Grammar
+nav_order: 9
+---
+
 # Analysing a grammar
 
 ## Checking for issues

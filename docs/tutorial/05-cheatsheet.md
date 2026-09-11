@@ -1,3 +1,8 @@
+---
+title: Cheat Sheet
+nav_order: 6
+---
+
 # BNF → tree-sitter cheat sheet
 
 | BNF | tree-sitter JS | Notes |
