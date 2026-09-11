@@ -332,20 +332,29 @@ yourself:
 ```rust
 use decls::visitor::{SourceNode, Visitor};
 
+// No fields: DeclExtractor holds no state of its own. Everything it needs
+// comes from the tree it's visiting, not from `self`.
 struct DeclExtractor;
 
 impl<'t> Visitor<'t> for DeclExtractor {
+    // Each visit_* call returns the names it found, so far, as a Vec.
     type Output = Vec<String>;
+    // This visitor can't fail, so Error is the "can't happen" type.
     type Error = std::convert::Infallible;
 
+    // A node's own names are its children's names, concatenated. `results`
+    // holds one Vec<String> per visited child; flatten them into one.
     fn combine(&mut self, results: Vec<Vec<String>>) -> Result<Vec<String>, Self::Error> {
         Ok(results.into_iter().flatten().collect())
     }
 
+    // `ident` is a leaf: its own text *is* the name, so just return it.
     fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
         Ok(vec![node.text().to_string()])
     }
 
+    // Visit `target` only — never `value` — so a name used as a value
+    // (the right-hand side of `=`) is never collected as a declaration.
     fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
         self.field_visitor(node, "target")
     }
@@ -355,6 +364,8 @@ fn main() {
     let source = "x = 1;\ny = x;\n";
     let tree = decls::parse(source).expect("parse must succeed");
     let mut extractor = DeclExtractor;
+    // `parse` only returns a `Tree`. Bundle its root `Node` with the
+    // source text — `Visitor::visit` needs a `SourceNode`, not a bare `Node`.
     let root = SourceNode { node: tree.root_node(), source };
     let names = extractor.visit(root).unwrap();
     assert_eq!(names, vec!["x", "y"]);
