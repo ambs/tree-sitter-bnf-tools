@@ -7,6 +7,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `check` now warns when a `%precedences` string-literal level has no
+  `%prec`/`%prec.left`/`%prec.right`/`%prec.dynamic` annotation naming it,
+  or when a non-first `%reserved` set has no rule-level `%reserved`
+  annotation naming it — e.g. `warning: %precedences level 'unary' is
+  declared but never used by a %prec annotation`. Both directions of the
+  cross-reference were already checked (undefined uses were already
+  errors); this catches the reverse case of a dead declaration, typically
+  a leftover from refactoring or a typo on the use side (#324).
 - `editors/vscode/`: a minimal local extension providing a TextMate grammar
   for the BNF dialect (rule names, `->`/`=>`, literals, patterns,
   directives, comments), so VS Code users get `.bnf` syntax highlighting.

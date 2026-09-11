@@ -24,6 +24,8 @@ Checks performed:
 | Undefined `%extras` rules | **error** | `error: %extras references undefined rule 'foo'` |
 | Unreferenced rule | warning | `warning: rule 'foo' is never referenced (line 4)` |
 | Non-productive rule | **error** | `error: rule 'foo' can never derive a terminal string (line 4)` |
+| Unused `%precedences` level | warning | `warning: %precedences level 'unary' is declared but never used by a %prec annotation (line 1)` |
+| Unused `%reserved` set | warning | `warning: %reserved set 'typeNames' is declared but never used by a %reserved annotation (line 2)` |
 
 A duplicate rule, `%axiom`, or `%word` produces a second diagnostic alongside
 the one shown above, pointing at the earlier declaration:
@@ -171,6 +173,35 @@ warning: rule 'b' is never referenced (line 3)
 An island with no entry point at all — like the mutual cycle above, where
 `b` and `c` only reference each other — has no single rule to blame, so
 every rule in it is still reported.
+
+### Unused `%precedences` levels and `%reserved` sets
+
+`check` also flags the reverse direction from the reference checks above:
+a `%precedences` string-literal level or `%reserved` set that's declared
+but never actually used anywhere else in the grammar. Both are typically
+leftovers from refactoring, or a typo on the *use* side that happens to
+match nothing — tree-sitter accepts them silently, so nothing else catches
+it either.
+
+```bnf
+%precedences ['unary']
+%reserved kw: [a], typeNames: [a]
+
+a -> 'x' ;
+```
+
+```
+warning: %precedences level 'unary' is declared but never used by a %prec annotation (line 1)
+warning: %reserved set 'typeNames' is declared but never used by a %reserved annotation (line 2)
+```
+
+A `%precedences` group's rule-name items are never flagged this way —
+unlike a string level, a rule name orders rules relative to each other
+regardless of whether any `%prec` annotation references it, so it's
+meaningful on its own ([#243](https://github.com/ambs/tree-sitter-bnf-tools/issues/243)).
+Likewise, the *first* declared `%reserved` set is exempt: it's the implicit
+global reserved-word set, meaningful without any rule-level `%reserved`
+annotation naming it.
 
 ## Summarising grammar shape
 

@@ -191,6 +191,79 @@ impl Grammar {
             .collect()
     }
 
+    /// Warns for each `%precedences` string-literal level that no `%prec`/`%prec.left`/…
+    /// annotation ever names.
+    ///
+    /// Rule-name items in a `%precedences` group are out of scope — they order
+    /// rules relative to each other regardless of whether any `%prec` annotation
+    /// references them, so an unused one isn't a dead declaration (#243).
+    fn unused_precedences_check(&self) -> Vec<Diagnostic> {
+        let used: HashSet<&str> = self
+            .prec_name_refs
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect();
+
+        self.precedences
+            .iter()
+            .flat_map(
+                |PrecedenceGroup {
+                     items,
+                     line,
+                     filename,
+                 }| {
+                    items.iter().filter_map(|item| match item {
+                        NameOrLiteral::Literal(literal) if !used.contains(literal.as_str()) => {
+                            Some(
+                                Diagnostic::warning(format!(
+                                    "%precedences level {literal} is declared but never used by a %prec annotation"
+                                ))
+                                .with_location(filename, *line),
+                            )
+                        }
+                        _ => None,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    /// Warns for each `%reserved` set that no rule-level `%reserved` annotation ever names.
+    ///
+    /// The first declared set is exempt — it's the implicit global reserved-word
+    /// set, meaningful on its own without any rule-level annotation referencing it.
+    fn unused_reserved_sets_check(&self) -> Vec<Diagnostic> {
+        let used: HashSet<&str> = self
+            .reserved_set_refs
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect();
+
+        self.reserved_sets
+            .iter()
+            .skip(1)
+            .filter_map(
+                |ReservedEntry {
+                     set_name,
+                     line,
+                     filename,
+                     ..
+                 }| {
+                    if used.contains(set_name.as_str()) {
+                        None
+                    } else {
+                        Some(
+                            Diagnostic::warning(format!(
+                                "%reserved set '{set_name}' is declared but never used by a %reserved annotation"
+                            ))
+                            .with_location(filename, *line),
+                        )
+                    }
+                },
+            )
+            .collect()
+    }
+
     /// Returns an error for every rule name in `%conflicts` that has no definition.
     fn conflicts_check(&self, known: &HashSet<&str>) -> Vec<Diagnostic> {
         self.conflicts
@@ -664,6 +737,8 @@ impl Grammar {
         diagnostics.extend(self.unreachable_rules_check());
         diagnostics.extend(self.non_productive_check());
         diagnostics.extend(self.prec_name_check());
+        diagnostics.extend(self.unused_precedences_check());
+        diagnostics.extend(self.unused_reserved_sets_check());
         diagnostics.extend(self.externals_check());
         diagnostics.extend(self.hidden_start_rule_check());
         diagnostics.sort_by(|a, b| a.message.cmp(&b.message));
@@ -1081,6 +1156,89 @@ mod tests {
         let src = "%precedences [\"unary\"]\na -> 'x' %prec 'unary' ;\n";
         let (g, _) = crate::visitors::parse_source(src).unwrap();
         assert!(g.prec_name_check().is_empty());
+    }
+
+    // ── unused_precedences_check ─────────────────────────────────────────────
+
+    #[test]
+    /// Warns when a `%precedences` string-literal level has no `%prec` annotation naming it.
+    fn unused_precedences_check_warns_on_unused_literal() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'unary'".into())], 0)];
+        assert_eq!(
+            strs(&g.unused_precedences_check()),
+            vec![
+                "warning: %precedences level 'unary' is declared but never used by a %prec annotation (line 0)"
+            ]
+        );
+    }
+
+    #[test]
+    /// No warning when a `%prec` annotation names the declared literal.
+    fn unused_precedences_check_no_warning_when_used() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![pg(&[NameOrLiteral::Literal("'unary'".into())], 0)];
+        g.prec_name_refs = vec![di("'unary'", 1)];
+        assert!(g.unused_precedences_check().is_empty());
+    }
+
+    #[test]
+    /// A rule-name item in a `%precedences` group is never flagged, even when unused
+    /// by any `%prec` annotation — it's out of scope per #243.
+    fn unused_precedences_check_ignores_rule_name_items() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::pg;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.precedences = vec![pg(&[NameOrLiteral::Name("a".into())], 0)];
+        assert!(g.unused_precedences_check().is_empty());
+    }
+
+    // ── unused_reserved_sets_check ───────────────────────────────────────────
+
+    #[test]
+    /// Warns when a non-first `%reserved` set has no rule-level `%reserved` annotation naming it.
+    fn unused_reserved_sets_check_warns_on_unused_set() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_sets = vec![
+            re("kw", &[NameOrLiteral::Name("a".into())], 0),
+            re("typeNames", &[NameOrLiteral::Name("a".into())], 1),
+        ];
+        assert_eq!(
+            strs(&g.unused_reserved_sets_check()),
+            vec![
+                "warning: %reserved set 'typeNames' is declared but never used by a %reserved annotation (line 1)"
+            ]
+        );
+    }
+
+    #[test]
+    /// The first declared `%reserved` set is exempt — it's the implicit global set.
+    fn unused_reserved_sets_check_exempts_first_set() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_sets = vec![re("kw", &[NameOrLiteral::Name("a".into())], 0)];
+        assert!(g.unused_reserved_sets_check().is_empty());
+    }
+
+    #[test]
+    /// No warning when a rule-level `%reserved` annotation names the non-first set.
+    fn unused_reserved_sets_check_no_warning_when_used() {
+        use crate::dom::NameOrLiteral;
+        use crate::dom::test_utils::re;
+        let mut g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        g.reserved_sets = vec![
+            re("kw", &[NameOrLiteral::Name("a".into())], 0),
+            re("typeNames", &[NameOrLiteral::Name("a".into())], 1),
+        ];
+        g.reserved_set_refs = vec![di("typeNames", 2)];
+        assert!(g.unused_reserved_sets_check().is_empty());
     }
 
     #[test]
