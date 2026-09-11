@@ -1,7 +1,7 @@
 # Editor Setup
 
 This guide covers how to get syntax highlighting, indentation, and code folding
-for `.bnf` files in Neovim, Helix, and Emacs.
+for `.bnf` files in Neovim, Helix, Emacs, and VS Code.
 
 ---
 
@@ -268,3 +268,61 @@ gcc -shared -fPIC -o ~/.emacs.d/tree-sitter/libtree-sitter-bnf.so \
 
 Then restart Emacs (or run `M-x treesit-parser-delete` on the current buffer
 and reopen the file).
+
+---
+
+## VS Code
+
+VS Code has no built-in tree-sitter support, so highlighting comes from a
+TextMate grammar instead. This repository ships one — a minimal local
+extension at
+[`editors/vscode/`](https://github.com/ambs/tree-sitter-bnf-tools/tree/main/editors/vscode) —
+approximating the BNF dialect: rule names, `->`/`=>`, literals, patterns,
+directives, and comments. It doesn't provide indentation or folding (those
+need a real tree-sitter-backed extension — out of scope here).
+
+### 1 — Get the extension folder
+
+```sh
+git clone https://github.com/ambs/tree-sitter-bnf-tools
+```
+
+The extension lives entirely in `tree-sitter-bnf-tools/editors/vscode/`.
+
+### 2 — Install it as an unpacked extension
+
+Copy (or symlink) that folder into VS Code's extensions directory:
+
+```sh
+# Linux / macOS
+mkdir -p ~/.vscode/extensions
+cp -r tree-sitter-bnf-tools/editors/vscode ~/.vscode/extensions/bnf-syntax
+
+# Windows (PowerShell)
+Copy-Item -Recurse tree-sitter-bnf-tools\editors\vscode "$env:USERPROFILE\.vscode\extensions\bnf-syntax"
+```
+
+### 3 — Reload VS Code
+
+Reload the window (`Developer: Reload Window` from the Command Palette, or
+just restart VS Code). Open a `.bnf` file — the language mode in the bottom
+status bar should read `BNF`, and highlighting should be active.
+
+### Trying it without installing
+
+To try the grammar without copying anything into your extensions folder,
+launch VS Code in Extension Development Host mode against the folder
+directly:
+
+```sh
+code --extensionDevelopmentPath=tree-sitter-bnf-tools/editors/vscode <some-file>.bnf
+```
+
+### Updating the grammar
+
+The TextMate grammar (`editors/vscode/syntaxes/bnf.tmLanguage.json`) is
+maintained by hand and only approximates the dialect — it does not track
+`tree-sitter-bnf/grammar.js` automatically. If the grammar changes in ways
+that affect highlighting (new directives, changed terminal syntax), update
+it manually and re-copy the folder, or `git pull` if you installed via
+symlink.

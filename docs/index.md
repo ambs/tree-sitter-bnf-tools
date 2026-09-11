@@ -30,7 +30,7 @@ notation.
 ## Guides
 
 - [Editor setup](editors.md) — syntax highlighting for `.bnf` files in Neovim,
-  Helix, and Emacs
+  Helix, Emacs, and VS Code
 
 ## The BNF dialect's own grammar
 

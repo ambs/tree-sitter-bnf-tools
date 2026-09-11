@@ -1,0 +1,27 @@
+{
+  "name": "bnf-syntax",
+  "displayName": "BNF Syntax Highlighting",
+  "description": "TextMate grammar for the tree-sitter-bnf-tools BNF dialect",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.50.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "bnf",
+        "aliases": ["BNF", "bnf"],
+        "extensions": [".bnf"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "bnf",
+        "scopeName": "source.bnf",
+        "path": "./syntaxes/bnf.tmLanguage.json"
+      }
+    ]
+  }
+}
