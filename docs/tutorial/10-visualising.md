@@ -1,3 +1,8 @@
+---
+title: Visualising a Grammar
+nav_order: 11
+---
+
 # Visualising a grammar
 
 The examples on this page all use the same toy arithmetic grammar, saved as

@@ -1,3 +1,8 @@
+---
+title: Editor Setup
+nav_order: 13
+---
+
 # Editor Setup
 
 This guide covers how to get syntax highlighting, indentation, and code folding

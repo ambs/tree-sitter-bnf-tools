@@ -1,3 +1,8 @@
+---
+title: Worked Example
+nav_order: 8
+---
+
 # Worked example: a boolean/arithmetic expression language
 
 The [first end-to-end walkthrough](06-end-to-end.md) uses a JSON grammar — a

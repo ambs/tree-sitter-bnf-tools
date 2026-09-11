@@ -1,3 +1,8 @@
+---
+title: Generating a Scaffold
+nav_order: 12
+---
+
 # Generating a processing scaffold
 
 ## What `scaffold` is for
@@ -210,12 +215,102 @@ hands you a node's children one at a time; `combine` is where their
 the trait already has a sensible default body, so a new visitor can start
 with just `combine`.
 
+### `combine` in practice
+
+`combine`'s job is to fold each child's `Output` into this node's own
+`Output`. That's easiest to see with a visitor whose `Output` is real
+data flowing bottom-up, not a side effect. Here's `CollectText`, which
+gathers every leaf's own source text into a `Vec<String>`:
+
+```rust
+struct CollectText;
+
+impl<'t> Visitor<'t> for CollectText {
+    type Output = Vec<String>;
+    type Error = std::convert::Infallible;
+
+    // Every child already produced its own Vec<String>; concatenate them
+    // into this node's.
+    fn combine(&mut self, results: Vec<Self::Output>) -> Result<Self::Output, Self::Error> {
+        Ok(results.into_iter().flatten().collect())
+    }
+
+    // A leaf has no children to fold through `combine`; it *is* the data.
+    fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Self::Output, Self::Error> {
+        Ok(vec![node.text().to_string()])
+    }
+
+    fn visit_num(&mut self, node: SourceNode<'t>) -> Result<Self::Output, Self::Error> {
+        Ok(vec![node.text().to_string()])
+    }
+}
+```
+
+Trace it over `x = 1;`, following the actual `Vec<String>` values, not
+just how many times `combine` happens to run:
+
+1. `target` is an `ident`. `visit_ident` is overridden, so it returns
+   `vec!["x".into()]` directly, with no `combine` call at all.
+2. `value` is an `expr` node, which isn't overridden. Its default body,
+   `children_visitor`, visits `expr`'s one child, the `num` leaf.
+   `visit_num` is overridden too, and returns `vec!["1".into()]` directly,
+   the same way.
+3. Back in `children_visitor(expr_node)`, that one child result gets
+   folded: `combine(vec![vec!["1".into()]])` → `vec!["1".into()]`. That's
+   `expr`'s own `Output`.
+4. `visit_decl` isn't overridden either, so `children_visitor(decl_node)`
+   now holds two child results: `target`'s `vec!["x".into()]` and
+   `value`'s `vec!["1".into()]`. It folds them:
+   `combine(vec![vec!["x".into()], vec!["1".into()]])` →
+   `vec!["x".into(), "1".into()]`. That's `decl`'s own `Output`.
+5. `program` holds two `decl`s. Its own default `children_visitor` folds
+   their two `Output`s the same way, giving `vec!["x", "1", "y", "x"]` as
+   the whole program's `Output`, for the two-line source
+   `x = 1;\ny = x;`.
+
+Every one of those `combine` calls is doing real, inspectable work:
+concatenating its children's data into its own. Compare that to
+`examples/walk.rs`'s `Counter`, which ignores `results` entirely and
+increments a field instead:
+
+```rust
+struct Counter {
+    total: usize,
+}
+
+impl<'t> Visitor<'t> for Counter {
+    type Output = ();
+    type Error = std::convert::Infallible;
+
+    fn combine(&mut self, _results: Vec<Self::Output>) -> Result<Self::Output, Self::Error> {
+        self.total += 1;
+        Ok(())
+    }
+}
+```
+
+`Counter` still ends up counting every visited node correctly (see
+["Running it"](#running-it) below), but only as a byproduct of *when*
+`combine` is called: once per visited node, by construction of
+`children_visitor`/`default_result`, not of what it computes. If
+`children_visitor`'s fold strategy ever changed, that byproduct could
+change with it. `CollectText` above is what `combine` is actually for:
+folding children's data into a parent's, on purpose.
+
 ### One method per grammar rule
 
 For `decls.bnf` the trait has one method per kind (`visit_program`,
 `visit_decl`, `visit_expr`, `visit_ident`, `visit_num`), the `visit()`
-dispatcher, and five ANTLR-mirroring helper methods with default bodies.
-`decl` has two fields, so its doc comment lists both:
+dispatcher, and the five ANTLR-mirroring helper methods above.
+
+A grammar rule can label its children with **fields**.
+`decl -> target: ident '=' value: expr ';'` names its `ident` child
+`target` and its `expr` child `value`. Fields let you refer to "the
+`target` of a `decl`" by name instead of by position, both from Rust
+(via `field_visitor`, described below) and from tree-sitter's own tooling
+(queries, `children_by_field_name`). `decl` has two fields, so its
+generated doc comment lists both, alongside the method its *default* body
+actually calls for each:
 
 ```rust
 /// Visits a `decl` node.
@@ -229,6 +324,26 @@ fn visit_decl(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::
     self.children_visitor(node)
 }
 ```
+
+That comment can be misread as saying the default body calls
+`field_visitor`. It doesn't: `children_visitor` visits every named child
+in one pass, regardless of field. The "via ..." line instead tells you
+what visiting *just* that field would look like, because that's exactly
+what you can do yourself, by overriding `visit_decl`:
+
+```rust
+fn visit_decl(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::Error> {
+    self.field_visitor(node, "target") // visit only `target`; `value` is skipped entirely
+}
+```
+
+`field_visitor(node, "target")` visits only the children in the `target`
+field (here, one `ident`) and folds their `Output`s through `combine`,
+the same way `children_visitor` does for *every* named child. Overriding
+`visit_decl` like this, instead of the default `children_visitor`, is
+exactly how the `DeclExtractor` example further down collects only the
+name being *declared* from each `decl`, ignoring the value to the right
+of `=`.
 
 `ident` and `num` have no visible children of their own — each is a
 single token, with no substructure at all. So they're leaves, and there's
@@ -264,33 +379,6 @@ the parser expected but never found. `Node::kind()` reports the
 *expected* kind on that node — not a distinct "missing" kind. So `visit()`
 checks `Node::is_missing()` first, before matching on kind, and routes
 there instead.
-
-### `combine` in practice
-
-`examples/walk.rs`'s `Counter` implements only `combine`:
-
-```rust
-struct Counter {
-    total: usize,
-}
-
-impl<'t> Visitor<'t> for Counter {
-    type Output = ();
-    type Error = std::convert::Infallible;
-
-    fn combine(&mut self, _results: Vec<()>) -> Result<(), Self::Error> {
-        self.total += 1;
-        Ok(())
-    }
-}
-```
-
-`combine` runs exactly once per visited node — every default `visit_*`
-method eventually calls it, whether through `children_visitor`'s fold or
-`default_result`'s `combine(vec![])`. So counting `combine` calls counts
-every named node in the tree, without touching a single per-kind method.
-(`children_visitor` only visits named children, so anonymous tokens like
-`'='`/`';'` are never counted.)
 
 ## Running it
 
@@ -344,18 +432,18 @@ impl<'t> Visitor<'t> for DeclExtractor {
 
     // A node's own names are its children's names, concatenated. `results`
     // holds one Vec<String> per visited child; flatten them into one.
-    fn combine(&mut self, results: Vec<Vec<String>>) -> Result<Vec<String>, Self::Error> {
+    fn combine(&mut self, results: Vec<Self::Output>) -> Result<Self::Output, Self::Error> {
         Ok(results.into_iter().flatten().collect())
     }
 
     // `ident` is a leaf: its own text *is* the name, so just return it.
-    fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
+    fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Self::Output, Self::Error> {
         Ok(vec![node.text().to_string()])
     }
 
     // Visit `target` only — never `value` — so a name used as a value
     // (the right-hand side of `=`) is never collected as a declaration.
-    fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
+    fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<Self::Output, Self::Error> {
         self.field_visitor(node, "target")
     }
 }
@@ -386,12 +474,82 @@ cargo run --example decl_extractor
 It exits silently if the extracted names match, and panics on its own
 `assert_eq!` otherwise.
 
+## A visitor that can fail
+
+Every visitor so far has used `Error = std::convert::Infallible`: a
+visitor that can't fail. Real ones often can. `decls.bnf`'s
+`num -> /[0-9]+/` puts no upper bound on how many digits a number literal
+has, so a visitor that turns that text into an `i64` has a genuine
+failure case: a literal with more digits than an `i64` can hold.
+
+`SumValues` sums every number literal in a program, and fails, naming
+the offending literal, the moment one doesn't fit:
+
+Save this as `examples/sum_values.rs` inside `decls/`:
+
+```rust
+use decls::visitor::{SourceNode, Visitor};
+
+// The one way this visitor can fail: a `num` literal too big for `i64`.
+#[derive(Debug)]
+struct TooBig(String);
+
+struct SumValues;
+
+impl<'t> Visitor<'t> for SumValues {
+    type Output = i64;
+    type Error = TooBig;
+
+    // Every visited node contributes a partial sum. A node with no `num`
+    // among its descendants contributes 0: `results` is either empty (a
+    // leaf other than `num`) or holds children whose own sums were 0.
+    fn combine(&mut self, results: Vec<Self::Output>) -> Result<Self::Output, Self::Error> {
+        Ok(results.into_iter().sum())
+    }
+
+    // The only place a nonzero value, or a failure, can originate.
+    fn visit_num(&mut self, node: SourceNode<'t>) -> Result<Self::Output, Self::Error> {
+        node.text()
+            .parse()
+            .map_err(|_| TooBig(node.text().to_string()))
+    }
+}
+
+fn main() {
+    for source in ["x = 1;\ny = 2;\n", "x = 99999999999999999999;\n"] {
+        let tree = decls::parse(source).expect("parse must succeed");
+        let root = SourceNode { node: tree.root_node(), source };
+        match (SumValues).visit(root) {
+            Ok(sum) => println!("{source:?}: sum = {sum}"),
+            Err(TooBig(text)) => println!("{source:?}: `{text}` doesn't fit in an i64"),
+        }
+    }
+}
+```
+
+`visit_num` is the only method that ever returns a nonzero `Output` or an
+`Err`. Every other kind falls back to the default `children_visitor`/
+`default_result` chain, and `combine`'s `sum()` just propagates whatever
+its children produced. There's no explicit error-checking in `visit_decl`
+or `visit_program` because none is needed: `children_visitor`'s own loop
+(see the generated `visitor.rs`) uses `?` on each child's result, so the
+first `num` that fails to parse stops the walk right there and returns
+that `Err`; `combine` for any of its ancestors never runs.
+
+Run it (still inside `decls/`):
+
+```sh
+$ cargo run --example sum_values
+"x = 1;\ny = 2;\n": sum = 3
+"x = 99999999999999999999;\n": `99999999999999999999` doesn't fit in an i64
+```
+
 ## Keeping the grammar in sync
 
 You've now hand-edited the scaffolded crate, by adding
-`examples/decl_extractor.rs`. You'll likely want to register a
-hand-written `Visitor` in `lib.rs` too, eventually. So it's worth knowing
-what a rerun does.
+`examples/decl_extractor.rs` and `examples/sum_values.rs`. You'll likely
+want to register a hand-written `Visitor` in `lib.rs` too, eventually. So
+it's worth knowing what a rerun does.
 
 Editing `decls.bnf` and rerunning `scaffold` is safe: the
 ["What `scaffold` creates"](#what-scaffold-creates) table above already

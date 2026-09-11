@@ -1,3 +1,8 @@
+---
+title: End-to-end Walkthrough
+nav_order: 7
+---
+
 # End-to-end: from `.bnf` to a working parser
 
 ## Step 1 — write the grammar
