@@ -2,46 +2,51 @@
 
 ## What `scaffold` is for
 
-Writing a tree-sitter-backed language tool by hand means juggling several
-things before you can process a single file: running `tree-sitter generate`,
-wiring up a Rust crate around the generated C parser, and writing a traversal
-that walks the resulting tree without missing a node kind. `ts-bnf-tool
-scaffold` does all of that for you. Point it at a `.bnf` grammar and it
-produces a complete, self-contained Rust crate for parsing and traversing the
-described language: the tree-sitter parser, an ANTLR-style `Visitor<'tree>`
-trait — one `visit_*` method per node kind, a central `visit()` dispatcher,
-and a `combine`-based fold so you only write the bodies you care about — and
-a runnable example. `cd` into the output directory and
-`cargo run --example walk -- <file>` works immediately, with no edits.
+Writing a tree-sitter-backed language tool by hand takes several steps. You
+run `tree-sitter generate`. You wire up a Rust crate around the generated C
+parser. You write a traversal that walks the tree without missing a node
+kind.
 
-This is a Rust-only feature for now — the subcommand's name is deliberately
-target-language-neutral, since a future target might scaffold a module or
-package instead of a crate.
+`ts-bnf-tool scaffold` does all of that for you. Point it at a `.bnf`
+grammar, and it produces a complete, self-contained Rust crate for parsing
+and traversing the described language. The crate includes:
+
+- the tree-sitter parser
+- an ANTLR-style `Visitor<'tree>` trait — one `visit_*` method per node
+  kind, a `visit()` dispatcher, and a `combine`-based fold so you only
+  write the bodies you care about
+- a runnable example
+
+`cd` into the output directory and run `cargo run --example walk -- <file>`.
+It works immediately — no edits needed.
+
+This is a Rust-only feature for now. The subcommand's name is deliberately
+target-language-neutral: a future target might scaffold a module or package
+instead of a crate.
 
 ## Prerequisites
 
-`scaffold` shells out to the `tree-sitter` CLI to generate the C parser, and
-the generated crate's `build.rs` later compiles `src/parser.c` through a C
-compiler when you `cargo build`/`cargo run` it. Beyond `ts-bnf-tool` itself,
-you need:
+`scaffold` shells out to the `tree-sitter` CLI to generate the C parser.
+The generated crate's `build.rs` then compiles `src/parser.c` with a C
+compiler, the first time you `cargo build`/`cargo run` it.
 
-- `tree-sitter-cli` >= 0.25 on `PATH` (`npm install -g tree-sitter-cli`) — the
-  generated crate targets ABI 15, which requires that version. Without it,
-  `scaffold` itself fails with `` `tree-sitter` not found on PATH ``, naming
-  the install command above.
-- a working C compiler (`cc`/`gcc`/`clang`) — without it, `cargo build`/
-  `cargo run` on the generated crate fails compiling `src/parser.c`.
-- `ts-bnf-tool` itself, installed and on `PATH` — the generated `Makefile`'s
-  `generate` target invokes it directly (`$(BNF_TOOL) scaffold .`, with
-  `BNF_TOOL` defaulting to `ts-bnf-tool`), not through `cargo run`. Override
-  `BNF_TOOL` (e.g. `make BNF_TOOL=/path/to/ts-bnf-tool generate`) if it
-  isn't installed globally.
+Beyond `ts-bnf-tool` itself, you need:
+
+- **`tree-sitter-cli` >= 0.25 on `PATH`** (`npm install -g tree-sitter-cli`).
+  The generated crate targets ABI 15, which requires that version. Without
+  it, `scaffold` fails with `` `tree-sitter` not found on PATH ``.
+- **A working C compiler** (`cc`/`gcc`/`clang`). Without it, `cargo build`/
+  `cargo run` fails compiling `src/parser.c`.
+- **`ts-bnf-tool` itself, installed and on `PATH`.** The generated
+  `Makefile`'s `generate` target calls it directly (`$(BNF_TOOL) scaffold
+  .`), not through `cargo run`. If it isn't installed globally, override
+  `BNF_TOOL`: `make BNF_TOOL=/path/to/ts-bnf-tool generate`.
 
 ## Basic usage
 
 The best way to see what `scaffold` does is to run it. The recommended
 workflow is **in-place**: create the crate's folder first, put the grammar
-inside it, then point `scaffold` at that same folder — source and
+inside it, then point `scaffold` at that same folder. Source and
 destination end up being the same file, so there's only ever one copy of
 the grammar to keep in sync.
 
@@ -61,9 +66,9 @@ ident -> /[a-z][a-zA-Z0-9_]*/ ;
 num -> /[0-9]+/ ;
 ```
 
-It describes programs made of `name = value;` declarations: a `program` is
-zero or more `decl`s, and each `decl` names a `target` identifier and gives
-it a `value`, which is either another identifier or a number.
+It describes programs made of `name = value;` declarations. A `program` is
+zero or more `decl`s. Each `decl` names a `target` identifier and gives it
+a `value`, which is either another identifier or a number.
 
 Now scaffold it, in place — from inside `decls/`:
 
@@ -95,47 +100,44 @@ decls/
     └── walk.rs
 ```
 
-Have a look inside. The `grammar.js`/`queries/`/`tree-sitter.json`/`src/`
-files are exactly what `convert --generate` already produces — the real
-`tree-sitter generate` output, unchanged. `scaffold` adds `decls.bnf` (the
-bundled grammar — here it's the same file you just wrote, since this is the
-in-place workflow), `ts-bnf-tool.toml`, `Makefile`, plus the `bindings/rust/`
-and `examples/` directories, on top:
+### What `scaffold` creates
 
-- **`decls.bnf`** — the bundled grammar. This is the copy `scaffold` always
-  regenerates from; edit it, then rerun `scaffold` to update the crate.
-- **`ts-bnf-tool.toml`** — records how the crate was scaffolded (the bundled
-  grammar's filename, the crate name, and whether `--ast-types` was used),
-  written once and hand-editable afterwards.
-- **`Makefile`** — a `generate` target that reruns `scaffold` whenever
-  `decls.bnf` or `ts-bnf-tool.toml` change.
-- **`bindings/rust/lib.rs`** — the parser bindings (`LANGUAGE`, `NODE_TYPES`,
-  same shape as any `tree-sitter generate`-produced crate), a `pub mod
-  visitor;`, and a `parse` convenience function. This file is only ever
-  scaffolded once — it's where to add `pub mod` declarations for your own
-  hand-written `Visitor` implementations, and a rerun won't touch them. One
-  exception: if you scaffolded without `--ast-types` and later rerun with
-  it added, the rerun still inserts the one line it needs
-  (`pub mod ast;`) into your existing `lib.rs` — otherwise the newly
-  generated `examples/ast.rs` couldn't even compile — but never removes
-  anything you've added yourself.
+The table below lists every file, what it's for, and whether `scaffold`
+ever touches it again after the first run — which answers a question that
+comes up immediately: **is it safe to hand-edit this file?**
 
-  ```rust
-  pub fn parse(source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Error>> {
-      let mut parser = tree_sitter::Parser::new();
-      parser.set_language(&LANGUAGE.into())?;
-      parser
-          .parse(source, None)
-          .ok_or_else(|| "tree-sitter failed to parse the given source".into())
-  }
-  ```
+| File / directory | What it is | Can you edit it? |
+|---|---|---|
+| `decls.bnf` | The grammar you wrote. Always the source of truth. | **Yes** — edit this, then rerun `scaffold`. |
+| `grammar.js`, `src/` | The tree-sitter grammar and C parser. Files `grammar.js` and folder `src/` are exactly what `convert --generate` already produces — the real `tree-sitter generate` output, unchanged. | No — regenerated on every rerun. |
+| `tree-sitter.json` | Tree-sitter's own package metadata file. | Written once, then left alone. Edit freely. |
+| `queries/highlights.scm` | A starter syntax-highlighting query. | Written once, then left alone. Edit/extend freely (see [Keeping the grammar in sync](#keeping-the-grammar-in-sync) below). |
+| `ts-bnf-tool.toml` | Records how the crate was scaffolded: the bundled grammar's filename, the crate name, and which flags were used. | Written once; a rerun updates only the fields matching a flag you actually pass. |
+| `Makefile` | A `generate` target that reruns `scaffold` for you. | Written once. Add your own targets. |
+| `Cargo.toml` | The crate manifest. | Written once. Edit freely. |
+| `bindings/rust/build.rs` | Compiles `src/parser.c` (and `src/scanner.c`, if present). | No — regenerated on every rerun. |
+| `bindings/rust/lib.rs` | Parser bindings (`LANGUAGE`, `NODE_TYPES`), plus a `parse` convenience function. | Written once. **This is where you add `pub mod` for your own `Visitor` implementations.** |
+| `bindings/rust/visitor.rs` | The generated `Visitor<'tree>` trait (described below). | **No — always regenerated. Never hand-edit this file.** Write your own visitor in a different file instead, and register it in `lib.rs`. |
+| `examples/walk.rs` | A small program that parses a file and counts its nodes, implementing nothing but the trait's one required method (described below). | Written once. Edit it, or drop a new file into `examples/` — Cargo picks those up automatically. |
+| `.gitignore` | Ignores `/target`. | Written once. Extend freely. |
 
-- **`bindings/rust/visitor.rs`** — the generated `Visitor<'tree>` trait,
-  described below.
+`lib.rs`'s `parse` function looks like this:
 
-- **`examples/walk.rs`** — a small program that parses a file and counts its
-  nodes, implementing nothing but the trait's one required method (also
-  described below).
+```rust
+pub fn parse(source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Error>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&LANGUAGE.into())?;
+    parser
+        .parse(source, None)
+        .ok_or_else(|| "tree-sitter failed to parse the given source".into())
+}
+```
+
+One exception to `lib.rs`'s "written once" rule: if you scaffolded without
+`--ast-types` and later rerun with it added, the rerun still inserts the
+one line it needs (`pub mod ast;`) into your existing `lib.rs` — otherwise
+the newly generated `examples/ast.rs` couldn't even compile. It never
+removes anything you've added yourself.
 
 ### Other ways to invoke it
 
@@ -148,29 +150,72 @@ ts-bnf-tool scaffold --name decls grammar.bnf   # override the crate/grammar nam
 ts-bnf-tool scaffold --no-header grammar.bnf    # suppress generated-file comments
 ```
 
-`--name` also affects wording in the generated trait's own doc comment; it
-defaults to the input filename's stem, which is why the `decls.bnf` example
-above needed no `--name` at all — its stem is already `decls`. A
-hyphenated name — `my-lang`, the idiomatic Cargo package-name separator, and
-an ordinary filename stem — is fine: `Cargo.toml`'s `[package] name` keeps
-the hyphen, while the tree-sitter grammar name, the generated C parser
-symbol, and the module path `examples/*.rs` imports all use the normalized
-(`-` -> `_`) form instead, since tree-sitter's own `grammar()` call rejects a
-hyphenated name outright. A name still invalid after that normalization (a
-leading digit, whitespace, …) is rejected before anything is written to
-disk. Like `railroad` and `graph`, `scaffold` runs no static checks before
-generating — diagnostics never gate output — but it does check that no two
-rules would generate the same `visit_*` method (see below): a grammar that
-fails this check is rejected with a clear diagnostic before anything is
-written to disk.
+`--name` also names the grammar in the generated trait's own doc comment.
+It defaults to the input filename's stem — that's why the `decls.bnf`
+example above needed no `--name` at all; its stem is already `decls`.
+
+A hyphenated name (`my-lang`) is fine. `Cargo.toml`'s `[package] name`
+keeps the hyphen, since that's Cargo's own convention. Everywhere else —
+the tree-sitter grammar name, the generated C parser symbol, the module
+path `examples/*.rs` imports — the hyphen becomes an underscore
+(`my_lang`) instead, because tree-sitter's own `grammar()` call rejects a
+hyphenated name outright.
+
+A name still invalid after that substitution (a leading digit, whitespace,
+…) is rejected up front, before anything is written to disk.
+
+`scaffold` runs no static checks on the grammar before generating, same as
+`railroad` and `graph` — diagnostics never gate its output. One exception:
+it does check that no two rules would produce the same `visit_*` method
+name (see below). A grammar that fails this check is rejected with a clear
+diagnostic, again before anything is written to disk.
 
 ## The generated `Visitor` trait
 
-Open `bindings/rust/visitor.rs`. For `decls.bnf` it has one method per kind
-(`visit_program`, `visit_decl`, `visit_expr`, `visit_ident`, `visit_num`), a
-`visit()` dispatcher matching on `node.kind()`, and five ANTLR-mirroring
-helper methods with sensible default bodies. The `decl` kind has two fields,
-so its doc comment lists both:
+Open `bindings/rust/visitor.rs` to see the generated trait. Remember: this
+file is always regenerated, so don't edit it — see the table above.
+
+### `Output`, `Error`, and `combine`
+
+Before anything compiles, every `Visitor` implementation must set two
+associated types and implement one method:
+
+```rust
+impl<'t> Visitor<'t> for MyVisitor {
+    type Output = /* what one visit_* call produces */;
+    type Error = /* what can go wrong */;
+
+    fn combine(&mut self, results: Vec<Self::Output>) -> Result<Self::Output, Self::Error> {
+        /* fold `results` — one child's Output each — into this node's own Output */
+    }
+}
+```
+
+Rust has no way to give `type Output` a default that an implementor can
+skip. You must set it yourself, every time. There's no single right
+choice — it depends on what your visitor computes:
+
+| If your visitor... | use `Output = ` |
+|---|---|
+| only has a side effect (counting, printing, filling in a field on `self`) | `()` |
+| collects a value from every node it visits | `Vec<T>` |
+| looks for the first matching node and stops | `Option<T>` |
+| builds something else | a custom type |
+
+If your visitor can't fail, use `Error = std::convert::Infallible`.
+
+`combine` is the one method every implementation must write. tree-sitter
+hands you a node's children one at a time; `combine` is where their
+`Output`s get folded into that node's own `Output`. Every other method in
+the trait already has a sensible default body, so a new visitor can start
+with just `combine`.
+
+### One method per grammar rule
+
+For `decls.bnf` the trait has one method per kind (`visit_program`,
+`visit_decl`, `visit_expr`, `visit_ident`, `visit_num`), the `visit()`
+dispatcher, and five ANTLR-mirroring helper methods with default bodies.
+`decl` has two fields, so its doc comment lists both:
 
 ```rust
 /// Visits a `decl` node.
@@ -185,9 +230,9 @@ fn visit_decl(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self::
 }
 ```
 
-`ident` and `num` have no visible children of their own, so they're leaves —
-each is a single token with no substructure at all, so there's no "Anonymous
-children" section either:
+`ident` and `num` have no visible children of their own — each is a
+single token, with no substructure at all. So they're leaves, and there's
+no "Anonymous children" section either:
 
 ```rust
 /// Visits a `ident` node.
@@ -199,8 +244,10 @@ fn visit_ident(&mut self, node: SourceNode<'tree>) -> Result<Self::Output, Self:
 }
 ```
 
-If you've used ANTLR's `AbstractParseTreeVisitor`, the shape should feel
-familiar — the trait's own header doc comment includes this table:
+### ANTLR correspondence
+
+If you've used ANTLR's `AbstractParseTreeVisitor`, this should feel
+familiar. The trait's own doc comment includes this table:
 
 | ANTLR (`AbstractParseTreeVisitor`) | Here                                                            |
 |-------------------------------------|-----------------------------------------------------------------|
@@ -211,24 +258,16 @@ familiar — the trait's own header doc comment includes this table:
 | `visitErrorNode(node)`               | `Visitor::error_visitor`                                          |
 | (no ANTLR analogue)                  | `Visitor::missing_visitor`, for tree-sitter's `MISSING` nodes    |
 
-The one thing without an ANTLR equivalent is `missing_visitor`: tree-sitter's
-error recovery can insert a zero-width `MISSING` node standing in for a token
-the parser expected but never found. `Node::kind()` reports the *expected*
-kind on such a node, not a distinct "missing" kind, so `visit()` checks
-`Node::is_missing()` before ever matching on the kind, and routes there
-instead.
+One thing has no ANTLR equivalent: `missing_visitor`. tree-sitter's error
+recovery can insert a zero-width `MISSING` node, standing in for a token
+the parser expected but never found. `Node::kind()` reports the
+*expected* kind on that node — not a distinct "missing" kind. So `visit()`
+checks `Node::is_missing()` first, before matching on kind, and routes
+there instead.
 
-`combine` is the one method you must implement; everything else has a
-default body. Which shape to give it depends on what you're computing:
+### `combine` in practice
 
-| Output type              | Typical `combine` body                        |
-|---------------------------|-------------------------------------------------|
-| `()` (side-effect)        | `Ok(())`                                        |
-| `Vec<T>` (collect)        | `Ok(results.into_iter().flatten().collect())`   |
-| `Option<T>` (find-first)  | `Ok(results.into_iter().flatten().next())`      |
-
-`examples/walk.rs`'s `Counter` uses the first pattern, implementing only
-`combine`:
+`examples/walk.rs`'s `Counter` implements only `combine`:
 
 ```rust
 struct Counter {
@@ -246,12 +285,12 @@ impl<'t> Visitor<'t> for Counter {
 }
 ```
 
-`combine` runs exactly once per node visited — every default `visit_*`
+`combine` runs exactly once per visited node — every default `visit_*`
 method eventually calls it, whether through `children_visitor`'s fold or
-`default_result`'s `combine(vec![])` — so counting `combine` calls counts
-every named node in the tree without touching a single per-kind method.
-(`children_visitor` iterates `named_children`, so anonymous tokens like
-`'='`/`';'` are never visited and never counted.)
+`default_result`'s `combine(vec![])`. So counting `combine` calls counts
+every named node in the tree, without touching a single per-kind method.
+(`children_visitor` only visits named children, so anonymous tokens like
+`'='`/`';'` are never counted.)
 
 ## Running it
 
@@ -270,21 +309,25 @@ that — 4 nodes per `decl`, 8 total, plus `program` itself — `9` in total.)
 
 ## A real use: extracting declared names
 
-Say you want the list of names declared by a `decls.bnf` program, ignoring
-any identifiers that appear only on the right-hand side of `=`. Override
-`visit_ident` to capture a leaf's own text, and override `visit_decl` to
-visit *only* its `target` field — skipping `value` entirely, so a name used
-inside an expression never gets collected as if it were a declaration. Save
-the following as `examples/decl_extractor.rs` inside `decls/` — no need to
-touch `Cargo.toml`, Cargo picks up any file dropped into `examples/`
-automatically, so it can live alongside `walk.rs` as a second example:
+Say you want every name declared by a `decls.bnf` program — but not a name
+that only appears on the right-hand side of `=`.
 
-Every `visit_*` method receives a `SourceNode`, which bundles the
-`tree_sitter::Node` with the source text it was parsed from — so
-`DeclExtractor` doesn't need to store `source` itself the way a bare
-`Node<'tree>`-based visitor would; `node.source` is already there, and
-`node.utf8_text(...)` reaches `Node`'s own method through `SourceNode`'s
-`Deref` impl.
+Two overrides do it:
+
+- `visit_ident` captures a leaf's own text.
+- `visit_decl` visits *only* its `target` field, skipping `value`
+  entirely. That's what stops a name used inside an expression from being
+  collected as if it were a declaration.
+
+Save this as `examples/decl_extractor.rs` inside `decls/`. Cargo picks up
+any file dropped into `examples/` automatically, so this needs no
+`Cargo.toml` change — it lives alongside `walk.rs` as a second example.
+
+Every `visit_*` method receives a `SourceNode`, not a bare
+`tree_sitter::Node`. `SourceNode` bundles the node with the source text it
+was parsed from, so `node.text()` — a method only `SourceNode` has —
+returns that node's own text directly, with no source-slicing to do
+yourself:
 
 ```rust
 use decls::visitor::{SourceNode, Visitor};
@@ -300,7 +343,7 @@ impl<'t> Visitor<'t> for DeclExtractor {
     }
 
     fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
-        Ok(vec![node.utf8_text(node.source.as_bytes()).unwrap().to_string()])
+        Ok(vec![node.text().to_string()])
     }
 
     fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
@@ -320,86 +363,98 @@ fn main() {
 
 `visit_program`'s default body (`children_visitor`) already does the right
 thing: it visits every `decl`, and `combine`'s `flatten` concatenates their
-results. Given `x = 1; y = x;`, `DeclExtractor` returns `["x", "y"]` — the
-declared names, not `x`'s later use as a value. Run it with
-`cargo run --example decl_extractor` from inside `decls/`; it exits silently
-if the extracted names match, and panics on its own `assert_eq!` otherwise.
+results. Given `x = 1;` then `y = x;`, `DeclExtractor` returns
+`["x", "y"]` — the declared names, not `x`'s later use as a value.
+
+Run it from inside `decls/`:
+
+```sh
+cargo run --example decl_extractor
+```
+
+It exits silently if the extracted names match, and panics on its own
+`assert_eq!` otherwise.
 
 ## Keeping the grammar in sync
 
-You've now hand-edited the scaffolded crate twice — once implicitly, by
-adding `examples/decl_extractor.rs`, and it's natural to eventually want a
-hand-written `Visitor` implementation registered in `lib.rs` too. So it's
-worth knowing what happens the next time you change `decls.bnf` and want to
-regenerate everything derived from it.
+You've now hand-edited the scaffolded crate, by adding
+`examples/decl_extractor.rs`. You'll likely want to register a
+hand-written `Visitor` in `lib.rs` too, eventually. So it's worth knowing
+what a rerun does.
 
-Re-running `scaffold` after editing the grammar is safe: `grammar.js`,
-`src/*`, `bindings/rust/build.rs`, and `bindings/rust/visitor.rs` are
-regenerated every time so they always track the current grammar, but
-`tree-sitter.json`, `Cargo.toml`, `bindings/rust/lib.rs`,
-`examples/walk.rs`, `queries/highlights.scm`, and `.gitignore` are only
-ever written once — if they already exist, `scaffold` leaves them alone,
-so hand-written code (and any highlighting refinements — see
-[Refine the highlights skeleton](06-end-to-end.md#step-5--refine-the-highlights-skeleton))
-survives a grammar change. Since `queries/highlights.scm` is frozen after
-its first write, it won't pick up new rules on its own; regenerate it
-explicitly with `ts-bnf-tool highlights -o queries/highlights.scm` when the
-grammar gains rules you want highlighted.
+Editing `decls.bnf` and rerunning `scaffold` is safe: the
+["What `scaffold` creates"](#what-scaffold-creates) table above already
+says which files get regenerated and which don't. Your hand-written code
+is never touched.
+
+One exception worth calling out on its own: `queries/highlights.scm` is
+written once, then frozen. It won't pick up new grammar rules by itself.
+Regenerate it explicitly when the grammar gains rules you want
+highlighted:
+
+```sh
+ts-bnf-tool highlights -o queries/highlights.scm decls.bnf
+```
+
+(Any hand-written refinements you've made survive a manual `highlights`
+rerun the same way — see
+[Refine the highlights skeleton](06-end-to-end.md#step-5--refine-the-highlights-skeleton).)
 
 ### `make generate`
 
-The scaffolded `Makefile` wraps a rerun in one target, so there's nothing to
-remember — from inside `decls/`:
+The scaffolded `Makefile` wraps a rerun in one target. From inside
+`decls/`:
 
 ```sh
 $ make generate
 ```
 
 This reruns `ts-bnf-tool scaffold .` whenever `decls.bnf` or
-`ts-bnf-tool.toml` is newer than `bindings/rust/visitor.rs`, and is a no-op
-otherwise. Just editing `decls.bnf` and running `make generate` again is
-the whole workflow from here on.
+`ts-bnf-tool.toml` is newer than `bindings/rust/visitor.rs`. Otherwise
+it's a no-op. From here on, the whole workflow is: edit `decls.bnf`, run
+`make generate`.
 
 ### Rerunning without repeating anything
 
-`ts-bnf-tool scaffold .` (what `make generate` runs) is itself worth
-knowing: pointing `scaffold` at the crate's own *directory*, instead of its
-grammar file, reruns it using whatever `ts-bnf-tool.toml` already
-recorded — the bundled grammar's filename, `--name`, `--ast-types`,
-`--merge-config` — with no flags needed at all. A flag given anyway
-overrides what's recorded and updates `ts-bnf-tool.toml` to match, except
-`--ast-types`, a one-way switch: it can be added on a later rerun but never
-removed.
+`ts-bnf-tool scaffold .` — what `make generate` runs — is worth knowing on
+its own. Point `scaffold` at the crate's own *directory*, instead of its
+grammar file, and it reruns using whatever `ts-bnf-tool.toml` already
+recorded: the bundled grammar's filename, `--name`, `--ast-types`,
+`--merge-config`. No flags needed.
+
+Pass a flag anyway, and it overrides what's recorded — `ts-bnf-tool.toml`
+is updated to match. One exception: `--ast-types` is a one-way switch. You
+can add it on a later rerun, but never remove it.
 
 ### The mismatch guard
 
-Once a crate has a bundled grammar recorded, rerunning `scaffold` (pointed
-at a `.bnf` file rather than the directory) with a *different* filename is
-refused outright, rather than silently swapping the bundled grammar or
-ignoring the new file:
+A crate remembers which grammar file it was bundled from. Point `scaffold`
+at a *different* `.bnf` file for that same crate (rather than the
+directory), and it refuses — it won't silently swap the bundled grammar or
+ignore the new file:
 
 ```
 $ ts-bnf-tool scaffold --output-dir decls other.bnf
 error: a different grammar file ('decls.bnf') is already bundled in decls; scaffold again with that file, or remove/rename it first if you mean to replace it
 ```
 
-Files pulled in via `%include` aren't covered by this guard — they're
-freely re-bundled as the include graph changes (see below).
+This guard doesn't cover files pulled in via `%include` — those are freely
+re-bundled as the include graph changes (see below).
 
 ### Bundling `%include`d files
 
-If `decls.bnf` itself `%include`s another file, `scaffold` bundles the
-*whole* include closure, not just the root file: each included file lands
-at the same path relative to the crate root that it had relative to the
-root grammar's own directory, and the `%include` directive itself is copied
-unchanged — it already resolves correctly from its new location, since
-`%include` paths are always relative to the file that names them. Unlike
-the root grammar, included files are **not** covered by the mismatch guard
-above; the include graph is freely re-bundled every time it changes, with
-no refusal.
+If `decls.bnf` `%include`s another file, `scaffold` bundles the *whole*
+include closure — not just the root file. Each included file lands at the
+same path, relative to the crate root, that it had relative to the root
+grammar's own directory. The `%include` directive itself is copied
+unchanged; it already resolves correctly from the new location, since
+`%include` paths are always relative to the file that names them.
 
-An `%include` that resolves *outside* the root grammar's own directory tree
-is left external instead of being bundled or rewritten — `scaffold` still
+Unlike the root grammar, included files aren't covered by the mismatch
+guard above. The include graph is freely re-bundled every time it changes.
+
+An `%include` that resolves *outside* the root grammar's own directory
+tree is left external — not bundled, not rewritten. `scaffold` still
 succeeds, but warns:
 
 ```
@@ -408,39 +463,43 @@ note: /path/outside/child.bnf is outside /path/to/decls; leaving it unbundled
 
 ### Non-in-place scaffolding
 
-Pointing `scaffold` at an external `.bnf` and a *fresh* output directory —
-today's original default, still fully supported — still bundles a copy on
-that first run, but now prints a note reminding you which copy is live from
-here on:
+You can also point `scaffold` at an external `.bnf` file and a *fresh*
+output directory — the original workflow, still fully supported. It
+bundles a copy on that first run, and prints a note telling you which copy
+is live from here on:
 
 ```
 $ ts-bnf-tool scaffold --name decls --output-dir decls path/to/decls.bnf
 bundled a copy of decls.bnf into decls; edit that copy from now on — path/to/decls.bnf is no longer read
 ```
 
-From that point on there are *two* copies of the grammar on disk — the
-original external file and the bundled one inside `decls/` — and only the
-bundled copy is ever read again. The in-place workflow from the start of
-this chapter avoids that split entirely, by making them the same file.
+From here on there are *two* copies of the grammar on disk: the original
+external file, and the bundled one inside `decls/`. Only the bundled copy
+is ever read again. The in-place workflow from the start of this chapter
+avoids that split — source and destination are the same file.
 
 ## Typed node structs (`--ast-types`)
 
-The generated `Visitor` trait works with `SourceNode` — a thin wrapper
-around `tree_sitter::Node` plus the source text — and
-`node.kind()`/`children_by_field_name` reached through it — you get
-traversal and dispatch, but node payloads stay stringly-typed. Passing
-`--ast-types` alongside `scaffold` adds a second, independent layer on top:
-`bindings/rust/ast.rs`, one owned Rust struct per grammar rule (no `'tree`
-lifetime survives construction), each with a
-`TryFrom<super::visitor::SourceNode<'tree>>` impl and a `_pragma:
-runtime::Pragma` field recording its start line/column. A leaf kind — one
-with no visible children of its own — additionally carries `_text: String`.
+The generated `Visitor` trait works with `SourceNode`: a thin wrapper
+around `tree_sitter::Node` plus the source text. You get traversal and
+dispatch through it (`node.kind()`, `children_by_field_name`, and
+`node.text()`), but a node's payload stays stringly-typed — there's no
+Rust struct matching your grammar's shape.
+
+`--ast-types` adds that, as a second, independent layer:
+`bindings/rust/ast.rs`, one owned Rust struct per grammar rule. "Owned"
+means no `'tree` lifetime survives construction — once built, a value
+doesn't borrow from the parse tree anymore. Each struct gets a
+`TryFrom<super::visitor::SourceNode<'tree>>` impl, and a `_pragma:
+runtime::Pragma` field recording its start line/column. A leaf kind (one
+with no visible children of its own) also gets a `_text: String` field.
+
 `Pragma` and `BuildError` (the shared `TryFrom` error type) live inside an
-inner `runtime` module rather than at `ast.rs`'s own top level, and the two
-injected fields are spelled with a leading underscore — both so that a
-grammar rule or field genuinely named `pragma`, `text`, `build_error`, or
-`source_node` can never collide with these fixed, tool-injected names; see
-"A note on vocabulary" below.
+inner `runtime` module, not at `ast.rs`'s own top level. And the two
+injected fields start with an underscore. Both choices exist for the same
+reason: so a grammar rule or field genuinely named `pragma`, `text`,
+`build_error`, or `source_node` can never collide with these fixed,
+tool-injected names — see "A note on vocabulary" below.
 
 Try it — still inside `decls/`:
 
@@ -528,32 +587,35 @@ field label of its own, and only labeled fields become struct fields; give
 it one, e.g. `program -> items: decl* ;`, to get a `pub items: Vec<Decl>`
 field instead.)
 
-Like `visitor.rs`, `ast.rs` is always regenerated from the current grammar —
-there's no hand-edit support for it. If you need more fields on a generated
-type, wrap it in your own struct rather than editing the generated file; a
-rerun of `scaffold --ast-types` overwrites it every time, same as
-`visitor.rs`, while `examples/ast.rs` itself follows the same
-write-once-then-leave-alone rule as `examples/walk.rs`.
+Like `visitor.rs`, `ast.rs` is always regenerated from the current grammar
+— there's no hand-edit support for it. If you need more fields on a
+generated type, wrap it in your own struct rather than editing the
+generated file. A rerun of `scaffold --ast-types` overwrites `ast.rs` every
+time, same as `visitor.rs`, while `examples/ast.rs` itself follows the
+same write-once-then-leave-alone rule as `examples/walk.rs`.
 
 **A note on vocabulary.** Grammar rule and field names are otherwise
-completely unrestricted — including `pragma`, `text`, `build_error`, and
-`source_node`, all plausible names a real grammar might want (a `pragma`
-directive rule, a `text` leaf, a field called `text`). A kind named any of
+completely unrestricted. `pragma`, `text`, `build_error`, `source_node` —
+all plausible names a real grammar might want (a `pragma` directive rule, a
+`text` leaf, a field called `text`) — are all fine. A kind named any of
 these generates an ordinary top-level `struct Pragma`/`Text`/`BuildError`/
 `SourceNode`, distinct from the tool's own fixed `runtime::Pragma`,
-`runtime::BuildError`, and `super::visitor::SourceNode`. The only
-restriction is on field labels: one starting with `_` is rejected at
-generation time, since that whole leading-underscore namespace is reserved
-for the fields this tool injects itself (`_pragma`, `_text`).
+`runtime::BuildError`, and `super::visitor::SourceNode`.
+
+The only real restriction is on field labels: one starting with `_` is
+rejected at generation time. That whole leading-underscore namespace is
+reserved for the fields this tool injects itself (`_pragma`, `_text`).
 
 ### Collapsing related kinds (`--merge-config`)
 
-A grammar sometimes has several kinds that are really one construct from the
-caller's point of view — `for_statement`/`while_statement`/`repeat_statement`
-all being "a loop", say. Left alone, `--ast-types` gives each its own
-unrelated struct. Passing `--merge-config <path>` alongside `--ast-types`
-collapses a group of kinds like that into a single Rust `enum`, self-
-discriminating on the Rust type tag rather than a stringly `kind` field.
+A grammar sometimes has several kinds that are really one construct, from
+the caller's point of view. `for_statement`, `while_statement`, and
+`repeat_statement` might all just be "a loop." Left alone, `--ast-types`
+gives each its own, unrelated struct.
+
+`--merge-config <path>`, passed alongside `--ast-types`, collapses a group
+of kinds like that into one Rust `enum`. The enum's own variants
+discriminate on the Rust type — no stringly-typed `kind` field needed.
 
 The config is TOML with up to three kinds of entry:
 
@@ -568,29 +630,29 @@ kind = "comment"
 target = "DocComment"
 ```
 
-- **`merge`** collapses every kind in `from` into one `enum` named `target`,
-  one variant per source kind.
+- **`merge`** collapses every kind in `from` into one `enum` named
+  `target`, one variant per source kind.
 - **`passthrough`** renames a single kind's generated struct without
   otherwise changing it — here, `comment`'s struct is emitted as
   `DocComment` instead of the `Comment` its kind name would otherwise
   derive.
-- **`ignore`** (not used above) explicitly marks a kind as "leave it as the
-  default baseline struct" — see the coverage report below for why you'd
-  write this out loud instead of just doing nothing.
+- **`ignore`** (not used above) explicitly marks a kind as "leave it as
+  the default baseline struct" — see the coverage report below for why
+  you'd write this out loud instead of just doing nothing.
 
-Every `merge`/`passthrough` entry's own `target` is emitted verbatim as a
-Rust `struct`/`enum` name, so it must be a valid, non-keyword Rust
-identifier (e.g. `Loop`, not `loop`, `my-loop`, or an empty string) —
-`scaffold` rejects the config up front otherwise, rather than emitting
-non-compiling Rust.
+Every `merge`/`passthrough` entry's `target` is emitted verbatim as a Rust
+`struct`/`enum` name. It must be a valid, non-keyword Rust identifier —
+`Loop` is fine; `loop`, `my-loop`, and an empty string aren't. `scaffold`
+rejects an invalid config up front, rather than emit Rust that won't
+compile.
 
-One kind can't be merged away, though: the grammar's own root rule. The
-scaffolded `examples/ast.rs` needs one concrete, nameable root type to
-construct (`use {crate}::ast::{RootKind};`) — a kind claimed by a `merge`
-entry becomes a private variant of that entry's enum, which isn't a usable
-substitute. A `merge` entry naming the root rule in its `from` list is
-rejected up front, the same as an invalid `target`; use `passthrough` for
-the root rule instead if you want to rename its struct.
+One kind can't be merged away: the grammar's own root rule. The scaffolded
+`examples/ast.rs` needs one concrete, nameable root type to construct
+(`use {crate}::ast::{RootKind};`). A kind claimed by a `merge` entry
+becomes a private variant of that entry's enum instead — not a usable
+substitute. So a `merge` entry naming the root rule in its `from` list is
+rejected up front, the same as an invalid `target`. To rename the root
+rule's struct, use `passthrough` instead.
 
 Suppose your grammar has a `program -> items: (for_statement | while_statement
 | repeat_statement)* doc: comment ;` rule. Running
@@ -631,27 +693,27 @@ impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for Loop {
 }
 ```
 
-`ForStatement`/`WhileStatement`/`RepeatStatement` themselves still exist and
-still each get the ordinary `TryFrom` impl `--ast-types` always generates —
-they're just no longer `pub`, so `Loop`'s three variants are the only way
-code outside the generated crate ever sees them. `Comment`'s struct doesn't
-exist at all under that name; it's emitted as `DocComment` per the
-`passthrough` entry, `pub` like any ordinary kind.
+`ForStatement`, `WhileStatement`, and `RepeatStatement` still exist. Each
+still gets the ordinary `TryFrom` impl `--ast-types` always generates —
+they're just no longer `pub`. `Loop`'s three variants are the only way
+code outside the generated crate ever sees them. `Comment`'s struct
+doesn't exist at all under that name; it's emitted as `DocComment`, per
+the `passthrough` entry, `pub` like any ordinary kind.
 
-**Coverage report.** A grammar can drift out of sync with its merge config —
-a new rule gets added, and nobody's decided yet whether it should merge,
-passthrough, or be left alone. Whenever `--merge-config` is passed,
-`scaffold` prints one line to stderr for every visible kind not named by any
+**Coverage report.** A grammar can drift out of sync with its merge
+config: a new rule gets added, and nobody's decided yet whether it should
+merge, passthrough, or stay alone. So whenever `--merge-config` is passed,
+`scaffold` prints one stderr line for every visible kind not named by any
 `merge`, `passthrough`, or `ignore` entry:
 
 ```
 warning: kind 'program' is not covered by --merge-config (no merge/passthrough/ignore entry); it will be emitted as an ordinary baseline struct
 ```
 
-This is advisory only — it never affects the exit code, and the uncovered
-kind still generates normally as an ordinary `pub` struct, exactly as if
+This is advisory only. It never affects the exit code, and the uncovered
+kind still generates normally, as an ordinary `pub` struct — exactly as if
 `--merge-config` hadn't been passed for that kind at all. Once you've
-reviewed a grammar's kinds and are happy leaving the rest as ordinary
+reviewed a grammar's kinds, and you're happy leaving the rest as ordinary
 structs, silence the report with the wildcard `ignore` entry:
 
 ```toml
@@ -662,21 +724,23 @@ target = "Loop"
 from = ["for_statement", "while_statement", "repeat_statement"]
 ```
 
-`ignore = ["*"]` must be the config's only `ignore` entry — it means "every
-kind not otherwise claimed", so listing specific kinds alongside it would be
-redundant at best and a likely typo at worst; `check_merge_config` rejects
-the combination outright.
+`ignore = ["*"]` must be the config's only `ignore` entry. It means "every
+kind not otherwise claimed" — listing specific kinds alongside it would be
+redundant at best, a likely typo at worst. `check_merge_config` rejects
+that combination outright.
 
 ## Typed field accessors without ownership
 
-If you'd rather have typed field accessors directly over borrowed
-`tree_sitter::Node`s — no owned copy, no `'tree`-free struct, no
-merge/collapse — see [type-sitter](https://github.com/Jakobeha/type-sitter),
-which generates those from the same `node-types.json` the generated crate's
-`NODE_TYPES` constant also embeds. It composes with the `Visitor` trait the
-same way it always has, independently of `--ast-types`: a `Visitor`
-implementation can construct type-sitter's typed wrappers from the `Node`
-inside the `SourceNode` it's handed.
+Want typed field accessors directly over borrowed `tree_sitter::Node`s —
+no owned copy, no `'tree`-free struct, no merge/collapse? See
+[type-sitter](https://github.com/Jakobeha/type-sitter). It generates those
+from the same `node-types.json` the generated crate's `NODE_TYPES`
+constant also embeds.
+
+It composes with the `Visitor` trait the same way it always has,
+independently of `--ast-types`: a `Visitor` implementation can construct
+type-sitter's typed wrappers from the `Node` inside the `SourceNode` it's
+handed.
 
 ---
 
