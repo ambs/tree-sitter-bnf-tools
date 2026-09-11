@@ -308,7 +308,9 @@ impl RustVisitor<'_> {
         writeln!(f, "{}", indent(&body, 4))
     }
 
-    /// Emits the `SourceNode` struct.
+    /// Emits the `SourceNode` struct, its `text()` accessor, and its `Deref`
+    /// impl, flush-left — these sit at the file's top level, after the
+    /// trait's own closing `}`, not inside it, so no [`indent`] call here.
     fn fmt_source_node(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let body = indoc! {r#"
             /// A tree-sitter node bundled with the source text it was parsed from.
@@ -322,6 +324,13 @@ impl RustVisitor<'_> {
                 pub source: &'tree str,
             }
 
+            impl<'tree> SourceNode<'tree> {
+                /// This node's own source text.
+                pub fn text(&self) -> &'tree str {
+                    &self.source[self.node.byte_range()]
+                }
+            }
+
             /// Lets `visit_*` bodies call `Node` methods (`.kind()`, `.start_position()`,
             /// …) directly on a `SourceNode` without unwrapping `.node` first.
             impl<'tree> std::ops::Deref for SourceNode<'tree> {
@@ -332,7 +341,7 @@ impl RustVisitor<'_> {
                 }
             }
         "#};
-        writeln!(f, "\n{}", indent(body.trim_end(), 4))
+        writeln!(f, "\n{}", body.trim_end())
     }
 
     /// Emits the `visit()` dispatcher.
@@ -614,6 +623,24 @@ mod tests {
         assert!(out.trim_end().ends_with('}'));
     }
 
+    // ── fmt_source_node ──────────────────────────────────────────────────
+
+    #[test]
+    fn source_node_struct_is_not_indented() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        let out = rv(&g, "g").to_string();
+        assert!(out.contains("\npub struct SourceNode<'tree> {"));
+        assert!(!out.contains("    pub struct SourceNode<'tree> {"));
+    }
+
+    #[test]
+    fn source_node_has_a_text_method() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        let out = rv(&g, "g").to_string();
+        assert!(out.contains("pub fn text(&self) -> &'tree str {"));
+        assert!(out.contains("&self.source[self.node.byte_range()]"));
+    }
+
     // ── fmt_core_members ────────────────────────────────────────────────
 
     #[test]
@@ -662,12 +689,12 @@ mod tests {
     fn core_members_are_indented_one_level() {
         // Every member lives inside `pub trait Visitor<'tree> { … }`, so
         // none of its lines should be flush against the file's left margin.
+        // Scoped to the trait body alone via `trait_body` — unlike a plain
+        // `split_once`, this excludes `SourceNode` and friends, which are
+        // emitted after the trait closes and are correctly unindented.
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
         let out = rv(&g, "g").to_string();
-        let members = out
-            .split_once("pub trait Visitor<'tree> {\n")
-            .expect("output contains the trait's opening line")
-            .1;
+        let members = trait_body(&out);
         for line in members.lines() {
             if line.is_empty() || line == "}" {
                 continue;

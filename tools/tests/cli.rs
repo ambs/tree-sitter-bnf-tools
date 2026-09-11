@@ -2894,7 +2894,7 @@ const TUTORIAL_11_DECL_EXTRACTOR_RS: &str = indoc! {r#"
         }
 
         fn visit_ident(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
-            Ok(vec![node.utf8_text(node.source.as_bytes()).unwrap().to_string()])
+            Ok(vec![node.text().to_string()])
         }
 
         fn visit_decl(&mut self, node: SourceNode<'t>) -> Result<Vec<String>, Self::Error> {
