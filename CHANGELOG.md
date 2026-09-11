@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `editors/vscode/`: a minimal local extension providing a TextMate grammar
+  for the BNF dialect (rule names, `->`/`=>`, literals, patterns,
+  directives, comments), so VS Code users get `.bnf` syntax highlighting.
+  Documented in the new VS Code section of `docs/editors.md` (#325).
 - `check` now emits a second diagnostic pointing at the earlier declaration
   whenever a rule, `%axiom`, or `%word` is declared more than once — e.g.
   `warning: previous definition of rule 'item' is here (lib.bnf:1)`

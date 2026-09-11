@@ -1,0 +1,100 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "BNF",
+  "scopeName": "source.bnf",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#directives" },
+    { "include": "#precedence" },
+    { "include": "#strings" },
+    { "include": "#regex-pattern" },
+    { "include": "#rule-definition" },
+    { "include": "#field-label" },
+    { "include": "#operators" },
+    { "include": "#punctuation" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.number-sign.bnf", "match": "#.*$" }
+      ]
+    },
+    "directives": {
+      "patterns": [
+        {
+          "name": "keyword.control.directive.bnf",
+          "match": "%(axiom|word|conflicts|precedences|inline|supertypes|extras|externals|reserved|include)\\b"
+        }
+      ]
+    },
+    "precedence": {
+      "patterns": [
+        {
+          "name": "keyword.operator.precedence.bnf",
+          "match": "%(prec\\.dynamic|prec\\.left|prec\\.right|prec)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.bnf",
+          "match": "'([^'\\\\\\r\\n]|\\\\.)*'"
+        },
+        {
+          "name": "string.quoted.double.bnf",
+          "match": "\"([^\"\\\\\\r\\n]|\\\\.)*\""
+        }
+      ]
+    },
+    "regex-pattern": {
+      "patterns": [
+        {
+          "name": "string.regexp.bnf",
+          "match": "/([^/\\[\\\\]|\\[[^\\]]*\\]|\\\\.)+/[a-z]*"
+        }
+      ]
+    },
+    "rule-definition": {
+      "patterns": [
+        {
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(->)",
+          "captures": {
+            "1": { "name": "entity.name.function.bnf" },
+            "2": { "name": "keyword.operator.arrow.bnf" }
+          }
+        }
+      ]
+    },
+    "field-label": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.bnf",
+          "match": "[A-Za-z_][A-Za-z0-9_]*:(?!:)"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.bnf", "match": "->" },
+        { "name": "keyword.operator.alias.bnf", "match": "=>" },
+        { "name": "punctuation.bracket.token.bnf", "match": "<<!|<<|>>" },
+        { "name": "keyword.operator.bnf", "match": "[|+*?]" }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.terminator.bnf", "match": ";" },
+        { "name": "punctuation.separator.bnf", "match": "[,:]" },
+        { "name": "punctuation.bracket.round.bnf", "match": "[()]" },
+        { "name": "punctuation.bracket.square.bnf", "match": "[\\[\\]]" }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        { "name": "variable.other.bnf", "match": "[A-Za-z_][A-Za-z0-9_]*" }
+      ]
+    }
+  }
+}
