@@ -1391,7 +1391,7 @@ mod tests {
         let (g, diags) = parse_source(indoc! {"
             %precedences [foo, 'bar'], [baz]
             root -> foo baz ;
-            foo -> /a/ ;
+            foo -> (/a/ %prec 'bar') ;
             baz -> /b/ ;
         "})
         .unwrap();
@@ -1513,7 +1513,7 @@ mod tests {
     fn reserved_directive_literal_entries() {
         let (g, diags) = parse_source(indoc! {"
             %reserved kw: ['if', 'else'], prop: []
-            root -> 'if' ;
+            root -> ('if' %reserved prop) ;
         "})
         .unwrap();
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
