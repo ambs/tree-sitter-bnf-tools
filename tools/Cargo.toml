@@ -24,7 +24,7 @@ workspace = true
 
 [dependencies]
 tree-sitter-bnf = { path = "../tree-sitter-bnf", version = "0.5.0" }
-tree-sitter = "0.26.8"
+tree-sitter = "0.27.0"
 clap = { version = "4", features = ["derive"] }
 indexmap = "2"
 serde = { version = "1", features = ["derive"] }
