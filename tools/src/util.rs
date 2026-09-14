@@ -48,7 +48,7 @@ fn collect_comment_bytes(node: tree_sitter::Node<'_>, ranges: &mut Vec<(usize, u
         ranges.push((node.start_byte(), node.end_byte()));
         return;
     }
-    for i in 0..node.child_count() as u32 {
+    for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             collect_comment_bytes(child, ranges);
         }
@@ -167,7 +167,7 @@ fn collect_syntax_errors(node: &Node<'_>, ctx: &SourceFile<'_>, messages: &mut V
         return;
     }
 
-    for i in 0..node.child_count() as u32 {
+    for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             collect_syntax_errors(&child, ctx, messages);
         }
