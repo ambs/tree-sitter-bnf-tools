@@ -32,7 +32,7 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
-      - run: npm install -g tree-sitter-cli@0.26.9
+      - run: npm install -g tree-sitter-cli@0.27.0
       # graphviz provides `dot`, needed only when grammar-check's
       # git-history shortcut (#296) decides grammar/railroad.svg or
       # grammar/graph.pdf are actually stale and falls back to
