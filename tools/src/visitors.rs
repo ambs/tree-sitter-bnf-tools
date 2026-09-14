@@ -118,7 +118,7 @@ fn visit_grammar_inner(
 ) -> Result<(Grammar, Vec<Diagnostic>), ParseError> {
     ensure_node_type(node, "grammar")?;
     let mut grammar = Grammar::new();
-    let count = node.child_count() as u32;
+    let count = node.child_count();
     for i in 0..count {
         let child = node.child(i).expect("child index in bounds");
         match child.kind() {
@@ -531,7 +531,7 @@ fn visit_rule_body(
     ctx: &SourceFile<'_>,
     depth: u32,
 ) -> Result<GrammarNode, ParseError> {
-    let count = node.child_count() as u32;
+    let count = node.child_count();
     if count == 1 {
         visit(grammar, &node.child(0).expect("child 0 exists"), ctx, depth)
     } else {
@@ -641,7 +641,7 @@ fn visit_symbol_seq(
         None
     };
 
-    let count = node.child_count() as u32;
+    let count = node.child_count();
     let symbol_count = if prec_annotation.is_some() {
         count - 1
     } else {
