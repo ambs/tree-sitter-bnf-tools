@@ -199,7 +199,7 @@ fn visit_reserved_directive(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
 ) -> Result<Vec<ReservedEntry>, ParseError> {
-    let items = (0..node.named_child_count())
+    let items = (0..node.named_child_count() as u32)
         .map(|j| {
             let item_node = node.named_child(j).expect("named child index in bounds");
             visit_reserved_item(&item_node, ctx)
@@ -219,7 +219,7 @@ fn visit_reserved_item(node: &Node<'_>, ctx: &SourceFile<'_>) -> ReservedEntry {
         .expect("valid UTF-8")
         .to_string();
 
-    let rule_names = (1..node.named_child_count())
+    let rule_names = (1..node.named_child_count() as u32)
         .map(|i| {
             visit_name_or_literal(
                 &node.named_child(i).expect("named child index in bounds"),
@@ -326,7 +326,7 @@ fn visit_include_directive(
 fn collect_directive_items(node: &Node<'_>, ctx: &SourceFile<'_>) -> Vec<DirectiveItem> {
     let line = node.start_position().row + 1;
     let filename = ctx.filename.to_string();
-    (0..node.named_child_count())
+    (0..node.named_child_count() as u32)
         .map(|i| {
             let name = node
                 .named_child(i)
@@ -381,10 +381,10 @@ fn visit_precedences_directive(
 ) -> Result<Vec<PrecedenceGroup>, ParseError> {
     let line = node.start_position().row + 1;
     let mut groups = Vec::new();
-    for i in 0..node.named_child_count() {
+    for i in 0..node.named_child_count() as u32 {
         let child = node.named_child(i).expect("named child index in bounds");
         if child.kind() == "precedenceGroup" {
-            let items = (0..child.named_child_count())
+            let items = (0..child.named_child_count() as u32)
                 .map(|j| {
                     let item_node = child.named_child(j).expect("named child index in bounds");
                     let name_or_literal = visit_name_or_literal(&item_node, ctx);
@@ -410,7 +410,7 @@ fn visit_externals_directive(
     node: &Node<'_>,
     ctx: &SourceFile<'_>,
 ) -> Result<Vec<NameOrLiteral>, ParseError> {
-    let items = (0..node.named_child_count())
+    let items = (0..node.named_child_count() as u32)
         .map(|j| {
             let item_node = node.named_child(j).expect("named child index in bounds");
             visit_name_or_literal(&item_node, ctx)
@@ -531,7 +531,7 @@ fn visit_rule_body(
     ctx: &SourceFile<'_>,
     depth: u32,
 ) -> Result<GrammarNode, ParseError> {
-    let count = node.child_count() as u32;
+    let count = node.child_count();
     if count == 1 {
         visit(grammar, &node.child(0).expect("child 0 exists"), ctx, depth)
     } else {
@@ -641,7 +641,7 @@ fn visit_symbol_seq(
         None
     };
 
-    let count = node.child_count() as u32;
+    let count = node.child_count();
     let symbol_count = if prec_annotation.is_some() {
         count - 1
     } else {
