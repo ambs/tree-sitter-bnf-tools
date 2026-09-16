@@ -7,23 +7,24 @@ nav_order: 12
 
 ## What `scaffold` is for
 
-Writing a tree-sitter-backed language tool by hand takes several steps. You
-run `tree-sitter generate`. You wire up a Rust crate around the generated C
-parser. You write a traversal that walks the tree without missing a node
-kind.
+Writing a tree-sitter-backed language tool by hand takes several
+steps, from running `tree-sitter generate`, creating the library (in
+the case of Rust, the crate) around the generated C parser, and
+finally, writing the traversal code, that walks the tree to produce
+your desired result.
 
 `ts-bnf-tool scaffold` does all of that for you. Point it at a `.bnf`
 grammar, and it produces a complete, self-contained Rust crate for parsing
 and traversing the described language. The crate includes:
 
-- the tree-sitter parser
-- an ANTLR-style `Visitor<'tree>` trait — one `visit_*` method per node
+- the tree-sitter parser;
+- an ANTLR-style `Visitor<'tree>` trait: one `visit_*` method per node
   kind, a `visit()` dispatcher, and a `combine`-based fold so you only
-  write the bodies you care about
-- a runnable example
-
-`cd` into the output directory and run `cargo run --example walk -- <file>`.
-It works immediately — no edits needed.
+  write the bodies you care about;
+- a runnable example (just `cd` into the output directory and run
+  `cargo run --example walk -- <file>`);
+- optionally, code to generate an Abstract Syntax Tree in Rust, where
+  traversal more easily.
 
 This is a Rust-only feature for now. The subcommand's name is deliberately
 target-language-neutral: a future target might scaffold a module or package
@@ -31,36 +32,37 @@ instead of a crate.
 
 ## Prerequisites
 
-`scaffold` shells out to the `tree-sitter` CLI to generate the C parser.
+`scaffold` calls directly the `tree-sitter` CLI to generate the C parser.
 The generated crate's `build.rs` then compiles `src/parser.c` with a C
 compiler, the first time you `cargo build`/`cargo run` it.
 
-Beyond `ts-bnf-tool` itself, you need:
+Thus, beyond `ts-bnf-tool` itself, you need:
 
-- **`tree-sitter-cli` >= 0.25 on `PATH`** (`npm install -g tree-sitter-cli`).
+- **`tree-sitter-cli` >= 0.27 on `PATH`** (`npm install -g tree-sitter-cli`).
   The generated crate targets ABI 15, which requires that version. Without
   it, `scaffold` fails with `` `tree-sitter` not found on PATH ``.
-- **A working C compiler** (`cc`/`gcc`/`clang`). Without it, `cargo build`/
-  `cargo run` fails compiling `src/parser.c`.
+- **A working C compiler** (`cc`, `gcc` or `clang`). Without it,
+  `cargo build` and `cargo run` will fail compiling `src/parser.c`.
 - **`ts-bnf-tool` itself, installed and on `PATH`.** The generated
-  `Makefile`'s `generate` target calls it directly (`$(BNF_TOOL) scaffold
-  .`), not through `cargo run`. If it isn't installed globally, override
-  `BNF_TOOL`: `make BNF_TOOL=/path/to/ts-bnf-tool generate`.
+  `Makefile`'s `generate` target calls it directly (`$(BNF_TOOL)
+  scaffold .`), not through `cargo run`. If it isn't installed
+  globally, override `BNF_TOOL`: `make BNF_TOOL=/path/to/ts-bnf-tool
+  generate`.
 
 ## Basic usage
 
 The best way to see what `scaffold` does is to run it. The recommended
-workflow is **in-place**: create the crate's folder first, put the grammar
-inside it, then point `scaffold` at that same folder. Source and
-destination end up being the same file, so there's only ever one copy of
-the grammar to keep in sync.
+workflow is **in-place**: create the crate's folder first, put the
+grammar inside it, then point `scaffold` at that same folder. Source
+and destination end up being the same file, so there's only one copy
+of the grammar to keep in sync.
 
 ```sh
 mkdir decls && cd decls
 ```
 
-Save this tiny declaration language as `decls.bnf` (you're now inside
-`decls/`, so this is `decls/decls.bnf` from outside it):
+Save this tiny declaration language as `decls.bnf` inside the folder
+you just created:
 
 ```bnf
 # decls.bnf: a tiny declaration language
@@ -71,11 +73,12 @@ ident -> /[a-z][a-zA-Z0-9_]*/ ;
 num -> /[0-9]+/ ;
 ```
 
-It describes programs made of `name = value;` declarations. A `program` is
-zero or more `decl`s. Each `decl` names a `target` identifier and gives it
-a `value`, which is either another identifier or a number.
+This grammar describes programs made of `name = value;`
+declarations. A `program` is zero or more `decl`. Each `decl` names a
+`target` identifier and gives it a `value`, which is either another
+identifier or a number.
 
-Now scaffold it, in place — from inside `decls/`:
+Now scaffold it, in place. Still inside `decls/`:
 
 ```sh
 ts-bnf-tool scaffold -o . decls.bnf
@@ -107,26 +110,26 @@ decls/
 
 ### What `scaffold` creates
 
-The table below lists every file, what it's for, and whether `scaffold`
-ever touches it again after the first run — which answers a question that
-comes up immediately: **is it safe to hand-edit this file?**
+The table below lists every file, what it's for, and whether
+`scaffold` ever touches it again after the first run. This is relevant
+so you know what files are safe to hand-edit.
 
 | File / directory | What it is | Can you edit it? |
 |---|---|---|
 | `decls.bnf` | The grammar you wrote. Always the source of truth. | **Yes** — edit this, then rerun `scaffold`. |
-| `grammar.js`, `src/` | The tree-sitter grammar and C parser. Files `grammar.js` and folder `src/` are exactly what `convert --generate` already produces — the real `tree-sitter generate` output, unchanged. | No — regenerated on every rerun. |
+| `grammar.js`, `src/` | The tree-sitter grammar and C parser. Files `grammar.js` and folder `src/` are exactly what `convert --generate` already produces. | No: regenerated on every rerun. |
 | `tree-sitter.json` | Tree-sitter's own package metadata file. | Written once, then left alone. Edit freely. |
 | `queries/highlights.scm` | A starter syntax-highlighting query. | Written once, then left alone. Edit/extend freely (see [Keeping the grammar in sync](#keeping-the-grammar-in-sync) below). |
 | `ts-bnf-tool.toml` | Records how the crate was scaffolded: the bundled grammar's filename, the crate name, and which flags were used. | Written once; a rerun updates only the fields matching a flag you actually pass. |
-| `Makefile` | A `generate` target that reruns `scaffold` for you. | Written once. Add your own targets. |
+| `Makefile` | A makefile with useful targets, like `generate` that reruns `scaffold` for you. | Written once. Add your own targets. |
 | `Cargo.toml` | The crate manifest. | Written once. Edit freely. |
-| `bindings/rust/build.rs` | Compiles `src/parser.c` (and `src/scanner.c`, if present). | No — regenerated on every rerun. |
+| `bindings/rust/build.rs` | Compiles `src/parser.c` (and `src/scanner.c`, if present). | No: regenerated on every rerun. |
 | `bindings/rust/lib.rs` | Parser bindings (`LANGUAGE`, `NODE_TYPES`), plus a `parse` convenience function. | Written once. **This is where you add `pub mod` for your own `Visitor` implementations.** |
-| `bindings/rust/visitor.rs` | The generated `Visitor<'tree>` trait (described below). | **No — always regenerated. Never hand-edit this file.** Write your own visitor in a different file instead, and register it in `lib.rs`. |
-| `examples/walk.rs` | A small program that parses a file and counts its nodes, implementing nothing but the trait's one required method (described below). | Written once. Edit it, or drop a new file into `examples/` — Cargo picks those up automatically. |
+| `bindings/rust/visitor.rs` | The generated `Visitor<'tree>` trait (described below). | **No: always regenerated. Never hand-edit this file.** Write your own visitor in a different file instead, and register it in `lib.rs`. |
+| `examples/walk.rs` | A small program that parses a file and counts its nodes (described below). | Written once. Edit it, or drop a new file into `examples/`: Cargo picks those up automatically. |
 | `.gitignore` | Ignores `/target`. | Written once. Extend freely. |
 
-`lib.rs`'s `parse` function looks like this:
+`lib.rs` includes the `parse` function, that looks like this:
 
 ```rust
 pub fn parse(source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Error>> {
@@ -138,15 +141,24 @@ pub fn parse(source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Erro
 }
 ```
 
-One exception to `lib.rs`'s "written once" rule: if you scaffolded without
-`--ast-types` and later rerun with it added, the rerun still inserts the
-one line it needs (`pub mod ast;`) into your existing `lib.rs` — otherwise
-the newly generated `examples/ast.rs` couldn't even compile. It never
-removes anything you've added yourself.
+This function takes a piece of source code in the target language you
+are parsing as a string and uses Tree-Sitter to turn it into a syntax
+tree.  If parsing succeeds, it returns the resulting `Tree` inside
+`Ok`; if configuring the parser fails, or Tree-Sitter cannot produce a
+tree, it returns an error instead.
+
+One exception to `lib.rs`'s "written once" rule: if you scaffolded
+without `--ast-types` (to generate the Abstract Syntax Tree nodes, as
+we'll see later) and later rerun with it added, the rerun still
+inserts the one line it needs (`pub mod ast;`) into your existing
+`lib.rs` --- otherwise the newly generated `examples/ast.rs` couldn't
+even compile. It never removes anything you've added yourself.
 
 ### Other ways to invoke it
 
-You aren't limited to the defaults used above:
+As discussed earlier, putting the `.bnf` file inside a folder, and
+using it as the target for `ts-bnf-tool`, is the simplest approach.
+But there are other options:
 
 ```sh
 ts-bnf-tool scaffold grammar.bnf                # crate in ./<name>, name from the filename
@@ -155,30 +167,31 @@ ts-bnf-tool scaffold --name decls grammar.bnf   # override the crate/grammar nam
 ts-bnf-tool scaffold --no-header grammar.bnf    # suppress generated-file comments
 ```
 
-`--name` also names the grammar in the generated trait's own doc comment.
-It defaults to the input filename's stem — that's why the `decls.bnf`
-example above needed no `--name` at all; its stem is already `decls`.
+`--name` also names the grammar in the generated trait's own doc
+comment.  It defaults to the input filename's stem. So, in our
+`decls.bnf` example above there was no need for the `--name` option:
+its stem is already `decls`.
 
 A hyphenated name (`my-lang`) is fine. `Cargo.toml`'s `[package] name`
-keeps the hyphen, since that's Cargo's own convention. Everywhere else —
-the tree-sitter grammar name, the generated C parser symbol, the module
-path `examples/*.rs` imports — the hyphen becomes an underscore
-(`my_lang`) instead, because tree-sitter's own `grammar()` call rejects a
-hyphenated name outright.
+keeps the hyphen, since that's Cargo's own convention. Everywhere else
+(the tree-sitter grammar name, the generated C parser symbol, the
+module path `examples/*.rs` imports) the hyphen becomes an underscore
+(`my_lang`) instead, because tree-sitter's own `grammar()` call
+rejects a hyphenated name outright.
 
 A name still invalid after that substitution (a leading digit, whitespace,
-…) is rejected up front, before anything is written to disk.
+…) is also rejected up front, before anything is written to disk.
 
-`scaffold` runs no static checks on the grammar before generating, same as
-`railroad` and `graph` — diagnostics never gate its output. One exception:
-it does check that no two rules would produce the same `visit_*` method
-name (see below). A grammar that fails this check is rejected with a clear
-diagnostic, again before anything is written to disk.
+`scaffold` runs no static checks on the grammar before generating,
+same as `railroad` and `graph`. The only exception is that it does
+check that no two rules would produce the same `visit_*` method name
+(see below). A grammar that fails this check is rejected with a clear
+diagnostic.
 
 ## The generated `Visitor` trait
 
 Open `bindings/rust/visitor.rs` to see the generated trait. Remember: this
-file is always regenerated, so don't edit it — see the table above.
+file is always regenerated, so don't edit it.
 
 ### `Output`, `Error`, and `combine`
 
@@ -198,7 +211,9 @@ impl<'t> Visitor<'t> for MyVisitor {
 
 Rust has no way to give `type Output` a default that an implementor can
 skip. You must set it yourself, every time. There's no single right
-choice — it depends on what your visitor computes:
+choice: it depends on what your visitor computes.
+
+Some examples:
 
 | If your visitor... | use `Output = ` |
 |---|---|
@@ -207,13 +222,14 @@ choice — it depends on what your visitor computes:
 | looks for the first matching node and stops | `Option<T>` |
 | builds something else | a custom type |
 
-If your visitor can't fail, use `Error = std::convert::Infallible`.
+If your visitor can't fail, use `Error =
+std::convert::Infallible`. We'll see other examples of `Error` soon.
 
-`combine` is the one method every implementation must write. tree-sitter
+`combine` is the one method every implementation must write. Tree-sitter
 hands you a node's children one at a time; `combine` is where their
 `Output`s get folded into that node's own `Output`. Every other method in
 the trait already has a sensible default body, so a new visitor can start
-with just `combine`.
+by just defining `combine`.
 
 ### `combine` in practice
 
@@ -223,6 +239,8 @@ data flowing bottom-up, not a side effect. Here's `CollectText`, which
 gathers every leaf's own source text into a `Vec<String>`:
 
 ```rust
+use decls::visitor::{SourceNode, Visitor};
+
 struct CollectText;
 
 impl<'t> Visitor<'t> for CollectText {
@@ -244,29 +262,51 @@ impl<'t> Visitor<'t> for CollectText {
         Ok(vec![node.text().to_string()])
     }
 }
+
+fn main() {
+    let source = "x = 1;\ny = x;\n";
+    let tree = decls::parse(source).expect("parse must succeed");
+    let root = SourceNode { node: tree.root_node(), source };
+    println!("{:?}", (CollectText).visit(root).unwrap());
+}
 ```
 
-Trace it over `x = 1;`, following the actual `Vec<String>` values, not
-just how many times `combine` happens to run:
+This is small enough to be worth running yourself. Save it as
+`examples/collect_text.rs` inside `decls/` — Cargo picks up any file
+dropped into `examples/` automatically, so this needs no `Cargo.toml`
+change. Then, still inside `decls/`:
 
-1. `target` is an `ident`. `visit_ident` is overridden, so it returns
-   `vec!["x".into()]` directly, with no `combine` call at all.
-2. `value` is an `expr` node, which isn't overridden. Its default body,
-   `children_visitor`, visits `expr`'s one child, the `num` leaf.
-   `visit_num` is overridden too, and returns `vec!["1".into()]` directly,
-   the same way.
-3. Back in `children_visitor(expr_node)`, that one child result gets
-   folded: `combine(vec![vec!["1".into()]])` → `vec!["1".into()]`. That's
-   `expr`'s own `Output`.
-4. `visit_decl` isn't overridden either, so `children_visitor(decl_node)`
-   now holds two child results: `target`'s `vec!["x".into()]` and
-   `value`'s `vec!["1".into()]`. It folds them:
-   `combine(vec![vec!["x".into()], vec!["1".into()]])` →
-   `vec!["x".into(), "1".into()]`. That's `decl`'s own `Output`.
-5. `program` holds two `decl`s. Its own default `children_visitor` folds
-   their two `Output`s the same way, giving `vec!["x", "1", "y", "x"]` as
-   the whole program's `Output`, for the two-line source
-   `x = 1;\ny = x;`.
+```sh
+$ cargo run --example collect_text
+["x", "1", "y", "x"]
+```
+
+Trace *why* that's the output, following the actual `Vec<String>`
+value at each step — not just how many times `combine` runs — over
+that same two-line source, `x = 1;\ny = x;`:
+
+1. First `decl` (`x = 1;`):
+   - `target` is an `ident`. `visit_ident` is overridden, so it returns
+     `vec!["x".into()]` directly — no `combine` call at all.
+   - `value` is an `expr` wrapping a `num`. `expr` isn't overridden, so
+     its default `children_visitor` visits that one child; `visit_num`
+     is overridden too, returning `vec!["1".into()]`. `children_visitor`
+     folds that single result: `combine(vec![vec!["1".into()]])` →
+     `vec!["1".into()]`. That's `expr`'s own `Output`.
+   - `decl` isn't overridden either. Its `children_visitor` now holds
+     `target`'s `vec!["x".into()]` and `value`'s `vec!["1".into()]`, and
+     folds them: `combine(vec![vec!["x".into()], vec!["1".into()]])` →
+     `vec!["x".into(), "1".into()]`. That's the first `decl`'s `Output`.
+2. Second `decl` (`y = x;`), by the same steps — `value` wraps an
+   `ident` this time instead of a `num`, but the fold is identical:
+   `target` gives `vec!["y".into()]` directly, `expr` folds down to
+   `vec!["x".into()]`, and `decl` folds both into
+   `vec!["y".into(), "x".into()]`.
+3. `program` holds both `decl`s. Its own default `children_visitor`
+   folds their two `Output`s the same way:
+   `combine(vec![vec!["x".into(), "1".into()], vec!["y".into(), "x".into()]])`
+   → `vec!["x", "1", "y", "x"]` — the whole program's `Output`, matching
+   what `cargo run --example collect_text` printed above.
 
 Every one of those `combine` calls is doing real, inspectable work:
 concatenating its children's data into its own. Compare that to
