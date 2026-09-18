@@ -2796,8 +2796,8 @@ fn scaffold_generated_crate_builds_inside_an_enclosing_workspace() {
 /// `DeclExtractor` override, and `--ast-types` struct shapes below is
 /// checked against this exact grammar, not a smaller stand-in like
 /// `SCAFFOLD_BNF`/`SCAFFOLD_AST_BNF` (#383). If either copy changes, update
-/// the other: `docs/tutorial/11-generating-a-scaffold.md`'s "What gets
-/// generated" section.
+/// the other: `docs/tutorial/11-generating-a-scaffold.md`'s "Step 1" grammar
+/// and `docs/tutorial/12-scaffold-reference.md`'s copy of it.
 const TUTORIAL_11_DECLS_BNF: &str = indoc! {"
     # decls.bnf: a tiny declaration language
     program -> decl* ;
