@@ -44,8 +44,10 @@ jobs:
       - run: make lint
       - run: make test
       - run: make audit
-      - run: cargo package -p tree-sitter-bnf --no-verify --allow-dirty
-      - run: cargo package -p ts-bnf-tool --no-verify --allow-dirty
+      # Packaged together so ts-bnf-tool resolves tree-sitter-bnf from the
+      # workspace; separately it needs the matching version on crates.io,
+      # which fails on every version bump until the release is published.
+      - run: cargo package -p tree-sitter-bnf -p ts-bnf-tool --no-verify --allow-dirty
 
   coverage:
     name: Coverage
