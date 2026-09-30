@@ -826,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-bnf"
-version = "0.5.0"
+version = "0.6.0-beta.1"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -841,7 +841,7 @@ checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
 
 [[package]]
 name = "ts-bnf-tool"
-version = "0.5.0"
+version = "0.6.0-beta.1"
 dependencies = [
  "clap",
  "indexmap",

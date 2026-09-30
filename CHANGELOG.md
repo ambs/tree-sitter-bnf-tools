@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0-beta.1] - 2026-09-30
+
 ### Added
 - `convert`'s generated `grammar.js` now includes the standard
   `tree-sitter init` preamble — `/// <reference types="tree-sitter-cli/dsl" />`
@@ -566,7 +568,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Line comments (`#`)
   - Warning on undefined rule references in directive and rule bodies
 
-[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.1...HEAD
+[0.6.0-beta.1]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.5.0...v0.6.0-beta.1
 [0.5.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.2.0...v0.3.0
