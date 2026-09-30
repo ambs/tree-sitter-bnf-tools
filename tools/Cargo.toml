@@ -23,7 +23,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-tree-sitter-bnf = { path = "../tree-sitter-bnf", version = "0.5.0" }
+tree-sitter-bnf = { path = "../tree-sitter-bnf", version = "0.6.0-beta.1" }
 tree-sitter = "0.27.0"
 clap = { version = "4", features = ["derive"] }
 indexmap = "2"
