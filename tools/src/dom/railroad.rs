@@ -1,8 +1,10 @@
 //! Walker that converts a [`GrammarNode`] tree into railroad-diagram combinators.
 
 use std::collections::HashSet;
+use std::fmt;
 
-use railroad::{Comment, Empty, LabeledBox, Link, Node, Optional, Repeat};
+use railroad::svg::{self, HDir};
+use railroad::{Comment, Empty, LabeledBox, Link, Node, NodeGeometry, Optional, Repeat};
 
 use super::nodes::{GrammarNode, PrecKind, PrecLevel};
 
@@ -47,17 +49,82 @@ fn prec_label(kind: &PrecKind, level: &Option<PrecLevel>) -> String {
     }
 }
 
+/// A transparent wrapper that emits `<g class="...">` around its inner node.
+///
+/// Geometry is identical to the inner node's; only an extra SVG group is added.
+/// Needed because built-in nodes such as [`LabeledBox`] always overwrite any
+/// custom `class` attribute with their own.
+struct ClassGroup {
+    /// The wrapped node, drawn unchanged inside the group.
+    inner: Box<dyn Node>,
+    /// The value of the group's `class` attribute.
+    class: String,
+}
+
+impl Node for ClassGroup {
+    /// Delegates to the inner node.
+    fn entry_height(&self) -> i64 {
+        self.inner.entry_height()
+    }
+
+    /// Delegates to the inner node.
+    fn height(&self) -> i64 {
+        self.inner.height()
+    }
+
+    /// Delegates to the inner node.
+    fn width(&self) -> i64 {
+        self.inner.width()
+    }
+
+    /// Draws the inner node inside a classed `<g>`.
+    fn draw(&self, x: i64, y: i64, h_dir: HDir) -> svg::Element {
+        svg::Element::new("g")
+            .set("class", &self.class)
+            .add(self.inner.draw(x, y, h_dir))
+    }
+
+    /// Returns the inner node's geometry unchanged, since the group adds no space.
+    fn compute_geometry(&self) -> NodeGeometry {
+        self.inner.compute_geometry()
+    }
+
+    /// Draws the inner node with `geo` inside a classed `<g>`.
+    fn draw_with_geometry(&self, x: i64, y: i64, h_dir: HDir, geo: &NodeGeometry) -> svg::Element {
+        svg::Element::new("g")
+            .set("class", &self.class)
+            .add(self.inner.draw_with_geometry(x, y, h_dir, geo))
+    }
+
+    /// Streams a classed `<g>` around the inner node's streamed output.
+    fn render_with_geometry(
+        &self,
+        out: &mut svg::Renderer<'_>,
+        x: i64,
+        y: i64,
+        h_dir: HDir,
+        geo: &NodeGeometry,
+    ) -> fmt::Result {
+        let mut group = out.start_element("g")?;
+        group.attr("class", &self.class)?;
+        group.finish()?;
+        self.inner.render_with_geometry(out, x, y, h_dir, geo)?;
+        out.end_element("g")
+    }
+}
+
 /// Wraps `inner` in a [`LabeledBox`] with `text` as a [`Comment`] label above it.
 ///
 /// The railroad stylesheet draws `g.labeledbox > rect` as a grey dashed,
-/// near-transparent box. `kind` is appended as an `annotation-<kind>` class next to
-/// the crate's own `labeledbox` class, giving users a hook to style each annotation
-/// kind differently (e.g. colour-code fields vs aliases) without affecting the
-/// default rendering.
+/// near-transparent box. The box is wrapped in a [`ClassGroup`] carrying an
+/// `annotation-<kind>` class, giving users a hook to style each annotation kind
+/// differently (e.g. `g.annotation-field > g.labeledbox > rect`) without affecting
+/// the default rendering.
 fn labeled(inner: Box<dyn Node>, text: String, kind: &str) -> Box<dyn Node> {
-    let mut boxed = LabeledBox::new(inner, Comment::new(text));
-    *boxed.attr("class".to_owned()).or_default() = format!("labeledbox annotation-{kind}");
-    Box::new(boxed)
+    Box::new(ClassGroup {
+        inner: Box::new(LabeledBox::new(inner, Comment::new(text))),
+        class: format!("annotation-{kind}"),
+    })
 }
 
 /// Recursively converts a [`GrammarNode`] into a boxed railroad [`Node`] combinator.
@@ -455,6 +522,58 @@ mod tests {
         (svg, warnings)
     }
 
+    /// Returns whether `svg` has a `<g class="annotation-<kind>">` group whose first
+    /// child element is the railroad crate's `<g class="labeledbox">` group.
+    fn annotation_wraps_labeledbox(svg: &str, kind: &str) -> bool {
+        let open = format!("<g class=\"annotation-{kind}\">");
+        let Some(start) = svg.find(&open) else {
+            return false;
+        };
+        let rest = &svg[start + open.len()..];
+        let Some(child_start) = rest.find('<') else {
+            return false;
+        };
+        let child = &rest[child_start..];
+        let Some(child_end) = child.find('>') else {
+            return false;
+        };
+        let child_tag = &child[..child_end];
+        child_tag.starts_with("<g ") && child_tag.contains("class=\"labeledbox\"")
+    }
+
+    #[test]
+    /// ClassGroup emits the same classed group through the element, geometry-aware
+    /// element, and streaming render paths, without changing the inner geometry.
+    fn class_group_wraps_inner_in_all_render_paths() {
+        let node = ClassGroup {
+            inner: Box::new(railroad::Terminal::new("T".to_owned())),
+            class: "annotation-test".to_owned(),
+        };
+        let inner = railroad::Terminal::new("T".to_owned());
+        assert_eq!(node.width(), inner.width());
+        assert_eq!(node.height(), inner.height());
+        assert_eq!(node.entry_height(), inner.entry_height());
+
+        let open = "<g class=\"annotation-test\">";
+        let drawn = node.draw(0, 0, HDir::LTR).to_string();
+        let geo = node.compute_geometry();
+        let drawn_geo = node.draw_with_geometry(0, 0, HDir::LTR, &geo).to_string();
+        let mut rendered = String::new();
+        node.render(&mut svg::Renderer::new(&mut rendered), 0, 0, HDir::LTR)
+            .unwrap();
+        for out in [&drawn, &drawn_geo, &rendered] {
+            assert!(out.starts_with(open), "missing classed group in {out}");
+            assert!(
+                out.contains("class=\"terminal\""),
+                "inner node missing in {out}"
+            );
+            assert!(
+                out.trim_end().ends_with("</g>"),
+                "group not closed in {out}"
+            );
+        }
+    }
+
     #[test]
     /// A literal terminal produces a Terminal box whose label appears in the SVG.
     fn terminal_literal_renders() {
@@ -584,8 +703,8 @@ mod tests {
         assert!(svg.contains("TOK"));
         assert!(svg.contains("token"));
         assert!(
-            svg.contains("labeledbox annotation-token"),
-            "annotation box must carry the stylesheet's labeledbox class plus a per-kind class"
+            annotation_wraps_labeledbox(&svg, "token"),
+            "annotation box must be wrapped in a group carrying a per-kind class"
         );
     }
 
@@ -632,7 +751,7 @@ mod tests {
         let (svg, _) = to_svg_annotated(&node, &LinkMode::SingleFile, &def(&[]), true);
         assert!(svg.contains("FLD"));
         assert!(svg.contains("myfieldname:"));
-        assert!(svg.contains("labeledbox annotation-field"));
+        assert!(annotation_wraps_labeledbox(&svg, "field"));
     }
 
     #[test]
@@ -659,7 +778,7 @@ mod tests {
         let (svg, _) = to_svg_annotated(&node, &LinkMode::SingleFile, &def(&[]), true);
         assert!(svg.contains("BODY"));
         assert!(svg.contains("=&gt; ALIASNAME"));
-        assert!(svg.contains("labeledbox annotation-alias"));
+        assert!(annotation_wraps_labeledbox(&svg, "alias"));
     }
 
     #[test]

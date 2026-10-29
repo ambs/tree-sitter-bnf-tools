@@ -3252,8 +3252,9 @@ fn railroad_annotate_shows_field_label() {
         "field name must appear as an annotation label in the dialect's `name:` syntax"
     );
     assert!(
-        stdout.contains("labeledbox annotation-field"),
-        "annotation box must carry the labeledbox class (styled by the embedded stylesheet) plus a per-kind class"
+        stdout.contains("<g class=\"annotation-field\">")
+            && stdout.contains("class=\"labeledbox\""),
+        "annotation box must carry the labeledbox class (styled by the embedded stylesheet) inside a group with a per-kind class"
     );
     assert!(
         stdout.contains("fill-opacity"),
