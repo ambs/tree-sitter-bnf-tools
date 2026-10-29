@@ -522,23 +522,20 @@ mod tests {
         (svg, warnings)
     }
 
+    /// Returns the opening tag (without its closing `>`) of the first child element
+    /// of the `<g class="annotation-<kind>">` group in `svg`, or `None` if absent.
+    fn annotation_child_tag<'a>(svg: &'a str, kind: &str) -> Option<&'a str> {
+        let open = format!("<g class=\"annotation-{kind}\">");
+        let rest = &svg[svg.find(&open)? + open.len()..];
+        let child = &rest[rest.find('<')?..];
+        Some(&child[..child.find('>')?])
+    }
+
     /// Returns whether `svg` has a `<g class="annotation-<kind>">` group whose first
     /// child element is the railroad crate's `<g class="labeledbox">` group.
     fn annotation_wraps_labeledbox(svg: &str, kind: &str) -> bool {
-        let open = format!("<g class=\"annotation-{kind}\">");
-        let Some(start) = svg.find(&open) else {
-            return false;
-        };
-        let rest = &svg[start + open.len()..];
-        let Some(child_start) = rest.find('<') else {
-            return false;
-        };
-        let child = &rest[child_start..];
-        let Some(child_end) = child.find('>') else {
-            return false;
-        };
-        let child_tag = &child[..child_end];
-        child_tag.starts_with("<g ") && child_tag.contains("class=\"labeledbox\"")
+        annotation_child_tag(svg, kind)
+            .is_some_and(|tag| tag.starts_with("<g ") && tag.contains("class=\"labeledbox\""))
     }
 
     #[test]
