@@ -59,10 +59,11 @@ annotation kind is distinguishable at a glance:
 | `<<! body >>` (immediate token) | `token.immediate` |
 | `body %prec.left 2` (precedence) | `prec.left(2)` |
 
-Each box's SVG group also carries an `annotation-<kind>` CSS class
-(`annotation-field`, `annotation-alias`, `annotation-token`,
-`annotation-token-immediate`, `annotation-prec`), so post-processing can
-style each kind differently, e.g. colour-code fields vs aliases.
+Each box's SVG group (`g.labeledbox`) is wrapped in a parent group carrying
+an `annotation-<kind>` CSS class (`annotation-field`, `annotation-alias`,
+`annotation-token`, `annotation-token-immediate`, `annotation-prec`), so
+post-processing can style each kind differently, e.g. colour-code fields vs
+aliases with `g.annotation-field > g.labeledbox > rect { stroke: blue; }`.
 
 `--annotate` is useful for grammar authors debugging tree-sitter behaviour,
 but adds noise for end users, so it stays off unless requested. It works in

@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `railroad --annotate`: the per-kind `annotation-<kind>` CSS class is now
+  on a `<g>` wrapping each annotation box, instead of sharing the box's own
+  `labeledbox` group. railroad 0.3.10 no longer lets callers override the
+  class of its built-in nodes. **Breaking for custom stylesheets:** a
+  selector like `g.labeledbox.annotation-field > rect` must become
+  `g.annotation-field > g.labeledbox > rect` (#475).
+
 ## [0.6.0-beta.1] - 2026-09-30
 
 ### Added
