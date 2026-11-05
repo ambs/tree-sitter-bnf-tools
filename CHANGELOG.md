@@ -6,7 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `scaffold --ast-types --partial-trees`: the generated typed AST can now be
+  built from a parse tree that contains syntax errors. Instead of failing on
+  the first `ERROR`/`MISSING` node, `runtime::recover::<Root>(node)` returns a
+  `Recovered<Root>` with whatever could be built (single-valued fields become
+  `Option<T>`) plus a position-ordered list of `Diagnostic`s. The flag changes
+  the shape of the generated `ast.rs`, so it is chosen once at scaffold time
+  and recorded in `ts-bnf-tool.toml`; without it the output is unchanged.
+  `examples/ast.rs` prints the recovered tree and each diagnostic, exiting 1
+  if there were any (#487).
+
 ### Changed
+- **Breaking for library users of `ts_bnf_tool`:** `RustAst::new` takes a new
+  trailing `BuildMode` argument, `render_scaffold`'s `ast_types: bool` is now
+  `ast: Option<BuildMode>`, and `ScaffoldRequest` has a new `partial_trees`
+  field (#487).
 - `railroad --annotate`: the per-kind `annotation-<kind>` CSS class is now
   on a `<g>` wrapping each annotation box, instead of sharing the box's own
   `labeledbox` group. railroad 0.3.10 no longer lets callers override the

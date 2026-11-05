@@ -2542,6 +2542,218 @@ fn scaffold_merge_config_writes_enum_and_hides_merged_structs() {
     assert!(stdout.contains("DocComment"), "{stdout}");
 }
 
+// ── scaffold --partial-trees ────────────────────────────────────────────
+
+/// Splits an `examples/ast.rs` (partial-mode) run into its parts for
+/// assertions: the exit code, the stdout text, and the diagnostic lines — the
+/// lines of the form `<path>:<line>:<column>: <problem>` it prints after the
+/// tree.
+fn partial_example_run(
+    out_dir: &std::path::Path,
+    input: &str,
+) -> (Option<i32>, String, Vec<String>) {
+    let output = support::run_ast_example_output(out_dir, input);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let diagnostics = stdout
+        .lines()
+        .filter(|l| l.contains("sample-input.txt:") && !l.ends_with(':'))
+        .map(str::to_string)
+        .collect();
+    (output.status.code(), stdout, diagnostics)
+}
+
+#[test]
+/// `scaffold --ast-types --partial-trees` end-to-end against a real parser
+/// (#487): the generated crate exposes the `Recover` API instead of
+/// `TryFrom`, and `cargo run --example ast` builds whatever a file with
+/// syntax errors still contains and reports each problem with its position —
+/// a clean file, a `MISSING` token, an `ERROR` region between two good
+/// declarations, and a file with nothing salvageable. Exit code 1 (not a
+/// panic's 101) whenever there is a diagnostic.
+fn scaffold_partial_trees_recovers_typed_tree_from_syntax_errors() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_partial_trees_e2e_project",
+        "partiallang",
+        SCAFFOLD_AST_BNF,
+        None,
+    );
+
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(config.contains("partial_trees = true"), "{config}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("impl<'tree> runtime::Recover<'tree> for Program"));
+    assert!(!ast_rs.contains("TryFrom"));
+    let example = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
+    assert!(example.contains("recover::<Program>("));
+
+    // A clean file: everything built, nothing reported.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "x = y;\ny = z;\n");
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout.matches("Decl {").count(), 2, "{stdout}");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    // A missing `;` is a MISSING node: all three declarations survive, with
+    // the diagnostic pointing just past `y = z`.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "x = y;\ny = z\nz = x;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Decl {").count(), 3, "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].ends_with(":2:6: Missing { expected: \";\" }"),
+        "{diagnostics:?}"
+    );
+
+    // Garbage between two good declarations is one ERROR region (tree-sitter
+    // nests an ERROR inside it, which must not be reported twice); the good
+    // declarations on both sides are still built.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "x = y;\n@@@\ny = z;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Decl {").count(), 2, "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].ends_with(":2:1: Error"), "{diagnostics:?}");
+
+    // Nothing salvageable: still a `Program`, just an empty one.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "@@@ ###\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert!(stdout.contains("items: []"), "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].ends_with(":1:1: Error"), "{diagnostics:?}");
+}
+
+#[test]
+/// `--partial-trees` composes with `--merge-config` (#487): a merged `enum
+/// Loop` still dispatches to its variants, and a required field the parser
+/// had to invent a `MISSING` node for (`doc:` after `for while`) comes back
+/// as `None` with a `Missing` diagnostic naming what was expected, while
+/// everything before it is built.
+fn scaffold_partial_trees_with_merge_config_reports_missing_field() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_partial_trees_merge_e2e_project",
+        "partialmerge",
+        SCAFFOLD_MERGE_BNF,
+        Some(SCAFFOLD_MERGE_CONFIG_TOML),
+    );
+
+    let (code, stdout, diagnostics) =
+        partial_example_run(&out_dir, "for while repeat #a comment\n");
+    assert_eq!(code, Some(0), "{stdout}");
+    for variant in ["ForStatement(", "WhileStatement(", "RepeatStatement("] {
+        assert!(stdout.contains(variant), "{stdout}");
+    }
+    assert!(stdout.contains("doc: Some("), "{stdout}");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "for while\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert!(stdout.contains("ForStatement("), "{stdout}");
+    assert!(stdout.contains("WhileStatement("), "{stdout}");
+    assert!(stdout.contains("doc: None"), "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].ends_with(":1:10: Missing { expected: \"comment\" }"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+/// `--partial-trees` without `--ast-types` is rejected by the argument parser
+/// before anything is written — it only changes what `--ast-types` generates,
+/// so on its own it would silently do nothing.
+fn scaffold_partial_trees_without_ast_types_is_rejected() {
+    let bnf_path = write_tmp("ts_bnf_scaffold_partial_trees_alone.bnf", SCAFFOLD_AST_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_partial_trees_alone_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = tool()
+        .args(["scaffold", "--partial-trees", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(!out_dir.exists(), "nothing should be written");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--ast-types"), "{stderr}");
+}
+
+#[test]
+/// Rerun semantics for `--partial-trees` (#487), mirroring `--ast-types`'
+/// own: a scaffold that never passes the flag records nothing about it and
+/// keeps the strict `TryFrom` API; adding it on a rerun patches
+/// `ts-bnf-tool.toml` in place and regenerates `ast.rs` with the `Recover`
+/// API, but leaves the user-owned `examples/ast.rs` alone and warns that it
+/// still targets the strict API; and a later rerun that repeats no flag at
+/// all keeps the partial API without warning again.
+fn scaffold_partial_trees_added_on_rerun_updates_config_and_warns_about_stale_example() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let dir_name = "ts_bnf_scaffold_partial_trees_rerun_project";
+    let out_dir = support::scaffold_with_ast_types(dir_name, "rerunlang", SCAFFOLD_AST_BNF);
+    let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(!config.contains("partial_trees ="), "{config}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("TryFrom") && !ast_rs.contains("Recover"));
+    let example_before = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
+    assert!(example_before.contains("try_into"));
+
+    let second = tool()
+        .args([
+            "scaffold",
+            "--name",
+            "rerunlang",
+            "--ast-types",
+            "--partial-trees",
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(second.status.success(), "{stderr}");
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(config.contains("partial_trees = true"), "{config}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("Recover") && !ast_rs.contains("TryFrom"));
+    let example_after = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
+    assert_eq!(
+        example_after, example_before,
+        "the example is the user's file"
+    );
+    assert!(
+        stderr.contains("examples/ast.rs was written for the strict AST API"),
+        "{stderr}"
+    );
+
+    // No flags at all, directory mode: the recorded setting is enough, and the
+    // example is no longer news.
+    std::fs::remove_file(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    let third = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    let stderr = String::from_utf8_lossy(&third.stderr);
+    assert!(third.status.success(), "{stderr}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("Recover") && !ast_rs.contains("TryFrom"));
+    assert!(!stderr.contains("was written for"), "{stderr}");
+}
+
 #[test]
 /// An invalid `--merge-config` (a kind name with a typo) exits non-zero
 /// before any file is written — mirrors

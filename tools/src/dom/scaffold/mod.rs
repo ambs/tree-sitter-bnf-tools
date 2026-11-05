@@ -11,6 +11,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::dom::ast::BuildMode;
 use crate::dom::ast::merge::{MergeConfig, check_merge_config};
 use crate::dom::ast::rust::{RustAst, check_root_rule_not_merged, kind_display_name};
 use crate::util::{hyphens_to_underscores, resolve_output_dir};
@@ -40,6 +41,19 @@ pub struct ScaffoldFile {
     /// the tutorial invites users to hand-edit); when `false`, it is always
     /// overwritten (for files that are purely derived from the grammar).
     pub preserve_existing: bool,
+}
+
+/// The rendered typed-AST source plus what the scaffolded `examples/ast.rs`
+/// needs to drive it — everything target-language emitters need to know
+/// about `--ast-types` beyond whether it's on.
+struct AstOutput {
+    /// The complete generated `ast.rs` source.
+    source: String,
+    /// The Rust type name of the grammar's root rule, as declared in `source`
+    /// (already run through any `passthrough` rename).
+    root_rule: String,
+    /// Which API `source` exposes, so the example calls the right one.
+    mode: BuildMode,
 }
 
 /// The full set of hand-authored files a scaffolded crate/module/package needs.
@@ -72,17 +86,22 @@ pub struct ScaffoldCrate {
 /// data computed by the caller (`run_scaffold`, via `bundle_grammar_sources`)
 /// — passing it through keeps this function itself free of filesystem
 /// access; it's only used for the Makefile template's prerequisite list.
+///
+/// `ast` is `None` to skip the typed AST types entirely (no `--ast-types`),
+/// or `Some(mode)` to generate them in that [`BuildMode`] — one parameter
+/// rather than a flag plus a mode, so "partial trees without AST types" is
+/// unrepresentable.
 pub fn render_scaffold(
     grammar: &Grammar,
     name: &str,
     source: &str,
     no_header: bool,
-    ast_types: bool,
+    ast: Option<BuildMode>,
     merge_config: Option<&MergeConfig>,
     bundled_bnf_paths: &[PathBuf],
 ) -> Result<ScaffoldCrate, String> {
     let visitor_source = render_visitor(grammar, name, source, no_header)?;
-    let ast_source = if ast_types {
+    let ast_output = if let Some(mode) = ast {
         // `kind_display_name`, not bare `pascal_case`: a `passthrough`
         // entry can rename the root rule's own struct, and `examples/ast.rs`
         // must `use` it under the name it's actually declared under.
@@ -92,8 +111,12 @@ pub fn render_scaffold(
                 .expect("grammar without rules should have been treated earlier"),
             merge_config,
         );
-        let ast = RustAst::new(grammar, source, no_header, merge_config)?;
-        Some((ast.to_string(), root_rule))
+        let ast = RustAst::new(grammar, source, no_header, merge_config, mode)?;
+        Some(AstOutput {
+            source: ast.to_string(),
+            root_rule,
+            mode,
+        })
     } else {
         None
     };
@@ -102,7 +125,7 @@ pub fn render_scaffold(
             name,
             no_header,
             visitor_source,
-            ast_source,
+            ast_output,
             bundled_bnf_paths,
         ),
     })
@@ -125,6 +148,10 @@ pub struct ScaffoldRequest<'a> {
     pub no_header: bool,
     /// Generate ast-types files.
     pub ast_types: bool,
+    /// Build the generated AST from trees containing syntax errors, returning
+    /// a partial AST plus diagnostics (`--partial-trees`). Only meaningful
+    /// together with `ast_types`.
+    pub partial_trees: bool,
     /// `--merge-config`, already parsed.
     pub merge_config: Option<&'a MergeConfig>,
     /// The effective root grammar filename resolved by the caller — `"-"`
@@ -161,6 +188,7 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         output_dir,
         no_header,
         ast_types,
+        partial_trees,
         merge_config,
         root_filename,
         root_source,
@@ -233,7 +261,7 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         name,
         source,
         no_header,
-        ast_types,
+        ast_types.then_some(BuildMode::from(partial_trees)),
         merge_config,
         &bundled_bnf_paths,
     )
@@ -243,6 +271,7 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         grammar: bundled_grammar_basename,
         name: name.to_string(),
         ast_types,
+        partial_trees,
         merge_config: merge_config.cloned(),
     };
     crate_files.files.extend(bundled_files);
@@ -251,6 +280,9 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         content: config::render_scaffold_config(&effective_config),
         preserve_existing: true,
     });
+
+    // Read the previously recorded mode before anything below can patch it.
+    let stale_example_warning = stale_ast_example_warning(&dir, &effective_config);
 
     for file in crate_files.files {
         let path = dir.join(&file.path);
@@ -276,12 +308,49 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
     for warning in &bundle_warnings {
         eprintln!("{warning}");
     }
+    if let Some(warning) = &stale_example_warning {
+        eprintln!("{warning}");
+    }
 
     if ast_types {
         ensure_lib_rs_declares_ast_module(&dir)?;
     }
 
     Ok(())
+}
+
+/// The warning to print when a rerun switches `--partial-trees` on or off
+/// while `examples/ast.rs` — written once, then left alone like `walk.rs` —
+/// still targets the other mode's API, or `None` when there's nothing to say.
+///
+/// The two modes' generated `ast.rs` expose different APIs (`TryFrom` versus
+/// `runtime::recover`), so a preserved example from the other mode stops
+/// compiling. It's left untouched (it's the user's file now, possibly
+/// edited), so the only honest option is to say so. Which mode the example
+/// was written for is read from the crate's recorded `ts-bnf-tool.toml`
+/// rather than sniffed from the example's text, so a hand-edited example is
+/// treated the same as an untouched one. Must run before
+/// [`config::ensure_scaffold_config_up_to_date`] patches that record.
+/// Silent for a first scaffold (no recorded config), when `--ast-types` is
+/// off, when the mode didn't change, or when there's no example to go stale.
+fn stale_ast_example_warning(dir: &Path, effective: &config::ScaffoldConfig) -> Option<String> {
+    if !effective.ast_types || !dir.join("examples/ast.rs").exists() {
+        return None;
+    }
+    let recorded =
+        config::parse_scaffold_config(&fs::read_to_string(dir.join("ts-bnf-tool.toml")).ok()?)
+            .ok()?;
+    if recorded.partial_trees == effective.partial_trees {
+        return None;
+    }
+    let (was, now) = if effective.partial_trees {
+        ("strict", "partial")
+    } else {
+        ("partial", "strict")
+    };
+    Some(format!(
+        "warning: examples/ast.rs was written for the {was} AST API, but bindings/rust/ast.rs          now uses the {now} one; the example was left untouched and will no longer compile —          update it by hand, or delete it and rerun scaffold to regenerate it"
+    ))
 }
 
 /// Bundles the grammar source(s) that produced `grammar` into the scaffold's
@@ -526,6 +595,84 @@ mod tests {
         assert!(
             content.contains("pub mod ast;"),
             "pub mod ast; must be appended even without the usual anchor: {content}"
+        );
+    }
+
+    /// Builds a scratch crate directory whose recorded config says
+    /// `recorded_partial`, optionally with an `examples/ast.rs` in place.
+    fn crate_dir_with_recorded_mode(
+        test_name: &str,
+        recorded_partial: bool,
+        with_example: bool,
+    ) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ts_bnf_stale_example_{test_name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("examples")).unwrap();
+        fs::write(
+            dir.join("ts-bnf-tool.toml"),
+            config::render_scaffold_config(&effective_config(true, recorded_partial)),
+        )
+        .unwrap();
+        if with_example {
+            fs::write(dir.join("examples/ast.rs"), "fn main() {}\n").unwrap();
+        }
+        dir
+    }
+
+    /// An effective config with the given `--ast-types`/`--partial-trees`.
+    fn effective_config(ast_types: bool, partial_trees: bool) -> config::ScaffoldConfig {
+        config::ScaffoldConfig {
+            grammar: "decls.bnf".to_string(),
+            name: "decls".to_string(),
+            ast_types,
+            partial_trees,
+            merge_config: None,
+        }
+    }
+
+    /// Strict to partial with an example left behind: warn, naming both modes.
+    #[test]
+    fn stale_ast_example_warning_fires_when_switching_to_partial() {
+        let dir = crate_dir_with_recorded_mode("to_partial", false, true);
+        let warning = stale_ast_example_warning(&dir, &effective_config(true, true)).unwrap();
+        assert!(
+            warning.contains("written for the strict AST API"),
+            "{warning}"
+        );
+        assert!(warning.contains("now uses the partial one"), "{warning}");
+    }
+
+    /// Partial back to strict is the mirror case.
+    #[test]
+    fn stale_ast_example_warning_fires_when_switching_back_to_strict() {
+        let dir = crate_dir_with_recorded_mode("to_strict", true, true);
+        let warning = stale_ast_example_warning(&dir, &effective_config(true, false)).unwrap();
+        assert!(
+            warning.contains("written for the partial AST API"),
+            "{warning}"
+        );
+        assert!(warning.contains("now uses the strict one"), "{warning}");
+    }
+
+    /// Nothing to say when the mode didn't change, when there's no example to
+    /// go stale, when `--ast-types` is off, or on a first scaffold.
+    #[test]
+    fn stale_ast_example_warning_is_silent_when_nothing_went_stale() {
+        let unchanged = crate_dir_with_recorded_mode("unchanged", true, true);
+        assert!(stale_ast_example_warning(&unchanged, &effective_config(true, true)).is_none());
+
+        let no_example = crate_dir_with_recorded_mode("no_example", false, false);
+        assert!(stale_ast_example_warning(&no_example, &effective_config(true, true)).is_none());
+
+        let ast_off = crate_dir_with_recorded_mode("ast_off", false, true);
+        assert!(stale_ast_example_warning(&ast_off, &effective_config(false, true)).is_none());
+
+        let first_scaffold = std::env::temp_dir().join("ts_bnf_stale_example_first_scaffold");
+        let _ = fs::remove_dir_all(&first_scaffold);
+        fs::create_dir_all(first_scaffold.join("examples")).unwrap();
+        fs::write(first_scaffold.join("examples/ast.rs"), "fn main() {}\n").unwrap();
+        assert!(
+            stale_ast_example_warning(&first_scaffold, &effective_config(true, true)).is_none()
         );
     }
 }
