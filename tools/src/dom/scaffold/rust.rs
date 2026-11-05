@@ -21,7 +21,9 @@ use indoc::formatdoc;
 
 use crate::util::hyphens_to_underscores;
 
-use super::ScaffoldFile;
+use crate::dom::ast::BuildMode;
+
+use super::{AstOutput, ScaffoldFile};
 
 /// Renders every file this target's generated crate needs, at the paths a
 /// Rust crate expects them: `Cargo.toml`/`bindings/rust/lib.rs`/
@@ -31,7 +33,7 @@ pub(super) fn render(
     name: &str,
     no_header: bool,
     visitor_source: String,
-    ast_data: Option<(String, String)>,
+    ast_output: Option<AstOutput>,
     bundled_bnf_paths: &[PathBuf],
 ) -> Vec<ScaffoldFile> {
     let identifier_name = hyphens_to_underscores(name);
@@ -48,7 +50,7 @@ pub(super) fn render(
         },
         ScaffoldFile {
             path: PathBuf::from("bindings/rust/lib.rs"),
-            content: lib_rs(&identifier_name, no_header, ast_data.is_some()),
+            content: lib_rs(&identifier_name, no_header, ast_output.is_some()),
             preserve_existing: true,
         },
         ScaffoldFile {
@@ -79,17 +81,22 @@ pub(super) fn render(
             preserve_existing: true,
         },
     ];
-    if let Some((ast_file, root_rule)) = ast_data {
+    if let Some(AstOutput {
+        source,
+        root_rule,
+        mode,
+    }) = ast_output
+    {
         files.push(ScaffoldFile {
             path: PathBuf::from("bindings/rust/ast.rs"),
-            content: ast_file,
+            content: source,
             preserve_existing: false,
         });
         files.push(ScaffoldFile {
             path: PathBuf::from("examples/ast.rs"),
-            content: ast_example(&identifier_name, &root_rule),
+            content: ast_example(&identifier_name, &root_rule, mode),
             preserve_existing: true,
-        })
+        });
     }
 
     files
@@ -280,13 +287,66 @@ fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
     "#}
 }
 
-/// Renders `examples/ast.rs`: parses a file and builds one typed root node
-/// via the grammar's generated `TryFrom<SourceNode<'tree>>` impl, then
-/// pretty-prints it with `{:#?}` — every generated struct/enum derives
-/// `Debug`, so this recurses through the whole typed tree with no
+/// Renders `examples/ast.rs` for `mode`: [`ast_example_strict`] or
+/// [`ast_example_partial`]. The two are not interchangeable — each calls the
+/// API its mode's generated `ast.rs` actually has.
+fn ast_example(name: &str, root_rule: &str, mode: BuildMode) -> String {
+    match mode {
+        BuildMode::Strict => ast_example_strict(name, root_rule),
+        BuildMode::Partial => ast_example_partial(name, root_rule),
+    }
+}
+
+/// Renders the partial-mode `examples/ast.rs`: parses a file and recovers one
+/// typed root node via `runtime::recover`, which never aborts on a syntax
+/// error. Pretty-prints whatever was built, then one `path:line:column`
+/// line per diagnostic, and exits non-zero if there were any — so it works as
+/// a quick "what survives in this broken file" probe.
+fn ast_example_partial(name: &str, root_rule: &str) -> String {
+    formatdoc! {r#"
+        //! Parses a file with the `{name}` parser and recovers a typed root node
+        //! using the generated AST types, even if the file has syntax errors.
+        //! Prints whatever could be built, then each problem found. Run it with:
+        //!
+        //! ```sh
+        //! cargo run --example ast -- <file>
+        //! ```
+
+        use {name}::ast::runtime::recover;
+        use {name}::ast::{root_rule};
+        use {name}::visitor::SourceNode;
+
+        fn main() {{
+            let path = std::env::args()
+                .nth(1)
+                .expect("usage: cargo run --example ast -- <file>");
+            let source =
+                std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {{path}}: {{e}}"));
+
+            let tree = {name}::parse(&source).expect("parse must succeed");
+
+            let recovered = recover::<{root_rule}>(SourceNode {{ node: tree.root_node(), source: &source }});
+            match &recovered.value {{
+                Some(root) => println!("{{path}}:\n{{root:#?}}"),
+                None => println!("{{path}}: nothing could be built"),
+            }}
+            for problem in &recovered.diagnostics {{
+                println!("{{path}}:{{}}:{{}}: {{:?}}", problem.start.line, problem.start.column, problem.kind);
+            }}
+            if !recovered.diagnostics.is_empty() {{
+                std::process::exit(1);
+            }}
+        }}
+    "#}
+}
+
+/// Renders the strict-mode `examples/ast.rs`: parses a file and builds one
+/// typed root node via the grammar's generated `TryFrom<SourceNode<'tree>>`
+/// impl, then pretty-prints it with `{:#?}` — every generated struct/enum
+/// derives `Debug`, so this recurses through the whole typed tree with no
 /// per-kind code, proving the generated AST types actually compile and
 /// work, the same bar `walk.rs` is already held to.
-fn ast_example(name: &str, root_rule: &str) -> String {
+fn ast_example_strict(name: &str, root_rule: &str) -> String {
     formatdoc! {r#"
         //! Parses a file with the `{name}` parser and builds a typed root node
         //! using the generated AST types. Run it with:
@@ -364,4 +424,32 @@ fn walk_example(name: &str) -> String {
             println!("{{path}}: {{}} node(s)", counter.total);
         }}
     "#}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The partial-mode example calls `runtime::recover` on the root rule's
+    /// type, and reports diagnostics instead of `.expect`-ing a build.
+    #[test]
+    fn partial_ast_example_recovers_and_reports_diagnostics() {
+        let out = ast_example("decls", "Program", BuildMode::Partial);
+        assert!(out.contains("use decls::ast::runtime::recover;"));
+        assert!(out.contains("use decls::ast::Program;"));
+        assert!(out.contains("recover::<Program>("));
+        assert!(out.contains("recovered.diagnostics"));
+        assert!(!out.contains("try_into"));
+        assert!(!out.contains(".expect(\"root node must build successfully\")"));
+    }
+
+    /// The strict-mode example is the one it always was: `try_into` with an
+    /// `.expect`, and nothing from the partial API.
+    #[test]
+    fn strict_ast_example_builds_with_try_into() {
+        let out = ast_example("decls", "Program", BuildMode::Strict);
+        assert!(out.contains(".try_into()"));
+        assert!(out.contains(".expect(\"root node must build successfully\")"));
+        assert!(!out.contains("recover"));
+    }
 }

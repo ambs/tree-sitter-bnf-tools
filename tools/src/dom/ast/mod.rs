@@ -35,6 +35,36 @@ pub struct AstFieldSpec {
     pub multiple: bool,
 }
 
+/// How a generated AST treats a parse tree that contains tree-sitter
+/// recovery nodes (`ERROR`/`MISSING`).
+///
+/// This changes the *shape* of the generated types, not just their runtime
+/// behaviour (`Partial` makes fields optional), so it's chosen once at
+/// generation time — the `--partial-trees` flag — rather than at the call
+/// site. Language-agnostic: any target-language emitter has the same choice
+/// to make, so it lives here beside the derivation, not in `rust.rs`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BuildMode {
+    /// The first problem aborts the whole build with an error. Today's
+    /// behaviour, and the default.
+    #[default]
+    Strict,
+    /// A tree with syntax errors still yields whatever could be built, plus
+    /// a list of diagnostics describing what couldn't.
+    Partial,
+}
+
+impl From<bool> for BuildMode {
+    /// Maps the `--partial-trees` flag (`true` ⇒ [`BuildMode::Partial`]).
+    fn from(partial_trees: bool) -> Self {
+        if partial_trees {
+            BuildMode::Partial
+        } else {
+            BuildMode::Strict
+        }
+    }
+}
+
 /// Collects every field declared directly under a kind's `body`, each
 /// mapped to its resolved [`FieldTargetKinds`] union and whether it can
 /// occur more than once.
@@ -203,6 +233,17 @@ fn derive_ast_node_specs(grammar: &Grammar) -> IndexMap<String, AstNodeSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── BuildMode ───────────────────────────────────────────────────────
+
+    /// The `--partial-trees` flag maps `true` to partial and `false` to
+    /// strict, and strict is the default.
+    #[test]
+    fn build_mode_from_flag_and_default() {
+        assert_eq!(BuildMode::from(true), BuildMode::Partial);
+        assert_eq!(BuildMode::from(false), BuildMode::Strict);
+        assert_eq!(BuildMode::default(), BuildMode::Strict);
+    }
     use crate::dom::GrammarNode::{
         Alias, Field, OneOrMore, Optional, Sequence, TerminalLiteral, ZeroOrMore,
     };

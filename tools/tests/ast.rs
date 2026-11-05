@@ -30,6 +30,7 @@ use std::process::{Command, Output};
 use std::sync::Mutex;
 
 use ts_bnf_tool::dom::Grammar;
+use ts_bnf_tool::dom::ast::BuildMode;
 use ts_bnf_tool::dom::ast::merge::MergeConfig;
 use ts_bnf_tool::dom::ast::rust::RustAst;
 use ts_bnf_tool::dom::visitor::rust::RustVisitor;
@@ -54,15 +55,8 @@ impl Drop for HarnessGuard {
 /// protect calls within this file.
 static HARNESS_MUTEX: Mutex<()> = Mutex::new(());
 
-/// Renders `grammar` via [`RustVisitor`] and [`RustAst`] (with an optional
-/// `merge_config` — 342.5.7), wraps each in its own `mod visitor { .. }` /
-/// `mod ast { .. }` block (matching the real scaffolded crate's
-/// sibling-module layout `ast.rs`'s `use super::visitor::SourceNode;`
-/// depends on), appends `extra_source`, and writes the result into a real
-/// `cargo` example of this package named `example_name`. Then runs `cargo
-/// build` (`run` when `run` is `true`) `--example <example_name>` and
-/// asserts it succeeds — panicking with both captured stdout and stderr
-/// otherwise.
+/// Strict-mode [`compile_generated_ast_in_mode`]: what every test written
+/// before `--partial-trees` existed checks.
 fn compile_generated_ast(
     example_name: &str,
     grammar: &Grammar,
@@ -70,6 +64,35 @@ fn compile_generated_ast(
     extra_source: &str,
     run: bool,
     merge_config: Option<&MergeConfig>,
+) -> Output {
+    compile_generated_ast_in_mode(
+        example_name,
+        grammar,
+        rust_name,
+        extra_source,
+        run,
+        merge_config,
+        BuildMode::Strict,
+    )
+}
+
+/// Renders `grammar` via [`RustVisitor`] and [`RustAst`] (with an optional
+/// `merge_config` — 342.5.7, in the given [`BuildMode`]), wraps each in its own `mod visitor { .. }` /
+/// `mod ast { .. }` block (matching the real scaffolded crate's
+/// sibling-module layout `ast.rs`'s `use super::visitor::SourceNode;`
+/// depends on), appends `extra_source`, and writes the result into a real
+/// `cargo` example of this package named `example_name`. Then runs `cargo
+/// build` (`run` when `run` is `true`) `--example <example_name>` and
+/// asserts it succeeds — panicking with both captured stdout and stderr
+/// otherwise.
+fn compile_generated_ast_in_mode(
+    example_name: &str,
+    grammar: &Grammar,
+    rust_name: &str,
+    extra_source: &str,
+    run: bool,
+    merge_config: Option<&MergeConfig>,
+    mode: BuildMode,
 ) -> Output {
     // Declared before `_guard` so it's dropped *after* it (Rust drops
     // locals in reverse declaration order): the lock isn't released until
@@ -81,7 +104,7 @@ fn compile_generated_ast(
     let visitor_source = RustVisitor::new(grammar, rust_name, "<test>", true)
         .expect("grammar must be visitor-safe")
         .to_string();
-    let ast_source = RustAst::new(grammar, "<test>", true, merge_config)
+    let ast_source = RustAst::new(grammar, "<test>", true, merge_config, mode)
         .expect("grammar must be ast-safe")
         .to_string();
 
@@ -439,4 +462,155 @@ fn main() {
         true,
         None,
     );
+}
+
+/// Parses `source`, asserting it is a valid, diagnostic-free grammar.
+fn parse_fixture(what: &str, source: &str) -> Grammar {
+    let (grammar, diagnostics) =
+        parse_source(source).unwrap_or_else(|e| panic!("{what} fixture must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "{what} fixture must be diagnostic-free: {diagnostics:?}"
+    );
+    grammar
+}
+
+/// Asserts that compiling a generated `ast.rs` printed neither of the
+/// warnings the partial-mode emitter is specifically responsible for
+/// avoiding: an unused `diags`/`node` parameter, and a `private_interfaces`
+/// leak from a merged-away kind. Not a blanket zero-warnings check — the
+/// harness's own `fn main() {}` never constructs any generated type, so
+/// ordinary `dead_code` noise is expected (see the merge-config test above).
+fn assert_no_partial_mode_warnings(output: &Output) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for warning in ["unused variable", "private_interfaces"] {
+        assert!(
+            !stderr.contains(warning),
+            "generated partial-mode AST must not trigger `{warning}`:\n{stderr}"
+        );
+    }
+}
+
+/// Partial-mode counterpart of [`sample_grammar_ast_types_compile`]
+/// (`--partial-trees`): the same small fixture, rendered with `Option`
+/// fields and `Recover` impls instead of `TryFrom`.
+#[test]
+fn sample_grammar_partial_ast_types_compile() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/visitor_sample.bnf");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+    let grammar = parse_fixture("visitor_sample.bnf", &source);
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_sample_harness",
+        &grammar,
+        "partial_sample",
+        "fn main() {}\n",
+        false,
+        None,
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
+}
+
+/// Partial-mode counterpart of the `--merge-config` compile-check: merged-away
+/// kinds stay private yet still get a `Recover` impl, the merge entry's enum
+/// dispatches to them, and nothing leaks a private type.
+#[test]
+fn partial_ast_types_with_merge_config_compile() {
+    let grammar = parse_fixture(
+        "partial merge-config",
+        "program -> for_statement | while_statement | repeat_statement | comment ;\n\
+         for_statement -> 'for' ;\n\
+         while_statement -> 'while' ;\n\
+         repeat_statement -> 'repeat' ;\n\
+         comment -> /#.*/ ;\n",
+    );
+    let config: MergeConfig = ts_bnf_tool::dom::parse_merge_config(
+        r#"
+            [[merge]]
+            target = "Loop"
+            from = ["for_statement", "while_statement", "repeat_statement"]
+
+            [[passthrough]]
+            kind = "comment"
+            target = "DocComment"
+        "#,
+    )
+    .expect("inline merge-config TOML must parse");
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_merge_config_harness",
+        &grammar,
+        "partial_merge_sample",
+        "fn main() {}\n",
+        false,
+        Some(&config),
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
+}
+
+/// Partial-mode compile-check crossing every field shape — single named,
+/// single token, repeated named, repeated token, a multi-shape enum with and
+/// without a bare-token variant — on both a non-leaf kind and a leaf kind
+/// that carries only token fields (and so has no use for `_diags`).
+#[test]
+fn partial_field_shapes_cross_leaf_status_compile() {
+    let grammar = parse_fixture(
+        "partial field-shapes",
+        "root -> branch leaf_kind ;\n\
+         branch -> single: ident tok: '+' items: ident* ops: ('+' | '-')* \
+                   value: (ident | num | 'nil') many: (ident | num)* ;\n\
+         leaf_kind -> single_tok: '#' many_tok: ('a' | 'b')* ;\n\
+         ident -> /[a-z]+/ ;\n\
+         num -> /[0-9]+/ ;\n",
+    );
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_field_shapes_harness",
+        &grammar,
+        "partial_field_shapes_sample",
+        "fn main() {}\n",
+        false,
+        None,
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
+}
+
+/// Partial-mode compile-check for names that would collide with the emitter's
+/// own, were it not namespaced: kinds named after the runtime's own types
+/// (`diagnostic`, `recovered`, `recover`, `runtime`) and after the strict
+/// mode's fixed names (`pragma`, `text`, `source_node`), and field labels
+/// that are local variables inside the generated `recover` (`node`, `diags`)
+/// or Rust keywords (`type`). Partial-only: a field labelled `node` is a
+/// separate, pre-existing problem in strict mode's `try_from`, which names
+/// its own parameter `node`.
+#[test]
+fn partial_ast_naming_edge_cases_compile() {
+    let grammar = parse_fixture(
+        "partial naming edge cases",
+        "root -> a: pragma b: text c: diagnostic d: recovered e: recover f: runtime \
+                 g: source_node node: ident diags: ident type: ident ;\n\
+         pragma -> 'p' ;\n\
+         text -> 't' ;\n\
+         diagnostic -> 'd' ;\n\
+         recovered -> 'r' ;\n\
+         recover -> 'c' ;\n\
+         runtime -> 'u' ;\n\
+         source_node -> 's' ;\n\
+         ident -> /[a-z]+/ ;\n",
+    );
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_naming_edge_cases_harness",
+        &grammar,
+        "partial_naming_sample",
+        "fn main() {}\n",
+        false,
+        None,
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
 }

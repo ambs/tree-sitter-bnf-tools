@@ -631,6 +631,12 @@ Two rules to carry away:
 - `--ast-types` is a one-way switch. A later rerun can add it, but can't
   take it back off.
 
+Building the typed tree is all-or-nothing by default: one syntax error in
+the file, and you get no AST. If you need whatever *can* be built from a
+broken file (an editor, say), add `--partial-trees` and it is reported
+instead; see
+[Input with syntax errors](12-scaffold-reference.md#input-with-syntax-errors---partial-trees).
+
 The struct-by-struct breakdown, the reserved `_`-prefixed names, and
 `--merge-config` (which collapses related kinds into one enum) are in
 [Typed node structs](12-scaffold-reference.md#typed-node-structs---ast-types).

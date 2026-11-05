@@ -175,6 +175,60 @@ pub fn scaffold_with_merge_config(
     out_dir
 }
 
+/// Same as [`scaffold_with_ast_types`], but also passes `--partial-trees`, and
+/// `--merge-config` too when `merge_config_toml` is given — so the returned
+/// directory's `bindings/rust/ast.rs` exposes the `Recover` API instead of
+/// `TryFrom`, and its `examples/ast.rs` calls `runtime::recover`.
+pub fn scaffold_with_partial_trees(
+    dir_name: &str,
+    name: &str,
+    bnf_source: &str,
+    merge_config_toml: Option<&str>,
+) -> PathBuf {
+    let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+    std::fs::write(&bnf_path, bnf_source).unwrap();
+
+    let out_dir = std::env::temp_dir().join(dir_name);
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ts-bnf-tool"));
+    cmd.args(["scaffold", "--name", name, "--ast-types", "--partial-trees"]);
+    if let Some(toml) = merge_config_toml {
+        let config_path = std::env::temp_dir().join(format!("{dir_name}.merge.toml"));
+        std::fs::write(&config_path, toml).unwrap();
+        cmd.arg("--merge-config").arg(&config_path);
+    }
+    let out = cmd
+        .arg("--output-dir")
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "ts-bnf-tool scaffold --ast-types --partial-trees failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out_dir
+}
+
+/// Like [`run_ast_example`], but returns the whole [`std::process::Output`]
+/// instead of asserting success: a `--partial-trees` scaffold's example
+/// deliberately exits 1 when it found syntax errors, so a test needs the exit
+/// code (1 for "found diagnostics" versus 101 for a panic) as well as stdout.
+pub fn run_ast_example_output(crate_dir: &Path, input: &str) -> std::process::Output {
+    let input_path = crate_dir.join("sample-input.txt");
+    std::fs::write(&input_path, input).unwrap();
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    Command::new(&cargo)
+        .args(["run", "--quiet", "--example", "ast", "--"])
+        .arg(&input_path)
+        .current_dir(crate_dir)
+        .output()
+        .unwrap()
+}
+
 /// Same as [`run_walk_example`], but for the `--ast-types` scaffold's own
 /// `examples/ast.rs` (`cargo run --example ast -- <that file>`).
 pub fn run_ast_example(crate_dir: &Path, input: &str) -> String {

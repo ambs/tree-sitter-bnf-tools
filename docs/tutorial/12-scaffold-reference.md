@@ -221,11 +221,15 @@ it's a no-op. From here on, the whole workflow is: edit `decls.bnf`, run
 knowing on its own. Point `scaffold` at the crate's own *directory*,
 instead of its grammar file, and it reruns using whatever
 `ts-bnf-tool.toml` already recorded: the bundled grammar's filename,
-`--name`, `--ast-types`, `--merge-config`. No flags needed.
+`--name`, `--ast-types`, `--partial-trees`, `--merge-config`. No flags
+needed.
 
 Pass a flag anyway, and it overrides what's recorded: `ts-bnf-tool.toml`
 is updated to match. One exception: `--ast-types` is a one-way switch. You
-can add it on a later rerun, but never remove it.
+can add it on a later rerun, but never remove it. `--partial-trees` is a
+one-way switch on the command line too; see
+[its section](#input-with-syntax-errors---partial-trees) for how to turn
+it back off.
 
 ### The mismatch guard
 
@@ -516,6 +520,121 @@ from = ["for_statement", "while_statement", "repeat_statement"]
 kind not otherwise claimed", so listing specific kinds alongside it would
 be redundant at best, a likely typo at worst. `check_merge_config` rejects
 that combination outright.
+
+### Input with syntax errors (`--partial-trees`)
+
+By default, building the typed AST is all-or-nothing. One syntax error is
+enough for the `TryFrom` impl of the node it touches to fail with a
+`BuildError`, and you get no AST at all. That is right for a compiler and
+wrong for an editor or a linter, which have to cope with code that is
+half-typed.
+
+`--partial-trees` (it requires `--ast-types`) generates a different API
+for the same types, one that builds whatever it can from a tree with
+syntax errors and reports the rest:
+
+```sh
+ts-bnf-tool scaffold --ast-types --partial-trees -o . decls.bnf
+```
+
+The flag changes the *shape* of `ast.rs`, so it is a choice you make once
+when you scaffold, not something you pick at each call site:
+
+| | default | `--partial-trees` |
+|---|---|---|
+| a single-valued field | `target: Ident` | `target: Option<Ident>` |
+| a bare-token field | `String` | `Option<String>` |
+| a repeated field | `items: Vec<Decl>` | `items: Vec<Decl>`; a child that can't be built is left out |
+| building | `Program::try_from(node)?`, which stops at the first problem | `runtime::recover::<Program>(node)`, which never fails |
+| result | `Result<Program, BuildError>` | `Recovered<Program>` |
+
+`_pragma` and `_text` are unchanged, and `TryFrom` and `BuildError` are
+not generated at all in this mode. Nothing changes without the flag: the
+output of a plain `--ast-types` scaffold is byte-for-byte what it was.
+
+`runtime::recover` returns a `Recovered<T>` with two public fields:
+`value: Option<T>`, which is `None` only when not even the root could be
+built, and `diagnostics: Vec<Diagnostic>`, ordered by position in the
+source. `recovered.is_complete()` is true when there is a value and no
+diagnostics. A `Diagnostic` carries a `kind`, the offending node's
+`byte_range`, and its `start` (line and column, 1-indexed like `_pragma`).
+
+The generated `examples/ast.rs` uses it: it prints whatever was built,
+then one `path:line:column: problem` line per diagnostic, and exits with
+status 1 if there were any. Here it is on a declaration that is missing
+its `;`:
+
+```sh
+$ printf 'x = 1\n' > broken.decls
+$ cargo run --example ast -- broken.decls
+broken.decls:
+Program {
+    _pragma: Pragma {
+        line: 1,
+        column: 1,
+    },
+    items: [
+        Decl {
+            _pragma: Pragma {
+                line: 1,
+                column: 1,
+            },
+            target: Some(
+                Ident {
+                    _pragma: Pragma {
+                        line: 1,
+                        column: 1,
+                    },
+                    _text: "x",
+                },
+            ),
+            value: Some(
+                Expr {
+                    _pragma: Pragma {
+                        line: 1,
+                        column: 5,
+                    },
+                },
+            ),
+        },
+    ],
+}
+broken.decls:1:6: Missing { expected: ";" }
+```
+
+The `Decl` is all there, and the one diagnostic says where the `;` should
+have been. Which of the diagnostics you get depends on what tree-sitter
+found:
+
+| tree-sitter found | the AST | diagnostic |
+|---|---|---|
+| a `MISSING` token the grammar required, like the `;` above | built as usual | `Missing { expected }` |
+| a `MISSING` node standing in for a labelled field's value | that field is `None` | `Missing { expected }` |
+| an `ERROR` region | a field it swallowed is `None`, or a repeated child is left out | one `Error` for the whole region |
+| a labelled field absent from a node that has a syntax error inside it | `None` | `MissingField { kind, field }` |
+| a child whose kind is not one of a merged enum's variants | `None` | `UnexpectedKind { expected, found }` |
+
+A field that is `None` in a node with *no* syntax error produces no
+diagnostic: the parser accepted the node without it, so it was optional in
+the grammar. (The generated types don't model optional fields, which is
+why every single-valued field is an `Option` in this mode.) An `ERROR`
+node that tree-sitter nests inside another one of the same range is
+reported once, not twice.
+
+**Rerunning.** `--partial-trees` is recorded in `ts-bnf-tool.toml` as
+`partial_trees = true`, and a plain `make generate` keeps it. On the
+command line it is a one-way switch, like `--ast-types`. To turn it back
+off, delete that line from `ts-bnf-tool.toml` and rerun.
+
+Either way, `ast.rs` changes API, and `examples/ast.rs`, which is yours
+after it is first written, does not follow. Delete it so the matching one
+is regenerated, or update it by hand. When you switch with the command-line
+flag, `scaffold` warns you that the example was left untouched; when you
+edit `ts-bnf-tool.toml` instead, it can't tell, so remember to do this.
+
+`--partial-trees` composes with `--merge-config`: a merged `enum Loop`
+dispatches to its variants in the same way, and a kind outside its set is
+reported as `UnexpectedKind` instead of an error.
 
 ## Typed field accessors without ownership
 

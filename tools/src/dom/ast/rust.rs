@@ -1,6 +1,6 @@
 use crate::dom::FieldTargetKinds;
 use crate::dom::ast::merge::{MergeConfig, MergeEntry};
-use crate::dom::ast::{AstFieldSpec, AstNodeSpec};
+use crate::dom::ast::{AstFieldSpec, AstNodeSpec, BuildMode};
 use crate::dom::{
     Grammar, ast::derive_ast_node_specs, visitor::text::indent, visitor::to_snake_case,
 };
@@ -9,10 +9,18 @@ use indexmap::IndexMap;
 use indoc::{formatdoc, indoc};
 use std::fmt::{self, Formatter};
 
+/// Everything specific to [`BuildMode::Partial`] (`--partial-trees`): the
+/// `Recover` trait and diagnostics runtime, the `SourceNode` recovery
+/// helpers, and the per-kind `Recover` impls that replace `TryFrom`. Kept in
+/// its own file so the strict path in this one stays untouched by the mode.
+mod partial;
+
 /// Renders a [`Grammar`]'s derived AST-struct shape (see [`super`]) as a
 /// complete Rust source file: one typed struct/enum plus a
 /// `TryFrom<SourceNode<'tree>>` impl per node kind, sharing one
-/// `BuildError` across all of them.
+/// `BuildError` across all of them. In [`BuildMode::Partial`] the
+/// `TryFrom` impls are replaced by non-aborting `Recover` impls instead —
+/// see [`partial`].
 ///
 /// Only buildable via [`RustAst::new`] — see its own doc comment for why.
 pub struct RustAst<'a> {
@@ -36,6 +44,9 @@ pub struct RustAst<'a> {
     /// `passthrough`-claimed kind's struct (see [`kind_display_name`]), and
     /// emits one `pub enum {target}` per `merge` entry ([`fmt_structs`]).
     merge_config: Option<&'a MergeConfig>,
+    /// Whether to emit the aborting `TryFrom` API ([`BuildMode::Strict`]) or
+    /// the non-aborting `Recover` API ([`BuildMode::Partial`]).
+    mode: BuildMode,
 }
 
 impl<'a> RustAst<'a> {
@@ -53,11 +64,14 @@ impl<'a> RustAst<'a> {
     ///   comment.
     /// - `merge_config`: the validated `--merge-config`, if any — see the
     ///   `merge_config` field's own doc comment.
+    /// - `mode`: [`BuildMode::Strict`] reproduces the pre-`--partial-trees`
+    ///   output exactly; [`BuildMode::Partial`] emits the non-aborting API.
     pub fn new(
         grammar: &'a Grammar,
         source: &'a str,
         no_header: bool,
         merge_config: Option<&'a MergeConfig>,
+        mode: BuildMode,
     ) -> Result<Self, String> {
         let ast_node_specs = derive_ast_node_specs(grammar);
         check_field_labels_are_representable(&ast_node_specs)?;
@@ -68,9 +82,65 @@ impl<'a> RustAst<'a> {
             ast_node_specs,
             multi_shape_names,
             merge_config,
+            mode,
         })
     }
 }
+
+/// The `Pragma` type emitted into the generated `runtime` module — the same
+/// text in every [`BuildMode`], so both modes' `Pragma` can never drift apart.
+/// Flush-left: [`RustAst::fmt_runtime_module`] indents it into the module.
+const RUNTIME_PRAGMA: &str = indoc! {r#"
+    /// A node's start position in its source file.
+    /// 1-indexed (tree-sitter uses 0-index; this converts once here).
+    /// `column` counts characters (Unicode scalar values), not bytes
+    /// as tree-sitter's own column does, and does not count a leading
+    /// byte-order mark (U+FEFF), so it matches what an editor shows.
+    #[derive(Debug)]
+    pub struct Pragma {
+        pub line: usize,
+        pub column: usize,
+    }
+
+    impl From<super::super::visitor::SourceNode<'_>> for Pragma {
+        fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
+            let point = node.node.start_position();
+            let start = node.node.start_byte();
+            // `point.column` is a byte offset into the line, so the
+            // line starts that many bytes back. If `source` is not
+            // the text the tree was parsed from, fall back to the
+            // byte column rather than panic on a bad slice.
+            let mut column = node
+                .source
+                .get(start - point.column..start)
+                .map_or(point.column, |line_prefix| line_prefix.chars().count());
+            // The parser counts a BOM as part of line 1; editors don't.
+            if point.row == 0 && node.source.starts_with('\u{feff}') {
+                column = column.saturating_sub(1);
+            }
+            Pragma { line: point.row + 1, column: column + 1 }
+        }
+    }
+"#};
+
+/// The `BuildError` type emitted into the generated `runtime` module in
+/// [`BuildMode::Strict`] only — partial mode reports problems as
+/// diagnostics instead ([`partial::RUNTIME_ITEMS`]). Flush-left, like
+/// [`RUNTIME_PRAGMA`].
+const RUNTIME_BUILD_ERROR: &str = indoc! {r#"
+    /// An error building a typed AST node from a parsed tree.
+    #[derive(Debug)]
+    pub enum BuildError {
+        /// A field the grammar guarantees is present was absent on this
+        /// particular node — shouldn't happen for a tree that parsed without
+        /// errors, but `child_by_field` returns `Option`, so this is what a
+        /// `None` becomes.
+        MissingField { kind: &'static str, field: &'static str },
+        /// A multi-shape field's child had a kind outside its declared
+        /// target-kind set.
+        UnexpectedKind { expected: &'static str, found: String },
+    }
+"#};
 
 impl RustAst<'_> {
     /// Emits `runtime`, an inner module holding the two fixed types every
@@ -92,55 +162,18 @@ impl RustAst<'_> {
     /// would occupy the bare name `SourceNode` at module scope, so every
     /// reference is instead spelled out as `super::visitor::SourceNode`
     /// (`super::super::` from within this nested `runtime` module).
+    ///
+    /// The `Pragma` half is shared by both [`BuildMode`]s
+    /// ([`RUNTIME_PRAGMA`]); the other half differs — strict mode's
+    /// aborting `BuildError` ([`RUNTIME_BUILD_ERROR`]) versus partial mode's
+    /// diagnostics and `Recover` trait ([`partial::RUNTIME_ITEMS`]).
     fn fmt_runtime_module(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let body = indoc! {r#"
-            pub mod runtime {
-                /// A node's start position in its source file.
-                /// 1-indexed (tree-sitter uses 0-index; this converts once here).
-                /// `column` counts characters (Unicode scalar values), not bytes
-                /// as tree-sitter's own column does, and does not count a leading
-                /// byte-order mark (U+FEFF), so it matches what an editor shows.
-                #[derive(Debug)]
-                pub struct Pragma {
-                    pub line: usize,
-                    pub column: usize,
-                }
-
-                impl From<super::super::visitor::SourceNode<'_>> for Pragma {
-                    fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
-                        let point = node.node.start_position();
-                        let start = node.node.start_byte();
-                        // `point.column` is a byte offset into the line, so the
-                        // line starts that many bytes back. If `source` is not
-                        // the text the tree was parsed from, fall back to the
-                        // byte column rather than panic on a bad slice.
-                        let mut column = node
-                            .source
-                            .get(start - point.column..start)
-                            .map_or(point.column, |line_prefix| line_prefix.chars().count());
-                        // The parser counts a BOM as part of line 1; editors don't.
-                        if point.row == 0 && node.source.starts_with('\u{feff}') {
-                            column = column.saturating_sub(1);
-                        }
-                        Pragma { line: point.row + 1, column: column + 1 }
-                    }
-                }
-
-                /// An error building a typed AST node from a parsed tree.
-                #[derive(Debug)]
-                pub enum BuildError {
-                    /// A field the grammar guarantees is present was absent on this
-                    /// particular node — shouldn't happen for a tree that parsed without
-                    /// errors, but `child_by_field` returns `Option`, so this is what a
-                    /// `None` becomes.
-                    MissingField { kind: &'static str, field: &'static str },
-                    /// A multi-shape field's child had a kind outside its declared
-                    /// target-kind set.
-                    UnexpectedKind { expected: &'static str, found: String },
-                }
-            }
-        "#};
-        writeln!(f, "{}", body)
+        let mode_items = match self.mode {
+            BuildMode::Strict => RUNTIME_BUILD_ERROR,
+            BuildMode::Partial => partial::RUNTIME_ITEMS,
+        };
+        let items = format!("{}\n\n{}", RUNTIME_PRAGMA.trim_end(), mode_items.trim_end());
+        writeln!(f, "pub mod runtime {{\n{}\n}}\n", indent(&items, 4))
     }
 
     /// Emits the generated-file header comment, unless suppressed by
@@ -218,9 +251,13 @@ impl RustAst<'_> {
             is_pub,
             &self.multi_shape_names,
             self.merge_config,
+            self.mode,
         );
-        let try_from = fmt_struct_try_from(&struct_name, kind, spec);
-        format!("{decl}\n{try_from}")
+        let constructor = match self.mode {
+            BuildMode::Strict => fmt_struct_try_from(&struct_name, kind, spec),
+            BuildMode::Partial => partial::fmt_struct_recover(&struct_name, kind, spec),
+        };
+        format!("{decl}\n{constructor}")
     }
 
     /// Emits every generated struct/impl pair ([`fmt_struct`], one per kind
@@ -245,9 +282,12 @@ impl RustAst<'_> {
             .multi_shape_names
             .iter()
             .filter_map(|(shape_key, shape_name)| match shape_name {
-                ShapeName::Generated(name) => {
-                    Some(fmt_multi_shape_enum(shape_key, name, self.merge_config))
-                }
+                ShapeName::Generated(name) => Some(fmt_multi_shape_enum(
+                    shape_key,
+                    name,
+                    self.merge_config,
+                    self.mode,
+                )),
                 ShapeName::MergeTarget(_) => None,
             })
             .collect::<Vec<_>>();
@@ -257,6 +297,7 @@ impl RustAst<'_> {
                     &entry.from,
                     &entry.target,
                     self.merge_config,
+                    self.mode,
                 ));
             }
         }
@@ -269,6 +310,9 @@ impl fmt::Display for RustAst<'_> {
         self.fmt_header(f)?;
         self.fmt_runtime_module(f)?;
         self.fmt_node_helpers(f)?;
+        if self.mode == BuildMode::Partial {
+            partial::fmt_recover_helpers(f)?;
+        }
         self.fmt_structs(f)
     }
 }
@@ -302,7 +346,9 @@ fn shape_key(target: &FieldTargetKinds) -> Vec<String> {
 /// [`rust_field_ident`] (escaping a field label that collides with a Rust
 /// keyword). `struct_name` is resolved by the caller ([`RustAst::fmt_struct`])
 /// rather than derived here, so a `passthrough` rename only needs to change
-/// that one call site.
+/// that one call site. `mode` only affects field types
+/// ([`field_rust_type`]): [`BuildMode::Partial`] makes single fields
+/// `Option<T>`.
 fn fmt_struct_decl(
     struct_name: &str,
     kind: &str,
@@ -310,6 +356,7 @@ fn fmt_struct_decl(
     is_pub: bool,
     multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
     merge_config: Option<&MergeConfig>,
+    mode: BuildMode,
 ) -> String {
     let mut fields = vec!["    pub _pragma: runtime::Pragma,".to_string()];
 
@@ -320,7 +367,7 @@ fn fmt_struct_decl(
                 format!(
                     "    pub {}: {},",
                     rust_field_ident(f),
-                    field_rust_type(f_spec, multi_shape_names, merge_config)
+                    field_rust_type(f_spec, multi_shape_names, merge_config, mode)
                 )
             })
             .collect::<Vec<String>>(),
@@ -616,11 +663,15 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
 /// single target kind's own name — [`kind_display_name`], so a
 /// `passthrough`-renamed kind is referenced under its actual declared name
 /// — else `String` for a bare anonymous token — wrapped in `Vec<...>` if
-/// the field is `multiple`.
+/// the field is `multiple`. In [`BuildMode::Partial`] a non-`multiple` field
+/// is further wrapped in `Option<...>`, since a node with a syntax error may
+/// lack it; a `multiple` field stays a `Vec` (an unbuildable child is just
+/// absent from it), so partial mode only changes the single-valued case.
 fn field_rust_type(
     field: &AstFieldSpec,
     multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
     merge_config: Option<&MergeConfig>,
+    mode: BuildMode,
 ) -> String {
     let type_name = if let Some(entry) = merge_entry_for_shape(&field.target, merge_config) {
         entry.target.clone()
@@ -646,6 +697,8 @@ fn field_rust_type(
 
     if field.multiple {
         format!("Vec<{}>", type_name)
+    } else if mode == BuildMode::Partial {
+        format!("Option<{}>", type_name)
     } else {
         type_name
     }
@@ -1001,8 +1054,13 @@ fn fmt_multi_shape_enum(
     shape: &[String],
     name: &str,
     merge_config: Option<&MergeConfig>,
+    mode: BuildMode,
 ) -> String {
     let enum_text = fmt_multi_shape_enum_decl(shape, name, merge_config);
+    if mode == BuildMode::Partial {
+        let recover_impl = partial::fmt_multi_shape_enum_recover(shape, name, merge_config);
+        return format!("{enum_text}\n{recover_impl}");
+    }
     let impl_text = indent(&fmt_multi_shape_enum_try_from(shape, name, merge_config), 4);
 
     formatdoc! {r#"
@@ -1025,7 +1083,8 @@ mod tests {
     /// Builds a `RustAst` with `no_header: true`, for tests that don't care
     /// about the header comment.
     fn ra<'a>(grammar: &'a Grammar, source: &'a str) -> RustAst<'a> {
-        RustAst::new(grammar, source, true, None).expect("grammar must be ast-safe")
+        RustAst::new(grammar, source, true, None, BuildMode::Strict)
+            .expect("grammar must be ast-safe")
     }
 
     /// Same as [`ra`], but with an explicit `merge_config` — for tests
@@ -1035,7 +1094,8 @@ mod tests {
         source: &'a str,
         merge_config: &'a MergeConfig,
     ) -> RustAst<'a> {
-        RustAst::new(grammar, source, true, Some(merge_config)).expect("grammar must be ast-safe")
+        RustAst::new(grammar, source, true, Some(merge_config), BuildMode::Strict)
+            .expect("grammar must be ast-safe")
     }
 
     // ── top-level assembly (fmt_header / fmt_pragma / fmt_node_helpers /
@@ -1044,7 +1104,7 @@ mod tests {
     #[test]
     fn header_present_by_default() {
         let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
-        let out = RustAst::new(&g, "grammar.bnf", false, None)
+        let out = RustAst::new(&g, "grammar.bnf", false, None, BuildMode::Strict)
             .expect("grammar must be ast-safe")
             .to_string();
         let version = env!("CARGO_PKG_VERSION");
@@ -1149,7 +1209,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "a field always resolves to at least one target kind")]
     fn field_rust_type_panics_on_empty_target() {
-        field_rust_type(&AstFieldSpec::default(), &IndexMap::new(), None);
+        field_rust_type(
+            &AstFieldSpec::default(),
+            &IndexMap::new(),
+            None,
+            BuildMode::Strict,
+        );
     }
 
     #[test]
@@ -1307,7 +1372,7 @@ mod tests {
                 p("ident", TerminalPattern("/[a-z]+/".into())),
             ]);
             assert!(
-                matches!(&RustAst::new(&g, "g", true, None), Err(e) if e.contains(unrepresentable)),
+                matches!(&RustAst::new(&g, "g", true, None, BuildMode::Strict), Err(e) if e.contains(unrepresentable)),
                 "'{unrepresentable}' must be rejected with an error naming it"
             );
         }
@@ -1323,7 +1388,7 @@ mod tests {
             p("ident", TerminalPattern("/[a-z]+/".into())),
         ]);
         assert!(
-            matches!(&RustAst::new(&g, "g", true, None), Err(e) if e.contains("_hidden")),
+            matches!(&RustAst::new(&g, "g", true, None, BuildMode::Strict), Err(e) if e.contains("_hidden")),
             "a leading-underscore field label must be rejected with an error naming it"
         );
     }
