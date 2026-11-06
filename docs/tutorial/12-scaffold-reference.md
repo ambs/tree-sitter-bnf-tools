@@ -376,7 +376,10 @@ what the scaffolded `examples/ast.rs` does.
 
 Only labelled fields become struct fields. A rule like `program -> decl* ;`
 produces a `Program` with nothing but `_pragma`; labelling the repetition
-(`program -> items: decl* ;`) gives it `pub items: Vec<Decl>` instead.
+(`program -> items: decl* ;`) gives it `pub items: Vec<Decl>` instead. (With
+[`--partial-trees`](#input-with-syntax-errors---partial-trees), unlabelled
+children are captured too, so a grammar without labels still gets a usable
+tree.)
 
 Like `visitor.rs`, `ast.rs` is always regenerated from the current
 grammar, and there's no hand-edit support for it. If you need more fields
@@ -594,8 +597,22 @@ Program {
                         line: 1,
                         column: 5,
                     },
+                    _children: [
+                        Num(
+                            Num {
+                                _pragma: Pragma {
+                                    line: 1,
+                                    column: 5,
+                                },
+                                _text: "1",
+                            },
+                        ),
+                    ],
                 },
             ),
+            _children: [
+                "=",
+            ],
         },
     ],
 }
@@ -603,16 +620,20 @@ broken.decls:1:6: Missing { expected: ";" }
 ```
 
 The `Decl` is all there, and the one diagnostic says where the `;` should
-have been. Which of the diagnostics you get depends on what tree-sitter
-found:
+have been. Note `Expr` and the `_children` of `Decl`: `expr -> ident | num ;`
+labels nothing, yet its `1` is there, and the `=` the declaration wrote
+out is kept too. The `;` is not, because it isn't in the file: a missing
+token is a diagnostic, not a child. That is the next section.
+
+Which of the diagnostics you get depends on what tree-sitter found:
 
 | tree-sitter found | the AST | diagnostic |
 |---|---|---|
-| a `MISSING` token the grammar required, like the `;` above | built as usual | `Missing { expected }` |
+| a `MISSING` token the grammar required, like the `;` above | built as usual; the token itself is not in `_children` | `Missing { expected }` |
 | a `MISSING` node standing in for a labelled field's value | that field is `None` | `Missing { expected }` |
 | an `ERROR` region | a field it swallowed is `None`, or a repeated child is left out | one `Error` for the whole region |
 | a labelled field absent from a node that has a syntax error inside it | `None` | `MissingField { kind, field }` |
-| a child whose kind is not one of a merged enum's variants | `None` | `UnexpectedKind { expected, found }` |
+| a child whose kind is not one of a merged enum's variants, or not one the grammar allows as an unlabelled child | `None`, or left out of a list | `UnexpectedKind { expected, found }` |
 
 A field that is `None` in a node with *no* syntax error produces no
 diagnostic: the parser accepted the node without it, so it was optional in
@@ -620,6 +641,47 @@ the grammar. (The generated types don't model optional fields, which is
 why every single-valued field is an `Option` in this mode.) An `ERROR`
 node that tree-sitter nests inside another one of the same range is
 reported once, not twice.
+
+**Grammars without field labels.** Only labelled fields become struct
+fields, so a grammar that labels nothing, such as `program -> decl* ;`,
+would give structs holding only `_pragma`, and a partial tree that holds
+nothing: the diagnostics would be the only useful output. So in this mode
+every struct also gets `_children`, a list of its *unlabelled* children in
+source order. That means both the kinds the rule refers to and the string
+literals it spells out (keywords, punctuation, operators):
+
+- A kind whose unlabelled children are of a single kind holds it directly
+  (`program -> decl* ;` gives `_children: Vec<Decl>`).
+- A kind with several possible child kinds gets a generated enum named
+  after it (`expr -> ident | num ;` gives `_children: Vec<ExprChild>`,
+  with `Ident(Ident)` and `Num(Num)` variants). If those kinds are exactly
+  a `--merge-config` entry's `from`, the list uses that entry's enum
+  instead.
+- A literal beside those kinds is a `Token(String)` variant of that enum,
+  holding the token's text (`decl -> 'var' ident ';' ;` gives
+  `_children: Vec<DeclChild>`: `Token("var")`, `Ident(…)`, `Token(";")`).
+- A kind whose only unlabelled children are literals holds plain strings:
+  `call -> name: ident '(' ')' ;` has `name` as a field and
+  `_children: Vec<String>` holding `"("` and `")"`.
+- A leaf has no `_children`: its `_text` already is its whole source,
+  literals included. That is why `op -> '+' | '-' ;` is a leaf with
+  `_text: "+"` and nothing else.
+
+A child that a field label already captures appears in its field, not
+twice. Not captured, because they are not part of a rule's shape or are
+not really there:
+
+- Comments and the other `%extras`: they can appear anywhere.
+- `ERROR` and `MISSING` nodes: they are diagnostics. A missing `;` is not a
+  `Token(";")`.
+- A pattern written directly in a rule, as in `pair -> key '=' /[0-9]+/ ;`.
+  tree-sitter keeps no node for it, so there is nothing to capture. Give it
+  a rule of its own (`num -> /[0-9]+/ ;`) and it becomes a named leaf with
+  `_text`.
+
+`_children` starts with `_`, like `_pragma` and `_text`, so no field label
+can collide with it. Plain `--ast-types` does not do any of this; its
+structs are unchanged.
 
 **Rerunning.** `--partial-trees` is recorded in `ts-bnf-tool.toml` as
 `partial_trees = true`, and a plain `make generate` keeps it. On the

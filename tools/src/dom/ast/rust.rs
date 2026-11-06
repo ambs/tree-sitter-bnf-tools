@@ -75,7 +75,7 @@ impl<'a> RustAst<'a> {
     ) -> Result<Self, String> {
         let ast_node_specs = derive_ast_node_specs(grammar);
         check_field_labels_are_representable(&ast_node_specs)?;
-        let multi_shape_names = build_multi_shape_names(&ast_node_specs, merge_config)?;
+        let multi_shape_names = build_multi_shape_names(&ast_node_specs, merge_config, mode)?;
         Ok(Self {
             source,
             no_header,
@@ -255,7 +255,13 @@ impl RustAst<'_> {
         );
         let constructor = match self.mode {
             BuildMode::Strict => fmt_struct_try_from(&struct_name, kind, spec),
-            BuildMode::Partial => partial::fmt_struct_recover(&struct_name, kind, spec),
+            BuildMode::Partial => partial::fmt_struct_recover(
+                &struct_name,
+                kind,
+                spec,
+                &self.multi_shape_names,
+                self.merge_config,
+            ),
         };
         format!("{decl}\n{constructor}")
     }
@@ -346,9 +352,10 @@ fn shape_key(target: &FieldTargetKinds) -> Vec<String> {
 /// [`rust_field_ident`] (escaping a field label that collides with a Rust
 /// keyword). `struct_name` is resolved by the caller ([`RustAst::fmt_struct`])
 /// rather than derived here, so a `passthrough` rename only needs to change
-/// that one call site. `mode` only affects field types
-/// ([`field_rust_type`]): [`BuildMode::Partial`] makes single fields
-/// `Option<T>`.
+/// that one call site. `mode` affects field types ([`field_rust_type`]:
+/// [`BuildMode::Partial`] makes single fields `Option<T>`), and in partial mode
+/// adds the injected `_children` list when the kind has unlabelled children
+/// ([`AstNodeSpec::children`]), placed after the labelled fields.
 fn fmt_struct_decl(
     struct_name: &str,
     kind: &str,
@@ -373,6 +380,19 @@ fn fmt_struct_decl(
             .collect::<Vec<String>>(),
     );
 
+    // Only partial mode captures unlabelled children (see
+    // `AstNodeSpec::children`); strict mode's struct is unchanged.
+    let children = match mode {
+        BuildMode::Partial => spec.children.as_ref(),
+        BuildMode::Strict => None,
+    };
+    if let Some(children) = children {
+        fields.push(format!(
+            "    pub _children: {},",
+            field_rust_type(children, multi_shape_names, merge_config, mode)
+        ));
+    }
+
     if spec.is_leaf {
         fields.push("    pub _text: String,".to_string());
     }
@@ -384,12 +404,14 @@ fn fmt_struct_decl(
     } else {
         "#[allow(dead_code)]\n".to_string()
     };
-    let private_interfaces_allow = if is_pub
-        && spec
-            .fields
-            .values()
-            .any(|f| field_directly_references_merged_kind(f, merge_config))
-    {
+    let mut references_merged_kind = spec
+        .fields
+        .values()
+        .any(|f| field_directly_references_merged_kind(f, merge_config));
+    if let Some(children) = children {
+        references_merged_kind |= field_directly_references_merged_kind(children, merge_config);
+    }
+    let private_interfaces_allow = if is_pub && references_merged_kind {
         "#[allow(private_interfaces)]\n".to_string()
     } else {
         String::new()
@@ -667,13 +689,38 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
 /// is further wrapped in `Option<...>`, since a node with a syntax error may
 /// lack it; a `multiple` field stays a `Vec` (an unbuildable child is just
 /// absent from it), so partial mode only changes the single-valued case.
+///
+/// The un-wrapped part is [`field_element_type`].
 fn field_rust_type(
     field: &AstFieldSpec,
     multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
     merge_config: Option<&MergeConfig>,
     mode: BuildMode,
 ) -> String {
-    let type_name = if let Some(entry) = merge_entry_for_shape(&field.target, merge_config) {
+    let type_name = field_element_type(field, multi_shape_names, merge_config);
+
+    if field.multiple {
+        format!("Vec<{}>", type_name)
+    } else if mode == BuildMode::Partial {
+        format!("Option<{}>", type_name)
+    } else {
+        type_name
+    }
+}
+
+/// The Rust type one value of `field` has, before any `Vec`/`Option`
+/// wrapping — see [`field_rust_type`] for how it is chosen. Split out so the
+/// partial-trees emitter can name the element type of an unlabelled-children
+/// list (for its diagnostics) without re-deriving it.
+///
+/// Panics if `field`'s target resolves to no possible shape at all: a field
+/// always has at least one target kind.
+fn field_element_type(
+    field: &AstFieldSpec,
+    multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
+    merge_config: Option<&MergeConfig>,
+) -> String {
+    if let Some(entry) = merge_entry_for_shape(&field.target, merge_config) {
         entry.target.clone()
     } else if field.target.named.len() > 1
         || (!field.target.named.is_empty() && field.target.anonymous_token)
@@ -693,14 +740,6 @@ fn field_rust_type(
         "String".to_string()
     } else {
         unreachable!("a field always resolves to at least one target kind")
-    };
-
-    if field.multiple {
-        format!("Vec<{}>", type_name)
-    } else if mode == BuildMode::Partial {
-        format!("Option<{}>", type_name)
-    } else {
-        type_name
     }
 }
 
@@ -855,9 +894,18 @@ impl ShapeName {
 /// since all of these live as top-level Rust type names in the same
 /// generated file, is distinct, returning the first collision found as
 /// `Err` (see [`find_first_name_collision`]).
+///
+/// In [`BuildMode::Partial`] a kind's unlabelled children
+/// ([`AstNodeSpec::children`]) are registered too, exactly like a field of
+/// that kind: same shape sharing, same merge-entry reuse, same collision
+/// check. They have no label to name an enum after, so each is named for its
+/// owning kind instead (`ProgramChild` for `program`'s), via
+/// [`kind_display_name`] so a `passthrough` rename is followed. Strict mode
+/// never registers them, so its names are untouched.
 fn build_multi_shape_names(
     ast_node_specs: &IndexMap<String, AstNodeSpec>,
     merge_config: Option<&MergeConfig>,
+    mode: BuildMode,
 ) -> Result<IndexMap<Vec<String>, ShapeName>, String> {
     let mut out = IndexMap::new();
 
@@ -873,6 +921,16 @@ fn build_multi_shape_names(
                 let known_shapes_val: &mut Vec<String> = known_shapes.entry(key_shape).or_default();
                 known_shapes_val.push(field.clone());
             }
+        }
+        if mode == BuildMode::Partial
+            && let Some(children) = &node_spec.children
+            && (children.target.named.len() > 1
+                || (!children.target.named.is_empty() && children.target.anonymous_token))
+        {
+            let key_shape = shape_key(&children.target);
+            let name_hint = format!("{}Child", kind_display_name(&node_spec.kind, merge_config));
+            let known_shapes_val: &mut Vec<String> = known_shapes.entry(key_shape).or_default();
+            known_shapes_val.push(name_hint);
         }
     }
 
@@ -1239,8 +1297,8 @@ mod tests {
             p("num", TerminalPattern("/[0-9]+/".into())),
             p("str", TerminalPattern("/\"[^\"]*\"/".into())),
         ]);
-        let names =
-            build_multi_shape_names(&derive_ast_node_specs(&g), None).expect("no name collisions");
+        let names = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .expect("no name collisions");
         assert_eq!(names.len(), 1, "one shape shared by both fields: {names:?}");
         assert_eq!(names.values().next().unwrap().name(), "Value");
     }
@@ -1262,8 +1320,8 @@ mod tests {
             p("num", TerminalPattern("/[0-9]+/".into())),
             p("str", TerminalPattern("/\"[^\"]*\"/".into())),
         ]);
-        let names =
-            build_multi_shape_names(&derive_ast_node_specs(&g), None).expect("no name collisions");
+        let names = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .expect("no name collisions");
         assert_eq!(names.len(), 1);
         assert_eq!(names.values().next().unwrap().name(), "NumStr");
     }
@@ -1274,8 +1332,8 @@ mod tests {
             p("decl", Field("value".into(), Box::new(nt("expr")))),
             p("expr", TerminalLiteral("'e'".into())),
         ]);
-        let names =
-            build_multi_shape_names(&derive_ast_node_specs(&g), None).expect("no name collisions");
+        let names = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .expect("no name collisions");
         assert!(names.is_empty());
     }
 
@@ -1290,7 +1348,8 @@ mod tests {
             p("a", TerminalLiteral("'a'".into())),
             p("b", TerminalLiteral("'b'".into())),
         ]);
-        let err = build_multi_shape_names(&derive_ast_node_specs(&g), None).unwrap_err();
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .unwrap_err();
         assert!(err.contains("Value"), "error should name 'Value': {err}");
     }
 
@@ -1310,7 +1369,8 @@ mod tests {
             p("c", TerminalLiteral("'c'".into())),
             p("d", TerminalLiteral("'d'".into())),
         ]);
-        let err = build_multi_shape_names(&derive_ast_node_specs(&g), None).unwrap_err();
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .unwrap_err();
         assert!(err.contains("shape [a, b]"), "{err}");
         assert!(err.contains("shape [c, d]"), "{err}");
     }
@@ -1755,7 +1815,9 @@ mod tests {
             passthrough: vec![],
             ignore: vec![],
         };
-        let err = build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config)).unwrap_err();
+        let err =
+            build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config), BuildMode::Strict)
+                .unwrap_err();
         assert!(err.contains("kind 'Loop'"), "{err}");
         assert!(err.contains("merge target 'Loop'"), "{err}");
     }
@@ -1774,7 +1836,9 @@ mod tests {
             }],
             ignore: vec![],
         };
-        let err = build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config)).unwrap_err();
+        let err =
+            build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config), BuildMode::Strict)
+                .unwrap_err();
         assert!(err.contains("kind 'expr'"), "{err}");
         assert!(err.contains("passthrough entry 'comment'"), "{err}");
     }
@@ -1799,7 +1863,9 @@ mod tests {
             passthrough: vec![],
             ignore: vec![],
         };
-        let err = build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config)).unwrap_err();
+        let err =
+            build_multi_shape_names(&derive_ast_node_specs(&g), Some(&config), BuildMode::Strict)
+                .unwrap_err();
         assert!(err.contains("shape [num, str]"), "{err}");
         assert!(err.contains("merge target 'Value'"), "{err}");
     }
