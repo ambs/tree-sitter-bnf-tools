@@ -114,8 +114,21 @@ fn compile_generated_ast_in_mode(
     let harness_path = examples_dir.join(format!("{example_name}.rs"));
     let _guard = HarnessGuard(harness_path.clone());
 
+    // The generated `ast.rs` has a `parse_ast` that calls the crate's own
+    // `parse` (the scaffolded `lib.rs` defines it), which a bare harness file
+    // does not have. Most fixtures here have no compiled parser, so they only
+    // need it to type-check: a stand-in that always fails. A runner that
+    // brings a real `parse` of its own (the ones that drive the BNF parser)
+    // is left alone.
+    let parse_stand_in = if extra_source.contains("fn parse(") {
+        ""
+    } else {
+        "#[allow(dead_code)]\n\
+         fn parse(_source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Error>> {\n    \
+             Err(\"this harness has no compiled parser\".into())\n}\n\n"
+    };
     let program = format!(
-        "mod visitor {{\n{visitor_source}\n}}\n\nmod ast {{\n{ast_source}\n}}\n\n{extra_source}"
+        "mod visitor {{\n{visitor_source}\n}}\n\nmod ast {{\n{ast_source}\n}}\n\n{parse_stand_in}{extra_source}"
     );
     fs::write(&harness_path, program)
         .unwrap_or_else(|e| panic!("must be able to write {}: {e}", harness_path.display()));
@@ -584,15 +597,20 @@ fn partial_field_shapes_cross_leaf_status_compile() {
 /// (`diagnostic`, `recovered`, `recover`, `runtime`) and after the strict
 /// mode's fixed names (`pragma`, `text`, `source_node`), and field labels
 /// that are local variables inside the generated `recover` (`node`, `diags`)
-/// or Rust keywords (`type`). Partial-only: a field labelled `node` is a
-/// separate, pre-existing problem in strict mode's `try_from`, which names
-/// its own parameter `node`.
+/// or Rust keywords (`type`) — and kinds literally named `error` and `token`,
+/// whose children-enum variants would collide with the fixed `Error` and
+/// `Token` ones if only the fixed ones were named, and are renamed instead.
+/// Partial-only: a field labelled `node` is a separate, pre-existing problem
+/// in strict mode's `try_from`, which names its own parameter `node`.
 #[test]
 fn partial_ast_naming_edge_cases_compile() {
     let grammar = parse_fixture(
         "partial naming edge cases",
         "root -> a: pragma b: text c: diagnostic d: recovered e: recover f: runtime \
-                 g: source_node node: ident diags: ident type: ident ;\n\
+                 g: source_node node: ident diags: ident type: ident h: holder ;\n\
+         holder -> error token 'x' ;\n\
+         error -> /e/ ;\n\
+         token -> /t/ ;\n\
          pragma -> 'p' ;\n\
          text -> 't' ;\n\
          diagnostic -> 'd' ;\n\
@@ -739,4 +757,538 @@ fn partial_shared_kind_plus_literal_children_compile() {
         BuildMode::Partial,
     );
     assert_no_partial_mode_warnings(&output);
+}
+
+/// Behaviour test for the generated `runtime::Reflect` (`--partial-trees`):
+/// the typed tree it exposes is the real tree-sitter tree.
+///
+/// Generates partial-mode types for `grammar/bnf.bnf`, parses the real
+/// `bnf.bnf` (and a small multibyte sample) with the compiled BNF parser, and
+/// walks the typed tree with an explicit stack — the "one generic, iterative
+/// loop" the trait exists for — pairing every node with tree-sitter's own
+/// node. For each pair it checks: the kind, `is_named`, the byte range, the
+/// start and end line/column (column counted in characters, worked out here
+/// independently of the generated code), the leaf text, the child count, and
+/// that children are in source order, don't overlap and sit inside their
+/// parent. Extras (the grammar's comments) are not part of any rule's shape,
+/// so they are left out of what tree-sitter's side is expected to match. It
+/// also checks a clean tree gives no diagnostics, which would otherwise hide
+/// a kind the derivation missed.
+#[test]
+fn reflect_walk_mirrors_the_real_tree_sitter_tree() {
+    let runner = r#"
+use ast::runtime::{recover, walk, Reflect};
+use tree_sitter::{Node, Parser};
+use visitor::SourceNode;
+
+/// 1-indexed (line, character column) of byte offset `at`, worked out here,
+/// independently of the generated code.
+fn line_col(source: &str, at: usize) -> (usize, usize) {
+    let before = &source[..at];
+    let line = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    (line, source[line_start..at].chars().count() + 1)
+}
+
+/// What tree-sitter says a node's children are, each with the field name it
+/// reports for it, minus extras and `MISSING` points. An `ERROR` node stays —
+/// tree-sitter flags the ones it creates while skipping tokens as extras too,
+/// so they are let through explicitly.
+fn expected_children<'a>(node: Node<'a>) -> Vec<(Option<&'a str>, Node<'a>)> {
+    let mut out = Vec::new();
+    let mut cursor = node.walk();
+    if !cursor.goto_first_child() {
+        return out;
+    }
+    loop {
+        let child = cursor.node();
+        if (child.is_error() || !child.is_extra()) && !child.is_missing() {
+            out.push((cursor.field_name(), child));
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    out
+}
+
+/// The kinds of typed children, for a failure message.
+fn typed_kinds(children: &[(Option<&'static str>, &dyn Reflect)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (field, child) in children {
+        out.push(format!("{}{}", field.map(|f| format!("{f}:")).unwrap_or_default(), child.kind()));
+    }
+    out
+}
+
+/// The kinds of tree-sitter's children, for a failure message.
+fn real_kinds(children: &[(Option<&str>, Node<'_>)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (field, child) in children {
+        out.push(format!("{}{}", field.map(|f| format!("{f}:")).unwrap_or_default(), child.kind()));
+    }
+    out
+}
+
+/// Walks the typed tree for `source` against tree-sitter's, returning
+/// `(nodes visited, literal tokens, leaves, labelled children)`. With `broken`
+/// the source must have syntax errors: the typed tree is then expected to keep
+/// every error region in place, matching tree-sitter's `ERROR` nodes one for
+/// one. Every child's field label must be tree-sitter's own. Along the way it
+/// records the pre-order sequence of `(depth, field, kind, bytes)` and checks
+/// `runtime::walk` yields exactly that.
+fn check(source: &str, broken: bool) -> (usize, usize, usize, usize) {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .expect("Error loading BNF grammar");
+    let tree = parser.parse(source, None).expect("sample must parse");
+    assert_eq!(tree.root_node().has_error(), broken, "sample's error state");
+
+    let recovered = recover::<ast::Grammar>(SourceNode { node: tree.root_node(), source });
+    assert_eq!(
+        recovered.diagnostics.is_empty(),
+        !broken,
+        "a clean tree gives no diagnostics and a broken one at least one: {:?}",
+        recovered.diagnostics
+    );
+    let root = recovered.value.expect("the root must be built");
+
+    let (mut visited, mut tokens, mut leaves, mut labelled) = (0, 0, 0, 0);
+    let mut sequence: Vec<(usize, Option<&'static str>, String, std::ops::Range<usize>)> = Vec::new();
+    let mut stack: Vec<(&dyn Reflect, Node, usize, Option<&'static str>)> =
+        vec![(&root, tree.root_node(), 0, None)];
+    while let Some((typed, real, depth, field)) = stack.pop() {
+        visited += 1;
+        sequence.push((depth, field, typed.kind().to_string(), typed.span().byte_range.clone()));
+        let what = format!("`{}` at bytes {:?}", real.kind(), real.byte_range());
+
+        assert_eq!(typed.kind(), real.kind(), "kind of {what}");
+        assert_eq!(typed.is_named(), real.is_named(), "is_named of {what}");
+
+        let span = typed.span();
+        assert_eq!(span.byte_range, real.byte_range(), "byte range of {what}");
+        assert_eq!(
+            (span.start.line, span.start.column),
+            line_col(source, real.start_byte()),
+            "start of {what}"
+        );
+        assert_eq!(
+            (span.end.line, span.end.column),
+            line_col(source, real.end_byte()),
+            "end of {what}"
+        );
+
+        let children = typed.children();
+        if let Some(text) = typed.text() {
+            assert_eq!(text, &source[real.byte_range()], "text of {what}");
+            if !real.is_named() {
+                tokens += 1;
+            }
+            if children.is_empty() {
+                // A leaf: its text is its whole source, so whatever tree-sitter
+                // shows inside it (a literal-only rule's anonymous child) is
+                // covered by that text.
+                leaves += 1;
+                continue;
+            }
+        }
+
+        let expected = expected_children(real);
+        assert_eq!(
+            children.len(),
+            expected.len(),
+            "child count of {what}: typed {:?} vs tree-sitter {:?}",
+            typed_kinds(&children),
+            real_kinds(&expected)
+        );
+
+        let mut previous_end = real.start_byte();
+        for (_, child) in &children {
+            let range = &child.span().byte_range;
+            assert!(range.start >= previous_end, "children out of order or overlapping in {what}");
+            assert!(range.end <= real.end_byte(), "child outside its parent in {what}");
+            previous_end = range.end;
+        }
+
+        // Reversed, so the stack pops them in source order.
+        for ((field, child), (real_field, real_child)) in children.into_iter().zip(expected).rev() {
+            assert_eq!(
+                field,
+                real_field,
+                "field name of the `{}` child at bytes {:?} of {what}",
+                real_child.kind(),
+                real_child.byte_range()
+            );
+            if field.is_some() {
+                labelled += 1;
+            }
+            stack.push((child, real_child, depth + 1, field));
+        }
+    }
+
+    // The library's iterative walk is that very sequence.
+    let mut walked = Vec::new();
+    for visit in walk(&root) {
+        walked.push((
+            visit.depth,
+            visit.field,
+            visit.node.kind().to_string(),
+            visit.node.span().byte_range.clone(),
+        ));
+    }
+    assert_eq!(walked, sequence, "runtime::walk must visit in pre-order, with depth and field");
+    (visited, tokens, leaves, labelled)
+}
+
+/// The kinds of the root's children, as the generic view reports them.
+fn root_child_kinds(source: &str) -> Vec<String> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .expect("Error loading BNF grammar");
+    let tree = parser.parse(source, None).expect("sample must parse");
+    let recovered = recover::<ast::Grammar>(SourceNode { node: tree.root_node(), source });
+    let root = recovered.value.expect("the root must be built");
+    let mut kinds = Vec::new();
+    for (_, child) in root.children() {
+        kinds.push(child.kind().to_string());
+    }
+    kinds
+}
+
+fn main() {
+    let (visited, tokens, leaves, labelled) = check(include_str!("../../grammar/bnf.bnf"), false);
+    assert!(visited > 500, "bnf.bnf is a real grammar; only {visited} nodes visited");
+    assert!(tokens > 0, "literal tokens must be reflected");
+    assert!(leaves > 0, "leaves must be reflected");
+    // `name:`, `body:`, `content:` … are labels in bnf.bnf; if none came back
+    // the field comparison above would be vacuous.
+    assert!(labelled > 100, "labelled children must be reflected; only {labelled}");
+
+    // Multibyte characters in a literal: columns after it count characters.
+    let (visited, tokens, _, _) = check("x -> 'çãçã' y ;\ny -> /[a-z]+/ ;\n", false);
+    assert!(visited > 5 && tokens > 0);
+
+    // A broken file. tree-sitter's recovery makes `@@@` and the rule after it
+    // one `ERROR` node, a direct child of the root, after the good rule. The
+    // typed tree keeps it right there — as a child of the root, in source
+    // order, with the kind, naming, byte range, line/column and text of the
+    // real node — instead of dropping it, and it has no children of its own.
+    let broken = "a -> b ;\n@@@\nc -> d ;\n";
+    check(broken, true);
+    assert_eq!(root_child_kinds(broken), ["rule", "ERROR"]);
+}
+"#;
+
+    compile_generated_ast_in_mode(
+        "ast_reflect_walk_harness",
+        &dogfood_grammar(),
+        "bnf",
+        runner,
+        true,
+        None,
+        BuildMode::Partial,
+    );
+}
+
+/// Behaviour test for the depth guard (`--partial-trees`), against the real
+/// BNF parser: `x -> ((((…y…)))) ;` nests `subSeq` inside `subSeq`, as deep as
+/// the input says.
+///
+/// - **Exact limit** — on a shallow input, `recover_with_limit(L)` for every
+///   `L` builds a tree whose non-leaf nesting never passes `L`, and reports
+///   `TooDeep` exactly when it had to stop at `L`. `L = 0` builds nothing.
+/// - **No abort** — with the default limit, inputs nested 10 to 20 000 parens
+///   deep come back as values (and a `TooDeep`) on a *2 MiB* thread in a debug
+///   build, where the unguarded builder overflowed the stack at a few hundred.
+///   `Debug` and `Drop` on what it built are fine on that stack too.
+/// - **A syntax error at the bottom of a deep tree** is found without
+///   recursion: the `ERROR`/`MISSING` walk over tree-sitter's tree is
+///   iterative.
+/// - **`walk` is iterative**: a typed tree thousands of levels deep (built on
+///   a big stack, with a raised limit) is walked on a tiny one.
+#[test]
+fn deep_nesting_is_guarded_and_never_aborts() {
+    let runner = r#"
+use ast::runtime::{recover, recover_with_limit, walk, DiagnosticKind, DEFAULT_MAX_DEPTH, Reflect};
+use tree_sitter::Parser;
+use visitor::SourceNode;
+
+fn nested(parens: usize) -> String {
+    format!("x -> {}y{} ;\n", "(".repeat(parens), ")".repeat(parens))
+}
+
+fn tree_of(source: &str) -> tree_sitter::Tree {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .expect("Error loading BNF grammar");
+    parser.parse(source, None).expect("sample must parse")
+}
+
+/// How many `TooDeep` diagnostics, and the limit they report.
+fn too_deep(diagnostics: &[ast::runtime::Diagnostic]) -> (usize, Option<usize>) {
+    let (mut count, mut limit) = (0, None);
+    for d in diagnostics {
+        if let DiagnosticKind::TooDeep { limit: l } = &d.kind {
+            count += 1;
+            limit = Some(*l);
+        }
+    }
+    (count, limit)
+}
+
+/// The deepest nesting of non-leaf nodes in a built tree: a node counts as one
+/// level, the root being level 1. Leaves, tokens and error regions have text,
+/// and are not levels.
+fn levels(root: &dyn Reflect) -> usize {
+    let mut deepest = 0;
+    for visit in walk(root) {
+        if visit.node.text().is_none() {
+            deepest = deepest.max(visit.depth + 1);
+        }
+    }
+    deepest
+}
+
+/// How deep tree-sitter's own tree is, counted with a cursor, not recursion.
+fn depth_of(root: tree_sitter::Node<'_>) -> usize {
+    let mut cursor = root.walk();
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    loop {
+        deepest = deepest.max(depth);
+        if cursor.goto_first_child() {
+            depth += 1;
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return deepest;
+            }
+            depth -= 1;
+        }
+    }
+}
+
+/// Runs `f` on a thread with the given stack, so overflowing it aborts here.
+fn on_stack<F: FnOnce() + Send + 'static>(bytes: usize, f: F) {
+    std::thread::Builder::new()
+        .stack_size(bytes)
+        .spawn(f)
+        .expect("spawn")
+        .join()
+        .expect("the thread must not panic");
+}
+
+fn exact_limit() {
+    let source = "x -> (y) ;\n";
+    let tree = tree_of(source);
+    let natural = {
+        let full = recover::<ast::Grammar>(SourceNode { node: tree.root_node(), source });
+        assert!(full.is_complete(), "{:?}", full.diagnostics);
+        levels(&full.value.unwrap())
+    };
+    assert!(natural > 8, "the sample must nest a few levels; got {natural}");
+
+    for limit in 0..=natural + 2 {
+        let r = recover_with_limit::<ast::Grammar>(
+            SourceNode { node: tree.root_node(), source },
+            limit,
+        );
+        let (count, reported) = too_deep(&r.diagnostics);
+        if limit == 0 {
+            // Not even the root: nothing is built and the root is what is reported.
+            assert!(r.value.is_none(), "limit 0 builds nothing");
+            assert_eq!(count, 1);
+            assert_eq!(r.diagnostics[0].span.byte_range, 0..source.len());
+            continue;
+        }
+        let built = levels(&r.value.expect("limit >= 1 builds the root"));
+        if limit >= natural {
+            assert_eq!(count, 0, "limit {limit} is enough: {:?}", r.diagnostics);
+            assert_eq!(built, natural);
+        } else {
+            // It went exactly as deep as it was allowed, then said so.
+            assert!(count >= 1, "limit {limit} is too small for {natural} levels");
+            assert_eq!(reported, Some(limit));
+            assert_eq!(built, limit, "no level wasted, none exceeded");
+        }
+    }
+}
+
+fn deep_inputs_do_not_abort() {
+    // Complete below the limit; past it one TooDeep and a built, bounded tree.
+    for parens in [10, 100, 1_000, 20_000] {
+        let source = nested(parens);
+        let tree = tree_of(&source);
+        let r = recover::<ast::Grammar>(SourceNode { node: tree.root_node(), source: &source });
+        let (count, limit) = too_deep(&r.diagnostics);
+        let root = r.value.as_ref().expect("the shallow part is always built");
+        assert!(levels(root) <= DEFAULT_MAX_DEPTH);
+        if parens <= 10 {
+            assert!(r.is_complete(), "{:?}", r.diagnostics);
+        } else {
+            assert_eq!(limit, Some(DEFAULT_MAX_DEPTH));
+            // The one subtree that was not built, not every level after it.
+            assert_eq!(count, 1, "{parens} parens: {:?}", r.diagnostics);
+            let span = &r.diagnostics[0].span.byte_range;
+            assert!(span.start < span.end && span.end <= source.len());
+            assert_eq!(levels(root), DEFAULT_MAX_DEPTH, "built right up to the limit");
+        }
+        // Debug and Drop recurse too; at the limit they fit the same small stack.
+        let shown = format!("{:?}", r.value);
+        assert!(shown.starts_with("Some(Grammar"));
+        drop(r);
+    }
+}
+
+fn error_at_the_bottom_of_a_deep_tree() {
+    let parens = 5_000;
+    // The junk comes *after* `y`: before it, tree-sitter swallows the whole
+    // nest into one shallow `ERROR`. Here it skips the junk where it stands, so
+    // the error sits 20 000 levels down in a tree that is otherwise intact.
+    let source = format!("x -> {}y @@@{} ;\n", "(".repeat(parens), ")".repeat(parens));
+    let tree = tree_of(&source);
+    assert!(tree.root_node().has_error());
+    assert!(depth_of(tree.root_node()) > 20_000, "the tree itself must be deep");
+    let r = recover::<ast::Grammar>(SourceNode { node: tree.root_node(), source: &source });
+    let mut errors = 0;
+    for d in &r.diagnostics {
+        if matches!(d.kind, DiagnosticKind::Error) {
+            errors += 1;
+        }
+    }
+    assert!(errors >= 1, "the syntax error must be found: {:?}", r.diagnostics.len());
+    drop(r);
+}
+
+fn main() {
+    exact_limit();
+    on_stack(2 << 20, deep_inputs_do_not_abort);
+    on_stack(2 << 20, error_at_the_bottom_of_a_deep_tree);
+
+    // A typed tree thousands of levels deep, built where the stack is big and
+    // the limit raised, then walked on a stack far too small to recurse on.
+    on_stack(256 << 20, || {
+        let source = nested(1_500);
+        let tree = tree_of(&source);
+        let r = recover_with_limit::<ast::Grammar>(
+            SourceNode { node: tree.root_node(), source: &source },
+            1_000_000,
+        );
+        assert!(r.is_complete(), "{:?}", r.diagnostics.len());
+        let root = r.value.as_ref().unwrap();
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(256 << 10)
+                .spawn_scoped(scope, || {
+                    let (mut visited, mut deepest) = (0usize, 0usize);
+                    for visit in walk(root) {
+                        visited += 1;
+                        deepest = deepest.max(visit.depth);
+                    }
+                    assert!(deepest > 5_000, "only {deepest} deep");
+                    assert!(visited > deepest);
+                })
+                .expect("spawn")
+                .join()
+                .expect("walk must not overflow a small stack");
+        });
+        // Dropped here, back on the big stack.
+        drop(r);
+    });
+}
+"#;
+
+    compile_generated_ast_in_mode(
+        "ast_deep_nesting_harness",
+        &dogfood_grammar(),
+        "bnf",
+        runner,
+        true,
+        None,
+        BuildMode::Partial,
+    );
+}
+
+/// Compile-check for a kind literally named `token` beside a literal
+/// alternative (strict mode, labelled field). The enum for "kind or literal"
+/// has a fixed `Token` variant, and the kind's own variant used to be named
+/// `Token` too: two variants of one name, which does not compile. Only that
+/// kind's variant is renamed (`TokenNode`), so this now builds.
+#[test]
+fn kind_named_token_beside_a_literal_compiles() {
+    let grammar = parse_fixture(
+        "kind named token",
+        "root -> a: (token | 'x') ;\n\
+         token -> /[a-z]/ ;\n",
+    );
+
+    compile_generated_ast(
+        "ast_kind_named_token_harness",
+        &grammar,
+        "kind_named_token_sample",
+        "fn main() {}\n",
+        false,
+        None,
+    );
+}
+
+/// Behaviour test for the generated `parse_ast` (`--partial-trees`): the
+/// tree-sitter-free entry point. The runner never names `Parser`, `Tree` or
+/// `SourceNode` when it calls it (only its stand-in for the scaffolded
+/// crate's own `parse` does, as that crate's `lib.rs` would). A clean file
+/// comes back complete, with the root rule's struct. A broken one is *not* an
+/// `Err`: it comes back `Ok`, with diagnostics, and the broken region kept in
+/// the tree under its parent.
+#[test]
+fn parse_ast_recovers_without_the_caller_touching_tree_sitter() {
+    let runner = r#"
+use ast::runtime::Reflect;
+
+/// What the scaffolded crate's `lib.rs` provides, which `ast::parse_ast`
+/// calls; here it drives the BNF parser.
+fn parse(source: &str) -> Result<tree_sitter::Tree, Box<dyn std::error::Error>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_bnf::LANGUAGE.into())?;
+    parser
+        .parse(source, None)
+        .ok_or_else(|| "tree-sitter failed to parse the given source".into())
+}
+
+fn main() {
+    // A clean file: complete, and the root rule's struct.
+    let clean = ast::parse_ast(include_str!("../../grammar/bnf.bnf")).expect("the parser must run");
+    assert!(clean.is_complete(), "diagnostics: {:?}", clean.diagnostics);
+    let root = clean.value.expect("a clean file builds a root");
+    assert_eq!(root.kind(), "grammar");
+
+    // A broken file is not an error: whatever could be built comes back, with
+    // the problem as a diagnostic and the broken region in the tree.
+    let broken = ast::parse_ast("a -> b ;\n@@@\nc -> d ;\n").expect("a syntax error is not an Err");
+    assert!(!broken.is_complete());
+    assert_eq!(broken.diagnostics.len(), 1);
+    let root = broken.value.expect("the good rule is still built");
+    let mut kinds = Vec::new();
+    for (field, child) in root.children() {
+        assert_eq!(field, None, "the root has no labelled children");
+        kinds.push(child.kind().to_string());
+    }
+    assert_eq!(kinds, ["rule", "ERROR"]);
+}
+"#;
+
+    compile_generated_ast_in_mode(
+        "ast_parse_ast_harness",
+        &dogfood_grammar(),
+        "bnf",
+        runner,
+        true,
+        None,
+        BuildMode::Partial,
+    );
 }

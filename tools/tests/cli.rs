@@ -2418,7 +2418,7 @@ fn scaffold_ast_types_writes_files_and_ast_example_runs() {
 }
 
 /// A grammar whose string values can hold multibyte characters, for the
-/// `_pragma` character-column end-to-end test below.
+/// `_span` character-column end-to-end test below.
 const SCAFFOLD_AST_TEXT_BNF: &str = indoc! {r#"
     program -> items: decl* ;
     decl -> target: ident '=' value: text ';' ;
@@ -2428,7 +2428,8 @@ const SCAFFOLD_AST_TEXT_BNF: &str = indoc! {r#"
 
 /// Extracts every `(line, column)` pair from the pretty-printed `Pragma`s in
 /// a `cargo run --example ast` dump, in print order (`line:` always precedes
-/// `column:` in a `Pragma`'s `Debug` output).
+/// `column:` in a `Pragma`'s `Debug` output). A node's `_span` prints its
+/// start and then its end, so the pairs alternate start, end per node.
 fn pragma_positions(dump: &str) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
     let mut line = 0;
@@ -2450,10 +2451,12 @@ fn pragma_positions(dump: &str) -> Vec<(usize, usize)> {
 }
 
 #[test]
-/// `_pragma` columns of a scaffolded crate's AST count characters, not
+/// `_span` columns of a scaffolded crate's AST count characters, not
 /// bytes: after `a = "ç"; ` (nine characters, ten bytes) the second
 /// declaration starts at character column 10, not tree-sitter's byte
-/// column 11 — and the columns of everything after it shift the same way.
+/// column 11 — and the columns of everything after it shift the same way,
+/// ends included (`"ç"` ends at column 8, one past its closing quote, though
+/// tree-sitter's byte column would say 9).
 fn scaffold_ast_types_pragma_columns_count_characters() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
@@ -2468,11 +2471,117 @@ fn scaffold_ast_types_pragma_columns_count_characters() {
     );
 
     let stdout = support::run_ast_example(&out_dir, "a = \"ç\"; b = \"ã\";\n");
-    // Program, then per declaration: Decl, its `target` ident, its `value` text.
+    // Spelled out by hand from `a = "ç"; b = "ã";` (columns count characters):
+    // Program, then per declaration: Decl, its `target` ident, its `value`
+    // text, each as (start, end). The root runs to the start of line 2: it
+    // includes the trailing newline.
     assert_eq!(
         pragma_positions(&stdout),
-        [(1, 1), (1, 1), (1, 1), (1, 5), (1, 10), (1, 10), (1, 14)],
+        [
+            (1, 1),
+            (2, 1), // Program
+            (1, 1),
+            (1, 9), // Decl `a = "ç";`
+            (1, 1),
+            (1, 2), // ident `a`
+            (1, 5),
+            (1, 8), // text `"ç"`
+            (1, 10),
+            (1, 18), // Decl `b = "ã";`
+            (1, 10),
+            (1, 11), // ident `b`
+            (1, 14),
+            (1, 17), // text `"ã"`
+        ],
         "{stdout}"
+    );
+}
+
+#[test]
+/// A crate scaffolded before `parse_ast` existed has a `lib.rs` that already
+/// declares `pub mod ast;` but never re-exports it, and `lib.rs` is not
+/// rewritten on a rerun. The rerun adds the one missing line, right after the
+/// module it names, so the crate-root `parse_ast` exists and the (regenerated
+/// or preserved) example that calls it compiles and runs — with no
+/// tree-sitter anywhere in the example.
+fn scaffold_rerun_adds_the_parse_ast_export_to_an_older_lib_rs() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_ast_types(
+        "ts_bnf_scaffold_parse_ast_rerun_project",
+        "parseastlang",
+        SCAFFOLD_AST_BNF,
+    );
+    let lib_rs_path = out_dir.join("bindings/rust/lib.rs");
+    let fresh = std::fs::read_to_string(&lib_rs_path).unwrap();
+    assert!(
+        fresh.contains("pub mod ast;\npub use ast::parse_ast;\n"),
+        "a fresh scaffold re-exports it: {fresh}"
+    );
+
+    // Make it look like a crate from before the feature.
+    std::fs::write(&lib_rs_path, fresh.replace("pub use ast::parse_ast;\n", "")).unwrap();
+
+    let rerun = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    assert!(
+        rerun.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    let patched = std::fs::read_to_string(&lib_rs_path).unwrap();
+    assert_eq!(patched, fresh, "the rerun restores exactly the fresh file");
+
+    let stdout = support::run_ast_example(&out_dir, "a = b;\n");
+    assert!(stdout.contains("Program"), "{stdout}");
+}
+
+/// A grammar with a labelled bare-token field (`op: '='`), for the
+/// token-span end-to-end test below.
+const SCAFFOLD_AST_TOKEN_BNF: &str = indoc! {"
+    program -> items: decl* ;
+    decl -> target: ident op: '=' value: ident ';' ;
+    ident -> /[a-z]+/ ;
+"};
+
+#[test]
+/// A bare token value carries its position in plain `--ast-types` too, not
+/// only with `--partial-trees`: the `op: '='` field is a `runtime::Token`
+/// holding its kind, its text and where it is, not a `String` that has lost
+/// where the `=` was. Against a real parser, on `a = b;` the `=` is the
+/// third character: bytes 2..3, starting at column 3 and ending (exclusive)
+/// at column 4.
+fn scaffold_ast_types_token_field_carries_a_span() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_ast_types(
+        "ts_bnf_scaffold_ast_token_span_project",
+        "tokspan",
+        SCAFFOLD_AST_TOKEN_BNF,
+    );
+
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("pub op: runtime::Token,"));
+    assert!(
+        !ast_rs.contains("Reflect"),
+        "Reflect is a partial-trees feature"
+    );
+
+    let stdout = support::run_ast_example(&out_dir, "a = b;\n");
+    let normalized: String = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains(
+            "op: Token { kind: \"=\", text: \"=\", span: Span { byte_range: 2..3, \
+             start: Pragma { line: 1, column: 3, }, end: Pragma { line: 1, column: 4, }, }, },"
+        ),
+        "the `=` token must carry its own span; got: {stdout}"
     );
 }
 
@@ -2590,7 +2699,11 @@ fn scaffold_partial_trees_recovers_typed_tree_from_syntax_errors() {
     assert!(ast_rs.contains("impl<'tree> runtime::Recover<'tree> for Program"));
     assert!(!ast_rs.contains("TryFrom"));
     let example = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
-    assert!(example.contains("recover::<Program>("));
+    assert!(example.contains("partiallang::parse_ast(&source)"));
+    assert!(
+        !example.contains("tree_sitter") && !example.contains("SourceNode"),
+        "the example needs no tree-sitter: parse_ast hides it"
+    );
 
     // A clean file: everything built, nothing reported.
     let (code, stdout, diagnostics) = partial_example_run(&out_dir, "x = y;\ny = z;\n");
@@ -2617,6 +2730,11 @@ fn scaffold_partial_trees_recovers_typed_tree_from_syntax_errors() {
     assert_eq!(stdout.matches("Decl {").count(), 2, "{stdout}");
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert!(diagnostics[0].ends_with(":2:1: Error"), "{diagnostics:?}");
+    // ... and the region itself stays in the tree, under `Program`, as an
+    // `Error` child holding its span and the text it covers.
+    let normalized: String = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains("Error( ErrorRegion {"), "{stdout}");
+    assert!(normalized.contains("text: \"@@@\","), "{stdout}");
 
     // Nothing salvageable: still a `Program`, just an empty one.
     let (code, stdout, diagnostics) = partial_example_run(&out_dir, "@@@ ###\n");
@@ -2624,6 +2742,49 @@ fn scaffold_partial_trees_recovers_typed_tree_from_syntax_errors() {
     assert!(stdout.contains("items: []"), "{stdout}");
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert!(diagnostics[0].ends_with(":1:1: Error"), "{diagnostics:?}");
+
+    // A diagnostic carries the whole extent of the problem, not only where it
+    // starts: a byte range plus a start and an exclusive end line/column.
+    // `examples/ast.rs` prints only the start, so drive the API from an
+    // example of our own. Values are worked out by hand from the inputs:
+    // `x = y;\n` is 7 bytes, so on line 2 the `@@@` error region is bytes
+    // 7..10 (columns 1 to 4, end exclusive), and the missing `;` after
+    // `y = z` is the zero-width point at byte 12, column 6.
+    std::fs::write(
+        out_dir.join("examples/diag.rs"),
+        r#"use partiallang::ast::runtime::recover;
+use partiallang::ast::Program;
+use partiallang::visitor::SourceNode;
+
+fn main() {
+    for source in ["x = y;\n@@@\ny = z;\n", "x = y;\ny = z\nz = x;\n"] {
+        let tree = partiallang::parse(source).unwrap();
+        let recovered = recover::<Program>(SourceNode { node: tree.root_node(), source });
+        for d in &recovered.diagnostics {
+            let s = &d.span;
+            println!(
+                "{:?} bytes={}..{} {}:{}-{}:{}",
+                d.kind, s.byte_range.start, s.byte_range.end,
+                s.start.line, s.start.column, s.end.line, s.end.column
+            );
+        }
+        println!("--");
+    }
+}
+"#,
+    )
+    .unwrap();
+    let spans = support::run_example(&out_dir, "diag");
+    assert_eq!(
+        spans.lines().collect::<Vec<_>>(),
+        [
+            "Error bytes=7..10 2:1-2:4",
+            "--",
+            "Missing { expected: \";\" } bytes=12..12 2:6-2:6",
+            "--",
+        ],
+        "{spans}"
+    );
 }
 
 #[test]
@@ -2708,7 +2869,8 @@ fn scaffold_partial_trees_captures_unlabelled_children_and_skips_extras() {
     );
     // The example prints the tree and then one line per diagnostic, and a
     // `Missing` diagnostic quotes the token it expected — so count literals in
-    // the tree alone, not in the whole output.
+    // the tree alone, not in the whole output, and by `text:` (a token prints
+    // both its `kind` and its `text`).
     let tree_of = |stdout: &str, diagnostics: &[String]| -> String {
         let mut tree = String::new();
         for line in stdout.lines() {
@@ -2743,7 +2905,9 @@ fn scaffold_partial_trees_captures_unlabelled_children_and_skips_extras() {
         assert!(stdout.contains(expected), "missing `{expected}`:\n{stdout}");
     }
     assert_eq!(
-        tree_of(&stdout, &diagnostics).matches("\";\"").count(),
+        tree_of(&stdout, &diagnostics)
+            .matches("text: \";\"")
+            .count(),
         4,
         "one `;` per statement:\n{stdout}"
     );
@@ -2759,7 +2923,9 @@ fn scaffold_partial_trees_captures_unlabelled_children_and_skips_extras() {
     assert_eq!(code, Some(1), "{stdout}");
     assert_eq!(stdout.matches("Stmt {").count(), 3, "{stdout}");
     assert_eq!(
-        tree_of(&stdout, &diagnostics).matches("\";\"").count(),
+        tree_of(&stdout, &diagnostics)
+            .matches("text: \";\"")
+            .count(),
         2,
         "only the `;` really in the file:\n{stdout}"
     );
@@ -2822,7 +2988,7 @@ fn scaffold_partial_trees_added_on_rerun_updates_config_and_warns_about_stale_ex
     let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
     assert!(ast_rs.contains("TryFrom") && !ast_rs.contains("Recover"));
     let example_before = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
-    assert!(example_before.contains("try_into"));
+    assert!(example_before.contains("::parse_ast(&source)"));
 
     let second = tool()
         .args([
@@ -3357,7 +3523,7 @@ fn tutorial_11_ast_types_matches_documented_struct_shapes_and_output() {
             .expect("Decl struct must be closed");
     let decl_struct = &ast_rs[decl_start..=decl_end];
     assert!(
-        decl_struct.contains("pub _pragma: runtime::Pragma,"),
+        decl_struct.contains("pub _span: runtime::Span,"),
         "{decl_struct}"
     );
     assert!(decl_struct.contains("pub target: Ident,"), "{decl_struct}");
@@ -3372,7 +3538,7 @@ fn tutorial_11_ast_types_matches_documented_struct_shapes_and_output() {
             .expect("Ident struct must be closed");
     let ident_struct = &ast_rs[ident_start..=ident_end];
     assert!(
-        ident_struct.contains("pub _pragma: runtime::Pragma,"),
+        ident_struct.contains("pub _span: runtime::Span,"),
         "{ident_struct}"
     );
     assert!(
@@ -3383,7 +3549,10 @@ fn tutorial_11_ast_types_matches_documented_struct_shapes_and_output() {
     let stdout = support::run_ast_example(&out_dir, TUTORIAL_11_SAMPLE);
     let normalized: String = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        normalized.contains("Program { _pragma: Pragma { line: 1, column: 1, }, }"),
+        normalized.contains(
+            "Program { _span: Span { byte_range: 0..14, start: Pragma { line: 1, column: 1, }, \
+             end: Pragma { line: 3, column: 1, }, }, }"
+        ),
         "chapter 11 states this exact Program dump; got: {stdout}"
     );
 }

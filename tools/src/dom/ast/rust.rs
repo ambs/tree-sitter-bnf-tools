@@ -48,6 +48,11 @@ pub struct RustAst<'a> {
     /// Whether to emit the aborting `TryFrom` API ([`BuildMode::Strict`]) or
     /// the non-aborting `Recover` API ([`BuildMode::Partial`]).
     mode: BuildMode,
+    /// The Rust name of the grammar's root rule's struct — what the generated
+    /// `parse_ast` returns — or `None` when there is no usable one: no rule at
+    /// all, a root that is not a visible kind, or a root claimed by a `merge`
+    /// entry (its struct is private, so a public function can't return it).
+    root: Option<String>,
 }
 
 impl<'a> RustAst<'a> {
@@ -77,6 +82,12 @@ impl<'a> RustAst<'a> {
         let ast_node_specs = derive_ast_node_specs(grammar);
         check_field_labels_are_representable(&ast_node_specs)?;
         let multi_shape_names = build_multi_shape_names(&ast_node_specs, merge_config, mode)?;
+        let root = grammar
+            .root_rule()
+            .filter(|kind| {
+                ast_node_specs.contains_key(*kind) && !kind_is_merged_away(kind, merge_config)
+            })
+            .map(|kind| kind_display_name(kind, merge_config));
         Ok(Self {
             source,
             no_header,
@@ -84,6 +95,7 @@ impl<'a> RustAst<'a> {
             multi_shape_names,
             merge_config,
             mode,
+            root,
         })
     }
 }
@@ -124,6 +136,85 @@ const RUNTIME_PRAGMA: &str = indoc! {r#"
     }
 "#};
 
+/// The `Span` type emitted into the generated `runtime` module, in every
+/// [`BuildMode`]: a node's whole extent, which replaces the start-only
+/// `_pragma` field every generated struct used to carry. Its `start` is that
+/// same [`RUNTIME_PRAGMA`] position (so the character-column and BOM rules
+/// apply), and its `end` follows the same rules, just past the node's last
+/// character. Flush-left, like [`RUNTIME_PRAGMA`], which it builds on.
+const RUNTIME_SPAN: &str = indoc! {r#"
+    /// A node's extent in the source text it was parsed from.
+    #[derive(Debug)]
+    pub struct Span {
+        /// Byte offsets into the exact text that was parsed, as tree-sitter
+        /// reports them: a leading byte-order mark counts as three bytes here,
+        /// so these always index straight into the source.
+        pub byte_range: std::ops::Range<usize>,
+        /// Where the node starts. 1-indexed; see [`Pragma`].
+        pub start: Pragma,
+        /// Where the node ends: the position just past its last character,
+        /// counted the same way as `start`.
+        pub end: Pragma,
+    }
+
+    impl From<super::super::visitor::SourceNode<'_>> for Span {
+        fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
+            let point = node.node.end_position();
+            let end = node.node.end_byte();
+            // `point.column` is a byte offset into the line, so the line
+            // starts that many bytes back. If `source` is not the text the
+            // tree was parsed from, fall back to the byte column rather than
+            // panic on a bad slice.
+            let mut column = end
+                .checked_sub(point.column)
+                .and_then(|line_start| node.source.get(line_start..end))
+                .map_or(point.column, |line_prefix| line_prefix.chars().count());
+            // The parser counts a BOM as part of line 1; editors don't.
+            if point.row == 0 && node.source.starts_with('\u{feff}') {
+                column = column.saturating_sub(1);
+            }
+            Span {
+                byte_range: node.node.byte_range(),
+                start: Pragma::from(node),
+                end: Pragma { line: point.row + 1, column: column + 1 },
+            }
+        }
+    }
+"#};
+
+/// The `Token` type emitted into the generated `runtime` module, in every
+/// [`BuildMode`]: a literal in the source (a keyword, punctuation, an
+/// operator) — an anonymous tree-sitter node — together with its position.
+/// It is what a bare-token field, a list of them, and the `Token` variant of a
+/// "kind or literal" enum hold, in place of a `String` that would have lost
+/// where the literal was. Builds on [`RUNTIME_SPAN`]. Flush-left, like it.
+const RUNTIME_TOKEN: &str = indoc! {r#"
+    /// A literal in the source — a keyword, punctuation or an operator: an
+    /// anonymous tree-sitter node. It keeps its position, so it can be located,
+    /// and (with `--partial-trees`) ordered among the named nodes around it.
+    #[derive(Debug)]
+    pub struct Token {
+        /// The node's tree-sitter kind; for a literal, normally its own text.
+        /// Owned, not `&'static str`: whether `Node::kind` is `'static` or
+        /// borrows from the node depends on the tree-sitter version.
+        pub kind: String,
+        /// The token's source text.
+        pub text: String,
+        /// Where the token is in the source.
+        pub span: Span,
+    }
+
+    impl From<super::super::visitor::SourceNode<'_>> for Token {
+        fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
+            Token {
+                kind: node.node.kind().to_string(),
+                text: node.text().to_string(),
+                span: Span::from(node),
+            }
+        }
+    }
+"#};
+
 /// The `BuildError` type emitted into the generated `runtime` module in
 /// [`BuildMode::Strict`] only — partial mode reports problems as
 /// diagnostics instead ([`partial::RUNTIME_ITEMS`]). Flush-left, like
@@ -144,14 +235,15 @@ const RUNTIME_BUILD_ERROR: &str = indoc! {r#"
 "#};
 
 impl RustAst<'_> {
-    /// Emits `runtime`, an inner module holding the two fixed types every
-    /// generated node needs: `Pragma` (a node's start position, 1-indexed —
-    /// tree-sitter itself is 0-indexed, this converts once here — with the
-    /// column counted in characters rather than bytes, and a leading BOM
-    /// not counted) and
-    /// `BuildError` (the shared `TryFrom` error type, [`fmt_build_error`]'s
-    /// previous top-level content) — the first real content in the
-    /// generated file, right after `fmt_header`'s comment/blank-line pair.
+    /// Emits `runtime`, an inner module holding the fixed types every
+    /// generated node needs: `Pragma` (a position, 1-indexed — tree-sitter
+    /// itself is 0-indexed, this converts once here — with the column
+    /// counted in characters rather than bytes, and a leading BOM not
+    /// counted), `Span` (a node's whole extent: byte range plus `Pragma`
+    /// start and end, carried by every struct as `_span`) and, in strict
+    /// mode, `BuildError` (the shared `TryFrom` error type) — the first real
+    /// content in the generated file, right after `fmt_header`'s
+    /// comment/blank-line pair.
     /// Namespacing them inside `runtime` rather than declaring them at
     /// `ast.rs`'s own top level is what makes a grammar kind named
     /// `pragma`/`build_error` — otherwise indistinguishable from any other
@@ -164,8 +256,9 @@ impl RustAst<'_> {
     /// reference is instead spelled out as `super::visitor::SourceNode`
     /// (`super::super::` from within this nested `runtime` module).
     ///
-    /// The `Pragma` half is shared by both [`BuildMode`]s
-    /// ([`RUNTIME_PRAGMA`]); the other half differs — strict mode's
+    /// The `Pragma`, `Span` and `Token` parts are shared by both
+    /// [`BuildMode`]s ([`RUNTIME_PRAGMA`], [`RUNTIME_SPAN`],
+    /// [`RUNTIME_TOKEN`]); the rest differs — strict mode's
     /// aborting `BuildError` ([`RUNTIME_BUILD_ERROR`]) versus partial mode's
     /// diagnostics and `Recover` trait ([`partial::RUNTIME_ITEMS`]).
     fn fmt_runtime_module(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -173,7 +266,13 @@ impl RustAst<'_> {
             BuildMode::Strict => RUNTIME_BUILD_ERROR,
             BuildMode::Partial => partial::RUNTIME_ITEMS,
         };
-        let items = format!("{}\n\n{}", RUNTIME_PRAGMA.trim_end(), mode_items.trim_end());
+        let items = format!(
+            "{}\n\n{}\n\n{}\n\n{}",
+            RUNTIME_PRAGMA.trim_end(),
+            RUNTIME_SPAN.trim_end(),
+            RUNTIME_TOKEN.trim_end(),
+            mode_items.trim_end()
+        );
         writeln!(f, "pub mod runtime {{\n{}\n}}\n", indent(&items, 4))
     }
 
@@ -229,6 +328,64 @@ impl RustAst<'_> {
         writeln!(f, "{}", body)
     }
 
+    /// Emits `parse_ast`, the entry point that needs no tree-sitter in the
+    /// caller: it parses `source` with the crate's own `parse`, wraps the
+    /// tree's root as a `SourceNode` and builds the typed tree of the
+    /// grammar's root rule — everything a caller would otherwise write
+    /// against `tree_sitter` and `SourceNode` by hand. Nothing is emitted when
+    /// there is no usable root type ([`RustAst::root`]).
+    ///
+    /// In [`BuildMode::Partial`] it returns `runtime::Recovered<Root>`, and a
+    /// syntax error is *not* an `Err` — it is in the result's diagnostics and
+    /// in the tree — so `Err` only means the parser could not run. In
+    /// [`BuildMode::Strict`] it returns `Root`, and a tree that cannot be
+    /// built is the error (a `BuildError` has no `Display`, so it is reported
+    /// through its `Debug` text). Both use the same error type as `parse`.
+    fn fmt_entry_point(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Some(root) = &self.root else {
+            return Ok(());
+        };
+        let body = match self.mode {
+            BuildMode::Strict => formatdoc! {r#"
+                /// Parses `source` with this grammar's tree-sitter parser and builds the
+                /// typed tree of its root rule, `{root}`, without the caller touching
+                /// tree-sitter: the parse and the `SourceNode` wrapping both happen here.
+                ///
+                /// Fails if the parser cannot run (as `parse` does), or if the tree cannot
+                /// be built: this API stops at the first problem. `--partial-trees`
+                /// recovers from syntax errors instead.
+                pub fn parse_ast(source: &str) -> Result<{root}, Box<dyn std::error::Error>> {{
+                    let tree = super::parse(source)?;
+                    {root}::try_from(super::visitor::SourceNode {{ node: tree.root_node(), source }})
+                        .map_err(|e| -> Box<dyn std::error::Error> {{
+                            format!("could not build the typed tree: {{e:?}}").into()
+                        }})
+                }}
+            "#},
+            BuildMode::Partial => formatdoc! {r#"
+                /// Parses `source` with this grammar's tree-sitter parser and recovers the
+                /// typed tree of its root rule, `{root}`, without the caller touching
+                /// tree-sitter: the parse, the `SourceNode` wrapping and `runtime::recover`
+                /// all happen here.
+                ///
+                /// A syntax error is not an `Err`: whatever could be built is the result's
+                /// `value`, each problem is in its `diagnostics`, and a broken region stays
+                /// in the tree as an `Error` child. `Err` means the parser itself could not
+                /// run, as for `parse`.
+                pub fn parse_ast(
+                    source: &str,
+                ) -> Result<runtime::Recovered<{root}>, Box<dyn std::error::Error>> {{
+                    let tree = super::parse(source)?;
+                    Ok(runtime::recover(super::visitor::SourceNode {{
+                        node: tree.root_node(),
+                        source,
+                    }}))
+                }}
+            "#},
+        };
+        writeln!(f, "\n{}", body.trim_end())
+    }
+
     /// Builds one kind's full declaration + `impl`: resolves the Rust
     /// struct name once — [`kind_display_name`], a `passthrough` entry's
     /// `target` override if one claims `kind`, else `pascal_case(kind)` —
@@ -254,17 +411,19 @@ impl RustAst<'_> {
             self.merge_config,
             self.mode,
         );
-        let constructor = match self.mode {
-            BuildMode::Strict => fmt_struct_try_from(&struct_name, kind, spec),
-            BuildMode::Partial => partial::fmt_struct_recover(
-                &struct_name,
-                kind,
-                spec,
-                &self.multi_shape_names,
-                self.merge_config,
-            ),
-        };
-        format!("{decl}\n{constructor}")
+        match self.mode {
+            BuildMode::Strict => {
+                let try_from = fmt_struct_try_from(&struct_name, kind, spec);
+                format!("{decl}\n{try_from}")
+            }
+            BuildMode::Partial => {
+                let recover =
+                    partial::fmt_struct_recover(&struct_name, kind, spec, self.merge_config);
+                let reflect =
+                    partial::fmt_struct_reflect(&struct_name, kind, spec, self.merge_config);
+                format!("{decl}\n{recover}\n{reflect}")
+            }
+        }
     }
 
     /// Emits every generated struct/impl pair ([`fmt_struct`], one per kind
@@ -308,6 +467,18 @@ impl RustAst<'_> {
                 ));
             }
         }
+        if self.mode == BuildMode::Partial {
+            for (kind, spec) in specs {
+                if !spec.is_leaf {
+                    enums.push(fmt_multi_shape_enum(
+                        &children_shape(spec),
+                        &children_enum_name(kind, self.merge_config),
+                        self.merge_config,
+                        self.mode,
+                    ));
+                }
+            }
+        }
         writeln!(f, "{}\n{}", structs, enums.join("\n"))
     }
 }
@@ -320,6 +491,7 @@ impl fmt::Display for RustAst<'_> {
         if self.mode == BuildMode::Partial {
             partial::fmt_recover_helpers(f)?;
         }
+        self.fmt_entry_point(f)?;
         self.fmt_structs(f)
     }
 }
@@ -348,7 +520,7 @@ fn shape_key(target: &FieldTargetKinds) -> Vec<String> {
 /// rather than through its merge entry's enum (see
 /// [`field_rust_type`]/[`merge_entry_for_shape`] for why: widening it to
 /// the enum would let the field hold a value the grammar can never actually
-/// produce there). `pragma: Pragma` comes first, followed by one field per
+/// produce there). `_span: Span` comes first, followed by one field per
 /// entry in `spec.fields`, each typed via [`field_rust_type`] and named via
 /// [`rust_field_ident`] (escaping a field label that collides with a Rust
 /// keyword). `struct_name` is resolved by the caller ([`RustAst::fmt_struct`])
@@ -366,7 +538,7 @@ fn fmt_struct_decl(
     merge_config: Option<&MergeConfig>,
     mode: BuildMode,
 ) -> String {
-    let mut fields = vec!["    pub _pragma: runtime::Pragma,".to_string()];
+    let mut fields = vec!["    pub _span: runtime::Span,".to_string()];
 
     fields.extend(
         spec.fields
@@ -381,16 +553,14 @@ fn fmt_struct_decl(
             .collect::<Vec<String>>(),
     );
 
-    // Only partial mode captures unlabelled children (see
-    // `AstNodeSpec::children`); strict mode's struct is unchanged.
-    let children = match mode {
-        BuildMode::Partial => spec.children.as_ref(),
-        BuildMode::Strict => None,
-    };
-    if let Some(children) = children {
+    // Only partial mode keeps children that no field label captures, and
+    // every non-leaf kind has the list — even one whose children are all
+    // labelled — because any of them can have a broken region under it. The
+    // list's element is the kind's own children enum, never a shared type.
+    if mode == BuildMode::Partial && !spec.is_leaf {
         fields.push(format!(
-            "    pub _children: {},",
-            field_rust_type(children, multi_shape_names, merge_config, mode)
+            "    pub _children: Vec<{}>,",
+            children_enum_name(kind, merge_config)
         ));
     }
 
@@ -405,13 +575,10 @@ fn fmt_struct_decl(
     } else {
         "#[allow(dead_code)]\n".to_string()
     };
-    let mut references_merged_kind = spec
+    let references_merged_kind = spec
         .fields
         .values()
         .any(|f| field_directly_references_merged_kind(f, merge_config));
-    if let Some(children) = children {
-        references_merged_kind |= field_directly_references_merged_kind(children, merge_config);
-    }
     let private_interfaces_allow = if is_pub && references_merged_kind {
         "#[allow(private_interfaces)]\n".to_string()
     } else {
@@ -446,7 +613,7 @@ fn fmt_multi_shape_enum_try_from(
         .map(|kind| {
             format!(
                 "        \"{kind}\" => Ok({name}::{}(node.try_into()?)),",
-                kind_display_name(kind, merge_config)
+                variant_name(kind, merge_config, has_token, false)
             )
         })
         .collect::<Vec<_>>()
@@ -456,7 +623,7 @@ fn fmt_multi_shape_enum_try_from(
     if has_token {
         match_stmt = formatdoc! {r#"
             if !node.node.is_named() {{
-                return Ok({name}::Token(node.text().to_string()));
+                return Ok({name}::Token(runtime::Token::from(node)));
             }}
             {match_stmt}
         "#};
@@ -477,15 +644,73 @@ fn fmt_multi_shape_enum_try_from(
 }
 
 /// Splits a multi-shape `shape` key into its real kind names (everything
-/// but the `"$token"` sentinel) and whether that sentinel was present —
-/// shared by [`fmt_multi_shape_enum_decl`] and the enum's own `TryFrom`
-/// dispatch, so the `"$token"` special-casing only happens in one place.
+/// but the `"$token"` and `"$error"` sentinels) and whether `"$token"` was
+/// present — shared by [`fmt_multi_shape_enum_decl`] and the enum's own
+/// dispatch, so the sentinel special-casing only happens in one place.
+/// Whether `"$error"` was present is [`shape_has_error`]: a separate question
+/// that only a per-kind children enum in partial mode ever answers yes to.
 fn shape_kinds(shape: &[String]) -> (Vec<&String>, bool) {
     let has_token = shape.iter().any(|x| *x == "$token");
     (
-        shape.iter().filter(|x| **x != "$token").collect(),
+        shape
+            .iter()
+            .filter(|x| **x != "$token" && **x != "$error")
+            .collect(),
         has_token,
     )
+}
+
+/// Whether `shape` carries the `"$error"` sentinel: the enum has a fixed
+/// `Error(runtime::ErrorRegion)` variant holding a region tree-sitter could
+/// not parse. Only the per-kind children enums of [`BuildMode::Partial`] do.
+fn shape_has_error(shape: &[String]) -> bool {
+    shape.iter().any(|x| *x == "$error")
+}
+
+/// The name of the enum variant for `kind` in an enum that does (or does not)
+/// have the fixed `Token` / `Error` variants. Normally just the kind's
+/// display name, but a kind literally named `token` or `error` would produce
+/// a second variant called `Token`/`Error` and a file that does not compile —
+/// so that kind's variant (and only its variant: the payload type keeps its
+/// name) gets a `Node` suffix, and only in an enum that really has the
+/// colliding fixed variant, so every grammar that generates today is
+/// untouched.
+fn variant_name(
+    kind: &str,
+    merge_config: Option<&MergeConfig>,
+    has_token: bool,
+    has_error: bool,
+) -> String {
+    let name = kind_display_name(kind, merge_config);
+    if (has_token && name == "Token") || (has_error && name == "Error") {
+        format!("{name}Node")
+    } else {
+        name
+    }
+}
+
+/// The name of the per-kind children enum of `kind` in
+/// [`BuildMode::Partial`]: `<Kind>Child`, through [`kind_display_name`] so a
+/// `passthrough` rename is followed. One per non-leaf kind, never shared.
+pub(super) fn children_enum_name(kind: &str, merge_config: Option<&MergeConfig>) -> String {
+    format!("{}Child", kind_display_name(kind, merge_config))
+}
+
+/// The shape of `spec`'s children enum: its unlabelled child kinds, the
+/// `"$token"` sentinel when a literal can be one, and always `"$error"`: any
+/// non-leaf node can have a broken region under it.
+pub(super) fn children_shape(spec: &AstNodeSpec) -> Vec<String> {
+    let mut shape = Vec::new();
+    if let Some(children) = &spec.children {
+        for kind in &children.target.named {
+            shape.push(kind.clone());
+        }
+        if children.target.anonymous_token {
+            shape.push("$token".to_string());
+        }
+    }
+    shape.push("$error".to_string());
+    shape
 }
 
 /// Builds one multi-shape enum's declaration: `pub enum {name} { ... }`
@@ -504,15 +729,22 @@ fn fmt_multi_shape_enum_decl(
     merge_config: Option<&MergeConfig>,
 ) -> String {
     let (clean_shape, has_token) = shape_kinds(shape);
+    let has_error = shape_has_error(shape);
     let mut fields = clean_shape
         .iter()
         .map(|s| {
-            let n = kind_display_name(s, merge_config);
-            format!("    {}({}),", n, n)
+            format!(
+                "    {}({}),",
+                variant_name(s, merge_config, has_token, has_error),
+                kind_display_name(s, merge_config)
+            )
         })
         .collect::<Vec<String>>();
     if has_token {
-        fields.push("    Token(String),".to_string());
+        fields.push("    Token(runtime::Token),".to_string());
+    }
+    if has_error {
+        fields.push("    Error(runtime::ErrorRegion),".to_string());
     }
     let fields_lines = fields.join("\n");
     let private_interfaces_allow = if clean_shape
@@ -555,10 +787,11 @@ const UNREPRESENTABLE_FIELD_LABELS: [&str; 4] = ["self", "Self", "super", "crate
 /// Validates that every field label `grammar` derives is safe to emit as a
 /// struct field: not one of [`UNREPRESENTABLE_FIELD_LABELS`], and not
 /// starting with `_`. The leading-underscore restriction reserves that
-/// whole namespace for fields this tool injects itself (`pragma`, `text`)
-/// rather than deriving from the grammar — see [`fmt_struct_decl`]. Unlike
-/// [`UNREPRESENTABLE_FIELD_LABELS`] (names Rust itself can never represent),
-/// `pragma`/`text` are perfectly ordinary identifiers that a grammar's own
+/// whole namespace for fields this tool injects itself (`span`, `text`,
+/// `children`) rather than deriving from the grammar — see
+/// [`fmt_struct_decl`]. Unlike [`UNREPRESENTABLE_FIELD_LABELS`] (names Rust
+/// itself can never represent), `span`/`text`/`children` are perfectly
+/// ordinary identifiers that a grammar's own
 /// field label could otherwise collide with letter-for-letter (#359); since
 /// the grammar's `fieldLabel` production spans the *entire* ASCII
 /// identifier space, there's no fixed suffix/prefix within that space that
@@ -588,7 +821,7 @@ fn check_field_labels_are_representable(
                 return Err(format!(
                     "field '{field_name}' cannot be used as a grammar field label: names \
                      starting with '_' are reserved for fields this tool injects itself \
-                     (`pragma`, `text`); rename this field in the grammar"
+                     (`span`, `text`, `children`); rename this field in the grammar"
                 ));
             }
         }
@@ -647,7 +880,7 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
             let {field_ident} = node
                 .children_by_field("{field_name}")
                 .into_iter()
-                .map(|c| c.text().to_string())
+                .map(runtime::Token::from)
                 .collect::<Vec<_>>();
         "#}
     } else if field.multiple {
@@ -660,11 +893,10 @@ fn field_try_from(kind: &str, field_name: &str, field: &AstFieldSpec) -> String 
         "#}
     } else if target.named.is_empty() && target.anonymous_token {
         formatdoc! {r#"
-            let {field_ident} = node
-                .child_by_field("{field_name}")
-                .ok_or(runtime::BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?
-                .text()
-                .to_string();
+            let {field_ident} = runtime::Token::from(
+                node.child_by_field("{field_name}")
+                    .ok_or(runtime::BuildError::MissingField {{ kind: "{kind}", field: "{field_name}" }})?,
+            );
         "#}
     } else if !target.named.is_empty() {
         formatdoc! {r#"
@@ -714,6 +946,9 @@ fn field_rust_type(
 /// partial-trees emitter can name the element type of an unlabelled-children
 /// list (for its diagnostics) without re-deriving it.
 ///
+/// A bare literal token is a `runtime::Token` — text plus position — not a
+/// `String` that would have lost where the literal was.
+///
 /// Panics if `field`'s target resolves to no possible shape at all: a field
 /// always has at least one target kind.
 fn field_element_type(
@@ -738,10 +973,20 @@ fn field_element_type(
             merge_config,
         )
     } else if field.target.named.is_empty() && field.target.anonymous_token {
-        "String".to_string()
+        "runtime::Token".to_string()
     } else {
         unreachable!("a field always resolves to at least one target kind")
     }
+}
+
+/// Whether `field`'s element type ([`field_element_type`]) is a generated
+/// enum — a `merge` entry's, or a multi-shape one — as opposed to a plain
+/// struct or a bare token. Mirrors the branches of [`field_element_type`], and
+/// is what tells a parent's `children()` to unwrap the enum with `inner()`.
+fn field_element_is_enum(field: &AstFieldSpec, merge_config: Option<&MergeConfig>) -> bool {
+    merge_entry_for_shape(&field.target, merge_config).is_some()
+        || field.target.named.len() > 1
+        || (!field.target.named.is_empty() && field.target.anonymous_token)
 }
 
 /// Whether `kind` is claimed by some `merge` entry's `from` list in
@@ -911,13 +1156,12 @@ impl ShapeName {
 /// generated file, is distinct, returning the first collision found as
 /// `Err` (see [`find_first_name_collision`]).
 ///
-/// In [`BuildMode::Partial`] a kind's unlabelled children
-/// ([`AstNodeSpec::children`]) are registered too, exactly like a field of
-/// that kind: same shape sharing, same merge-entry reuse, same collision
-/// check. They have no label to name an enum after, so each is named for its
-/// owning kind instead (`ProgramChild` for `program`'s), via
-/// [`kind_display_name`] so a `passthrough` rename is followed. Strict mode
-/// never registers them, so its names are untouched.
+/// In [`BuildMode::Partial`] each non-leaf kind also owns a children enum
+/// (`ProgramChild` for `program`, [`children_enum_name`]). It is never shared
+/// and never reuses a `merge` entry's enum, so it takes no part in the shape
+/// table above; it only has to not clash with anything, so its name joins the
+/// collision check below and the set of names a shape enum's suffix
+/// resolution avoids. Strict mode has none, so its names are untouched.
 fn build_multi_shape_names(
     ast_node_specs: &IndexMap<String, AstNodeSpec>,
     merge_config: Option<&MergeConfig>,
@@ -937,16 +1181,6 @@ fn build_multi_shape_names(
                 let known_shapes_val: &mut Vec<String> = known_shapes.entry(key_shape).or_default();
                 known_shapes_val.push(field.clone());
             }
-        }
-        if mode == BuildMode::Partial
-            && let Some(children) = &node_spec.children
-            && (children.target.named.len() > 1
-                || (!children.target.named.is_empty() && children.target.anonymous_token))
-        {
-            let key_shape = shape_key(&children.target);
-            let name_hint = format!("{}Child", kind_display_name(&node_spec.kind, merge_config));
-            let known_shapes_val: &mut Vec<String> = known_shapes.entry(key_shape).or_default();
-            known_shapes_val.push(name_hint);
         }
     }
 
@@ -982,8 +1216,11 @@ fn build_multi_shape_names(
     // today is untouched; and judged against *all* shapes' base names, not
     // just earlier ones, so the result doesn't depend on declaration order.
     let mut claimed: HashSet<String> = HashSet::new();
-    for kind in ast_node_specs.keys() {
+    for (kind, spec) in ast_node_specs {
         claimed.insert(kind_display_name(kind, merge_config));
+        if mode == BuildMode::Partial && !spec.is_leaf {
+            claimed.insert(children_enum_name(kind, merge_config));
+        }
     }
     if let Some(config) = merge_config {
         for entry in &config.merge {
@@ -1044,13 +1281,21 @@ fn build_multi_shape_names(
                 .map(|entry| entry.target.as_str())
         })
     };
-    for kind in ast_node_specs.keys() {
+    for (kind, spec) in ast_node_specs {
         let description = match passthrough_target(kind) {
             Some(target) => format!("passthrough entry '{kind}' -> '{target}'"),
             None => format!("kind '{kind}'"),
         };
         let generated_name = kind_display_name(kind, merge_config);
         all_names.push((description, generated_name));
+        // In partial mode a non-leaf kind also owns a children enum, a
+        // top-level type like any other.
+        if mode == BuildMode::Partial && !spec.is_leaf {
+            all_names.push((
+                format!("the children of kind '{kind}'"),
+                children_enum_name(kind, merge_config),
+            ));
+        }
     }
 
     for (shape, shape_name) in &out {
@@ -1126,10 +1371,10 @@ pub(crate) fn pascal_case(word: &str) -> String {
 }
 
 /// Builds one kind's full `impl<'tree> TryFrom<SourceNode<'tree>> for
-/// {struct_name}` block: `let pragma = Pragma::from(node);` first, then one
+/// {struct_name}` block: `let _span = Span::from(node);` first, then one
 /// construction statement per `spec.fields` entry ([`field_try_from`]),
 /// then `let text = node.text().to_string();` if `spec.is_leaf`, and
-/// finally `Ok({struct_name} { pragma, ... })` naming every field built
+/// finally `Ok({struct_name} { _span, ... })` naming every field built
 /// above, via [`rust_field_ident`] — matching the identifier
 /// [`field_try_from`]'s own `let` binding used, so the struct-literal
 /// shorthand still resolves. `struct_name` is resolved by the caller
@@ -1161,9 +1406,9 @@ fn fmt_struct_try_from(struct_name: &str, kind: &str, spec: &AstNodeSpec) -> Str
             type Error = runtime::BuildError;
 
             fn try_from(node: super::visitor::SourceNode<'tree>) -> Result<Self, Self::Error> {{
-                let _pragma = runtime::Pragma::from(node);
+                let _span = runtime::Span::from(node);
         {fields_try_from_text}
-                Ok({name} {{ _pragma, {field_list_text} }})
+                Ok({name} {{ _span, {field_list_text} }})
             }}
         }}
     "#}
@@ -1188,7 +1433,8 @@ fn fmt_multi_shape_enum(
     let enum_text = fmt_multi_shape_enum_decl(shape, name, merge_config);
     if mode == BuildMode::Partial {
         let recover_impl = partial::fmt_multi_shape_enum_recover(shape, name, merge_config);
-        return format!("{enum_text}\n{recover_impl}");
+        let reflect_impl = partial::fmt_multi_shape_enum_reflect(shape, name, merge_config);
+        return format!("{enum_text}\n{recover_impl}\n{reflect_impl}");
     }
     let impl_text = indent(&fmt_multi_shape_enum_try_from(shape, name, merge_config), 4);
 
@@ -1227,7 +1473,7 @@ mod tests {
             .expect("grammar must be ast-safe")
     }
 
-    // ── top-level assembly (fmt_header / fmt_pragma / fmt_node_helpers /
+    // ── top-level assembly (fmt_header / fmt_span / fmt_node_helpers /
     //    fmt_build_error / fmt_structs, in `Display` order) ───────────────
 
     #[test]
@@ -1248,6 +1494,21 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(!out.contains("Generated by"));
         assert!(out.starts_with("pub mod runtime {"));
+    }
+
+    /// `Span` is defined right after `Pragma` (which its `start`/`end` are) and
+    /// before `BuildError`, in every mode, and converts from a `SourceNode`.
+    #[test]
+    fn span_struct_and_conversion_present_after_pragma() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'x'".into()))]);
+        let out = ra(&g, "g").to_string();
+        assert!(out.contains("pub struct Span {"));
+        assert!(out.contains("impl From<super::super::visitor::SourceNode<'_>> for Span {"));
+        let pragma_pos = out.find("pub struct Pragma {").unwrap();
+        let span_pos = out.find("pub struct Span {").unwrap();
+        let error_pos = out.find("pub enum BuildError {").unwrap();
+        assert!(pragma_pos < span_pos);
+        assert!(span_pos < error_pos);
     }
 
     #[test]
@@ -1306,16 +1567,15 @@ mod tests {
     }
 
     #[test]
-    fn single_anonymous_field_type_is_string() {
+    fn single_anonymous_field_type_is_token() {
         let g = Grammar::from_rules([p(
             "decl",
             Field("value".into(), Box::new(TerminalLiteral("'+'".into()))),
         )]);
         let out = ra(&g, "g").to_string();
-        assert!(out.contains("pub value: String,"));
+        assert!(out.contains("pub value: runtime::Token,"));
         assert!(out.contains(".child_by_field(\"value\")"));
-        assert!(out.contains(".text()"));
-        assert!(out.contains(".to_string();"));
+        assert!(out.contains("let value = runtime::Token::from("));
     }
 
     #[test]
@@ -1611,7 +1871,7 @@ mod tests {
     }
 
     #[test]
-    fn struct_multiple_anonymous_token_field_collects_text_not_try_into() {
+    fn struct_multiple_anonymous_token_field_collects_tokens_not_try_into() {
         let g = Grammar::from_rules([p(
             "program",
             Field(
@@ -1620,9 +1880,9 @@ mod tests {
             ),
         )]);
         let out = ra(&g, "g").to_string();
-        assert!(out.contains("pub ops: Vec<String>,"));
+        assert!(out.contains("pub ops: Vec<runtime::Token>,"));
         assert!(out.contains(".children_by_field(\"ops\")"));
-        assert!(out.contains(".map(|c| c.text().to_string())"));
+        assert!(out.contains(".map(runtime::Token::from)"));
         assert!(out.contains(".collect::<Vec<_>>();"));
         assert!(!out.contains(".map(|c| c.try_into())"));
     }
@@ -1638,7 +1898,7 @@ mod tests {
         assert!(out.contains("let r#type = node"));
         assert!(out.contains(".child_by_field(\"type\")"));
         assert!(out.contains("field: \"type\""));
-        assert!(out.contains("Ok(Stmt { _pragma, r#type })"));
+        assert!(out.contains("Ok(Stmt { _span, r#type })"));
         assert!(!out.contains("pub type:"));
     }
 
@@ -1658,7 +1918,7 @@ mod tests {
 
     /// A field label starting with `_` is rejected (#359): that whole
     /// namespace is reserved for the fields this tool injects itself
-    /// (`_pragma`, `_text`) — see [`check_field_labels_are_representable`].
+    /// (`_span`, `_text`) — see [`check_field_labels_are_representable`].
     #[test]
     fn new_rejects_field_label_starting_with_underscore() {
         let g = Grammar::from_rules([
@@ -1689,7 +1949,7 @@ mod tests {
         assert!(out.contains("pub struct Num {"));
         assert!(out.contains("pub _text: String,"));
         assert!(out.contains("let _text = node.text().to_string();"));
-        assert!(out.contains("Ok(Num { _pragma, _text })"));
+        assert!(out.contains("Ok(Num { _span, _text })"));
     }
 
     #[test]
@@ -1758,7 +2018,7 @@ mod tests {
                 "impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for ForStatement {"
             )
         );
-        assert!(out.contains("Ok(ForStatement { _pragma, _text })"));
+        assert!(out.contains("Ok(ForStatement { _span, _text })"));
     }
 
     /// A kind no `merge` entry claims stays `pub`, even when `merge_config`
@@ -1831,7 +2091,7 @@ mod tests {
                 "impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for ForStatement {"
             )
         );
-        assert!(out.contains("Ok(ForStatement { _pragma, _text })"));
+        assert!(out.contains("Ok(ForStatement { _span, _text })"));
     }
 
     // ── passthrough (342.5.5) ─────────────────────────────────────────────
@@ -1855,7 +2115,7 @@ mod tests {
         assert!(
             out.contains("impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for DocComment {")
         );
-        assert!(out.contains("Ok(DocComment { _pragma, _text })"));
+        assert!(out.contains("Ok(DocComment { _span, _text })"));
     }
 
     // ── field-type resolution gap fix (342.5.13) ─────────────────────────
@@ -2103,9 +2363,9 @@ mod tests {
             p("num", TerminalPattern("/[0-9]+/".into())),
         ]);
         let out = ra(&g, "g").to_string();
-        assert!(out.contains("Token(String),"));
+        assert!(out.contains("Token(runtime::Token),"));
         assert!(out.contains("if !node.node.is_named() {"));
-        assert!(out.contains("return Ok(Value::Token(node.text().to_string()));"));
+        assert!(out.contains("return Ok(Value::Token(runtime::Token::from(node)));"));
     }
 
     #[test]
@@ -2147,15 +2407,15 @@ mod tests {
     /// `plans/342.3.md`), not a panic or a warning. This test documents
     /// that as intentional, so it doesn't look like a regression later.
     #[test]
-    fn known_v1_limitation_unlabeled_top_level_choice_yields_pragma_only_struct() {
+    fn known_v1_limitation_unlabeled_top_level_choice_yields_span_only_struct() {
         let g = Grammar::from_rules([
             p("statement", Choice(vec![nt("loop_stmt"), nt("if_stmt")])),
             p("loop_stmt", TerminalLiteral("'l'".into())),
             p("if_stmt", TerminalLiteral("'i'".into())),
         ]);
         let out = ra(&g, "g").to_string();
-        assert!(out.contains("pub struct Statement {\n    pub _pragma: runtime::Pragma,\n}"));
-        assert!(out.contains("Ok(Statement { _pragma,  })"));
+        assert!(out.contains("pub struct Statement {\n    pub _span: runtime::Span,\n}"));
+        assert!(out.contains("Ok(Statement { _span,  })"));
     }
 
     // ── #[derive(Debug)] on every generated type ────────────────────────
@@ -2187,7 +2447,7 @@ mod tests {
         let out = ra(&g, "g").to_string();
         assert!(out.contains("impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for A {"));
         assert!(out.contains("impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for B {"));
-        assert!(out.contains("Ok(A { _pragma, _text })"));
-        assert!(out.contains("Ok(B { _pragma, _text })"));
+        assert!(out.contains("Ok(A { _span, _text })"));
+        assert!(out.contains("Ok(B { _span, _text })"));
     }
 }
