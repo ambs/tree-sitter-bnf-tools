@@ -63,9 +63,13 @@ tree, it returns an error instead.
 
 One exception to `lib.rs`'s "written once" rule: if you scaffolded
 without `--ast-types` and later rerun with it added, the rerun still
-inserts the one line it needs (`pub mod ast;`) into your existing
-`lib.rs`, because otherwise the newly generated `examples/ast.rs`
-couldn't even compile. It never removes anything you've added yourself.
+inserts the lines it needs (`pub mod ast;` and `pub use ast::parse_ast;`)
+into your existing `lib.rs`, because otherwise the newly generated
+`examples/ast.rs` couldn't even compile. A crate scaffolded with
+`--ast-types` before `parse_ast` existed gets the `pub use` line the same
+way on its next rerun, unless `lib.rs` already mentions `parse_ast`: a
+function of your own under that name is left alone. It never removes
+anything you've added yourself.
 
 ## Other ways to invoke it
 
@@ -299,18 +303,29 @@ Rust struct matching your grammar's shape.
 `bindings/rust/ast.rs`, one owned Rust struct per grammar rule. "Owned"
 means no `'tree` lifetime survives construction: once built, a value
 doesn't borrow from the parse tree anymore. Each struct gets a
-`TryFrom<super::visitor::SourceNode<'tree>>` impl, and a `_pragma:
-runtime::Pragma` field recording its start line/column. Both are
-1-indexed, and the column counts characters rather than bytes (so a line
-containing `ç` or `ã` reports the column an editor shows) and does not
-count a leading UTF-8 byte-order mark. A leaf kind (one with no visible
-children of its own) also gets a `_text: String` field.
+`TryFrom<super::visitor::SourceNode<'tree>>` impl, and a `_span:
+runtime::Span` field recording where the node is: its byte range in the
+source, and where it starts and ends as a line and column (each a
+`runtime::Pragma`). Lines and columns are 1-indexed, and a column counts
+characters rather than bytes (so a line containing `ç` or `ã` reports the
+column an editor shows) and does not count a leading UTF-8 byte-order mark.
+The end is the position just past the node's last character. The byte range
+is exactly what tree-sitter reports, so it indexes straight into the
+source. A leaf kind (one with no visible children of its own) also gets a
+`_text: String` field.
 
-`Pragma` and `BuildError` (the shared `TryFrom` error type) live inside an
-inner `runtime` module, not at `ast.rs`'s own top level. And the two
-injected fields start with an underscore. Both choices exist for the same
-reason: so a grammar rule or field genuinely named `pragma`, `text`,
-`build_error`, or `source_node` can never collide with these fixed,
+A field that holds a bare literal (a keyword, punctuation or an operator, as
+in `op: '='`) is a `runtime::Token { kind, text, span }`, not a `String`: a
+`String` would keep what the literal said but lose where it was. The same
+goes for a list of them (`Vec<runtime::Token>`) and for the `Token` variant
+of an enum that holds either a kind or a literal. A leaf's `_text` stays a
+`String`, because the leaf struct already has its own `_span`.
+
+`Pragma`, `Span`, `Token` and `BuildError` (the shared `TryFrom` error type)
+live inside an inner `runtime` module, not at `ast.rs`'s own top level. And
+the injected fields start with an underscore. Both choices exist for the same
+reason: so a grammar rule or field genuinely named `pragma`, `span`, `text`,
+`token`, `build_error`, or `source_node` can never collide with these fixed,
 tool-injected names. See "A note on vocabulary" below.
 
 Enabling it adds two files on top of the tree the walkthrough showed:
@@ -335,7 +350,7 @@ has two fields, so its `TryFrom` impl builds both from the parsed node:
 /// `decl` node.
 #[derive(Debug)]
 pub struct Decl {
-    pub _pragma: runtime::Pragma,
+    pub _span: runtime::Span,
     pub target: Ident,
     pub value: Expr,
 }
@@ -344,7 +359,7 @@ impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for Decl {
     type Error = runtime::BuildError;
 
     fn try_from(node: super::visitor::SourceNode<'tree>) -> Result<Self, Self::Error> {
-        let _pragma = runtime::Pragma::from(node);
+        let _span = runtime::Span::from(node);
         let target = node
             .child_by_field("target")
             .ok_or(runtime::BuildError::MissingField { kind: "decl", field: "target" })?
@@ -353,7 +368,7 @@ impl<'tree> TryFrom<super::visitor::SourceNode<'tree>> for Decl {
             .child_by_field("value")
             .ok_or(runtime::BuildError::MissingField { kind: "decl", field: "value" })?
             .try_into()?;
-        Ok(Decl { _pragma, target, value })
+        Ok(Decl { _span, target, value })
     }
 }
 ```
@@ -365,7 +380,7 @@ struct:
 /// `ident` node.
 #[derive(Debug)]
 pub struct Ident {
-    pub _pragma: runtime::Pragma,
+    pub _span: runtime::Span,
     pub _text: String,
 }
 ```
@@ -375,7 +390,7 @@ pretty-prints an entire typed tree with no per-kind code. That's exactly
 what the scaffolded `examples/ast.rs` does.
 
 Only labelled fields become struct fields. A rule like `program -> decl* ;`
-produces a `Program` with nothing but `_pragma`; labelling the repetition
+produces a `Program` with nothing but `_span`; labelling the repetition
 (`program -> items: decl* ;`) gives it `pub items: Vec<Decl>` instead. (With
 [`--partial-trees`](#input-with-syntax-errors---partial-trees), unlabelled
 children are captured too, so a grammar without labels still gets a usable
@@ -394,12 +409,13 @@ completely unrestricted. `pragma`, `text`, `build_error`, and
 `pragma` directive rule, a `text` leaf, a field called `text`), and all of
 them are fine. A kind named any of these generates an ordinary top-level
 `struct Pragma`/`Text`/`BuildError`/`SourceNode`, distinct from the tool's
-own fixed `runtime::Pragma`, `runtime::BuildError`, and
-`super::visitor::SourceNode`.
+own fixed `runtime::Pragma`, `runtime::Span`, `runtime::Token`,
+`runtime::BuildError`, and `super::visitor::SourceNode`.
 
 The only real restriction is on field labels: one starting with `_` is
 rejected at generation time. That whole leading-underscore namespace is
-reserved for the fields this tool injects itself (`_pragma`, `_text`).
+reserved for the fields this tool injects itself (`_span`, `_text`, and
+`_children` with `--partial-trees`).
 
 ### Collapsing related kinds (`--merge-config`)
 
@@ -456,7 +472,7 @@ with the config above generates:
 
 ```rust
 pub struct Program {
-    pub _pragma: runtime::Pragma,
+    pub _span: runtime::Span,
     pub items: Vec<Loop>,
     pub doc: DocComment,
 }
@@ -524,6 +540,39 @@ kind not otherwise claimed", so listing specific kinds alongside it would
 be redundant at best, a likely typo at worst. `check_merge_config` rejects
 that combination outright.
 
+### A tree-sitter-free entry point (`parse_ast`)
+
+Building the typed tree by hand takes tree-sitter: parse the source, wrap
+the root node in a `SourceNode`, then convert it (or, with
+`--partial-trees`, recover it). A program that only wants the typed tree
+shouldn't have to depend on tree-sitter at all, so `ast.rs` also generates
+`parse_ast`, and `lib.rs` re-exports it at the crate root:
+
+```rust
+let program: decls::ast::Program = decls::parse_ast(&source)?;
+```
+
+With `--partial-trees` the same call returns a
+[`Recovered`](#input-with-syntax-errors---partial-trees) instead, and a
+syntax error is *not* an `Err` there: whatever could be built is in `value`,
+the problems are in `diagnostics`, and a broken region stays in the tree.
+
+```rust
+let recovered = decls::parse_ast(&source)?;   // Recovered<Program>
+```
+
+| | default | `--partial-trees` |
+|---|---|---|
+| returns | `Result<Program, Box<dyn Error>>` | `Result<Recovered<Program>, Box<dyn Error>>` |
+| `Err` when | the parser can't run, or the tree can't be built (it stops at the first problem) | the parser can't run |
+
+`Program` is the grammar's root rule's struct, under its `passthrough`
+name if it has one. The error type is the same as `parse`'s. `parse_ast`
+calls `lib.rs`'s own `parse` function, so keep that one: you can change how
+it sets the parser up, but not its name or its `Result<Tree, _>` shape.
+Nothing is generated when the root rule is claimed by a `merge` entry, since
+its struct is private (`scaffold` rejects that configuration anyway).
+
 ### Input with syntax errors (`--partial-trees`)
 
 By default, building the typed AST is all-or-nothing. One syntax error is
@@ -546,21 +595,26 @@ when you scaffold, not something you pick at each call site:
 | | default | `--partial-trees` |
 |---|---|---|
 | a single-valued field | `target: Ident` | `target: Option<Ident>` |
-| a bare-token field | `String` | `Option<String>` |
+| a bare-token field | `runtime::Token` | `Option<runtime::Token>` |
 | a repeated field | `items: Vec<Decl>` | `items: Vec<Decl>`; a child that can't be built is left out |
 | building | `Program::try_from(node)?`, which stops at the first problem | `runtime::recover::<Program>(node)`, which never fails |
 | result | `Result<Program, BuildError>` | `Recovered<Program>` |
 
-`_pragma` and `_text` are unchanged, and `TryFrom` and `BuildError` are
-not generated at all in this mode. Nothing changes without the flag: the
-output of a plain `--ast-types` scaffold is byte-for-byte what it was.
+`_span`, `_text` and `runtime::Token` are as in plain `--ast-types`, and
+`TryFrom` and `BuildError` are not generated at all in this mode. Leave the
+flag off and the scaffold is a plain `--ast-types` one: this flag changes
+nothing about it.
 
 `runtime::recover` returns a `Recovered<T>` with two public fields:
 `value: Option<T>`, which is `None` only when not even the root could be
 built, and `diagnostics: Vec<Diagnostic>`, ordered by position in the
 source. `recovered.is_complete()` is true when there is a value and no
-diagnostics. A `Diagnostic` carries a `kind`, the offending node's
-`byte_range`, and its `start` (line and column, 1-indexed like `_pragma`).
+diagnostics. A `Diagnostic` carries a `kind` and a `span`: the offending
+node's `Span`, the same type as every node's `_span`, so it has the byte
+range and the start *and* end line and column (end exclusive). A `MISSING`
+token is zero-width, so its end equals its start. The offending text is
+`&source[span.byte_range.clone()]`, so a diagnostic needs no snippet of its
+own.
 
 The generated `examples/ast.rs` uses it: it prints whatever was built,
 then one `path:line:column: problem` line per diagnostic, and exits with
@@ -572,37 +626,72 @@ $ printf 'x = 1\n' > broken.decls
 $ cargo run --example ast -- broken.decls
 broken.decls:
 Program {
-    _pragma: Pragma {
-        line: 1,
-        column: 1,
+    _span: Span {
+        byte_range: 0..6,
+        start: Pragma {
+            line: 1,
+            column: 1,
+        },
+        end: Pragma {
+            line: 2,
+            column: 1,
+        },
     },
     items: [
         Decl {
-            _pragma: Pragma {
-                line: 1,
-                column: 1,
+            _span: Span {
+                byte_range: 0..5,
+                start: Pragma {
+                    line: 1,
+                    column: 1,
+                },
+                end: Pragma {
+                    line: 1,
+                    column: 6,
+                },
             },
             target: Some(
                 Ident {
-                    _pragma: Pragma {
-                        line: 1,
-                        column: 1,
+                    _span: Span {
+                        byte_range: 0..1,
+                        start: Pragma {
+                            line: 1,
+                            column: 1,
+                        },
+                        end: Pragma {
+                            line: 1,
+                            column: 2,
+                        },
                     },
                     _text: "x",
                 },
             ),
             value: Some(
                 Expr {
-                    _pragma: Pragma {
-                        line: 1,
-                        column: 5,
+                    _span: Span {
+                        byte_range: 4..5,
+                        start: Pragma {
+                            line: 1,
+                            column: 5,
+                        },
+                        end: Pragma {
+                            line: 1,
+                            column: 6,
+                        },
                     },
                     _children: [
                         Num(
                             Num {
-                                _pragma: Pragma {
-                                    line: 1,
-                                    column: 5,
+                                _span: Span {
+                                    byte_range: 4..5,
+                                    start: Pragma {
+                                        line: 1,
+                                        column: 5,
+                                    },
+                                    end: Pragma {
+                                        line: 1,
+                                        column: 6,
+                                    },
                                 },
                                 _text: "1",
                             },
@@ -611,10 +700,27 @@ Program {
                 },
             ),
             _children: [
-                "=",
+                Token(
+                    Token {
+                        kind: "=",
+                        text: "=",
+                        span: Span {
+                            byte_range: 2..3,
+                            start: Pragma {
+                                line: 1,
+                                column: 3,
+                            },
+                            end: Pragma {
+                                line: 1,
+                                column: 4,
+                            },
+                        },
+                    },
+                ),
             ],
         },
     ],
+    _children: [],
 }
 broken.decls:1:6: Missing { expected: ";" }
 ```
@@ -622,8 +728,9 @@ broken.decls:1:6: Missing { expected: ";" }
 The `Decl` is all there, and the one diagnostic says where the `;` should
 have been. Note `Expr` and the `_children` of `Decl`: `expr -> ident | num ;`
 labels nothing, yet its `1` is there, and the `=` the declaration wrote
-out is kept too. The `;` is not, because it isn't in the file: a missing
-token is a diagnostic, not a child. That is the next section.
+out is kept too, as a `Token` with its own span. The `;` is not, because it
+isn't in the file: a missing token is a diagnostic, not a child. That is
+the next section.
 
 Which of the diagnostics you get depends on what tree-sitter found:
 
@@ -631,57 +738,214 @@ Which of the diagnostics you get depends on what tree-sitter found:
 |---|---|---|
 | a `MISSING` token the grammar required, like the `;` above | built as usual; the token itself is not in `_children` | `Missing { expected }` |
 | a `MISSING` node standing in for a labelled field's value | that field is `None` | `Missing { expected }` |
-| an `ERROR` region | a field it swallowed is `None`, or a repeated child is left out | one `Error` for the whole region |
+| an `ERROR` region | kept where it is, as an `Error` child of its parent (below); a labelled field it swallowed is `None` | one `Error` for the whole region |
 | a labelled field absent from a node that has a syntax error inside it | `None` | `MissingField { kind, field }` |
 | a child whose kind is not one of a merged enum's variants, or not one the grammar allows as an unlabelled child | `None`, or left out of a list | `UnexpectedKind { expected, found }` |
+| a subtree nested deeper than the depth limit (see "Deeply nested input" below) | not built: `None`, or left out of a list | `TooDeep { limit }` |
 
 A field that is `None` in a node with *no* syntax error produces no
 diagnostic: the parser accepted the node without it, so it was optional in
 the grammar. (The generated types don't model optional fields, which is
 why every single-valued field is an `Option` in this mode.) An `ERROR`
 node that tree-sitter nests inside another one of the same range is
-reported once, not twice.
+reported once, not twice, and is one region in the tree, not two.
 
 **Grammars without field labels.** Only labelled fields become struct
 fields, so a grammar that labels nothing, such as `program -> decl* ;`,
-would give structs holding only `_pragma`, and a partial tree that holds
+would give structs holding only `_span`, and a partial tree that holds
 nothing: the diagnostics would be the only useful output. So in this mode
-every struct also gets `_children`, a list of its *unlabelled* children in
-source order. That means both the kinds the rule refers to and the string
-literals it spells out (keywords, punctuation, operators):
+every struct that has children also gets `_children`, a list of its
+*unlabelled* children in source order. That means both the kinds the rule
+refers to and the string literals it spells out (keywords, punctuation,
+operators). The list always holds one enum, named after the kind (`ProgramChild`
+for `program`), with a variant for each of these:
 
-- A kind whose unlabelled children are of a single kind holds it directly
-  (`program -> decl* ;` gives `_children: Vec<Decl>`).
-- A kind with several possible child kinds gets a generated enum named
-  after it (`expr -> ident | num ;` gives `_children: Vec<ExprChild>`,
-  with `Ident(Ident)` and `Num(Num)` variants). If those kinds are exactly
-  a `--merge-config` entry's `from`, the list uses that entry's enum
-  instead.
-- A literal beside those kinds is a `Token(String)` variant of that enum,
-  holding the token's text (`decl -> 'var' ident ';' ;` gives
-  `_children: Vec<DeclChild>`: `Token("var")`, `Ident(…)`, `Token(";")`).
-- A kind whose only unlabelled children are literals holds plain strings:
-  `call -> name: ident '(' ')' ;` has `name` as a field and
-  `_children: Vec<String>` holding `"("` and `")"`.
-- A leaf has no `_children`: its `_text` already is its whole source,
-  literals included. That is why `op -> '+' | '-' ;` is a leaf with
-  `_text: "+"` and nothing else.
+- Each kind the rule can refer to without a label: `program -> decl* ;` gives
+  `_children: Vec<ProgramChild>`, and `ProgramChild` has a `Decl(Decl)`
+  variant. It is an enum even with a single kind, because of the last
+  bullet below.
+- A literal: a `Token(runtime::Token)` variant, holding the token's kind, text
+  and span (`decl -> 'var' ident ';' ;` gives `DeclChild` with `Ident(Ident)`
+  and `Token(runtime::Token)`: a `Token` for `var`, an `Ident`, a `Token` for
+  `;`). A kind whose only unlabelled children are literals still has the
+  enum, with just `Token` (`call -> name: ident '(' ')' ;`).
+- A broken region: an `Error(runtime::ErrorRegion)` variant, always, even on
+  a kind whose children are all labelled (it then holds nothing else).
+  See "Broken regions stay in the tree" below.
+
+The enums belong to one kind each and are not shared, and they are not a
+`--merge-config` entry's enum even when the kinds match, since a merge enum
+has no place for a region. A leaf has no `_children`: its `_text` already is
+its whole source, literals included. That is why `op -> '+' | '-' ;` is a
+leaf with `_text: "+"` and nothing else.
 
 A child that a field label already captures appears in its field, not
 twice. Not captured, because they are not part of a rule's shape or are
 not really there:
 
 - Comments and the other `%extras`: they can appear anywhere.
-- `ERROR` and `MISSING` nodes: they are diagnostics. A missing `;` is not a
-  `Token(";")`.
+- `MISSING` nodes: a zero-width point is a diagnostic, not a child. A missing
+  `;` is not a `Token` for `;`.
 - A pattern written directly in a rule, as in `pair -> key '=' /[0-9]+/ ;`.
   tree-sitter keeps no node for it, so there is nothing to capture. Give it
   a rule of its own (`num -> /[0-9]+/ ;`) and it becomes a named leaf with
   `_text`.
 
-`_children` starts with `_`, like `_pragma` and `_text`, so no field label
-can collide with it. Plain `--ast-types` does not do any of this; its
-structs are unchanged.
+`_children` starts with `_`, like `_span` and `_text`, so no field label
+can collide with it. A grammar rule can still be named `error` or `token`:
+the fixed `Error` and `Token` variants keep their names, and the variant for
+that rule becomes `ErrorNode` or `TokenNode`. Plain `--ast-types` does not
+capture unlabelled children: its structs hold labelled fields only, plus
+`_span` (and `_text` for a leaf).
+
+**Broken regions stay in the tree.** An `ERROR` node is the part of the source
+tree-sitter could not fit into the grammar. Dropping it would leave a hole
+in the tree at exactly the place a tool most needs to know about, so it
+is kept: as the `Error` variant of its parent's children enum, holding a
+`runtime::ErrorRegion { span, text }`, the region's extent and the source text
+it covers. It sits in `_children` in source order, between its siblings,
+exactly where it is in the file. It has no children of its own: whatever
+tree-sitter did recognise inside it is part of its text, and an `ERROR`
+inside another `ERROR` is one region. The diagnostics still report it, so
+you can use either.
+
+Through `Reflect` an `ErrorRegion` is a node of kind `"ERROR"`, named (as in
+tree-sitter), with its text and no children.
+
+**Walking the tree generically.** A typed tree is pleasant to match on and
+tedious to traverse: a function per type is hundreds of functions for a real
+grammar. So in this mode every node also implements `runtime::Reflect`, a
+read-only view that is the same for all of them:
+
+| method | what it gives |
+|---|---|
+| `kind()` | tree-sitter's kind for the node: the rule's name (or alias), not the Rust type's, so a `passthrough`-renamed struct still reports the original. For a literal, the literal; for a broken region, `"ERROR"`. |
+| `span()` | the node's `Span`. |
+| `text()` | `Some` for a leaf, a literal and a broken region; `None` for anything made of children. |
+| `children()` | the node's children in source order, as a `Vec<(Option<&'static str>, &dyn Reflect)>`: each child with the field label it sits under (below), labelled fields and unlabelled children together, literals and broken regions included. |
+| `is_named()` | `true` for a node of a rule and for a broken region, `false` for a literal. |
+
+Every generated struct implements it, and so do `runtime::Token` and
+`runtime::ErrorRegion`. Every
+generated enum implements it by delegating to the variant it holds, and the
+enums are transparent: `children()` hands back the node an enum holds, never
+the enum, so a walk never meets a `ProgramChild` or a `Loop`. (If you do have
+an enum in hand, its `inner()` gives that same node.) `children()` merges
+fields and unlabelled children by position, and leaves out the extras, so it
+matches what tree-sitter shows for the same file.
+
+**Which field a child is.** Each child comes as a pair, the field label it
+sits under and the node. The label is the grammar's own (`target`, `value`),
+the same one tree-sitter reports for that child, or `None` for a child no
+label names: an unlabelled one, a literal, a broken region. Every element of a
+repeated field carries its label. A consumer that reads the pair never has to
+change when you add a label to the grammar later: the child that was `None`
+now has a name, and the code that ignored it still does. A label that is a Rust
+keyword (`type:`) is given as written, `"type"`, not as the escaped identifier
+`r#type` the struct field uses.
+
+**One loop, no recursion.** The traversal is the same for every consumer, so
+the runtime has it: `runtime::walk(&root)` yields every node, depth first, a
+node before its children, in source order, each as a `Visit { node, field,
+depth }` (the root has depth 0 and no field). It uses an explicit stack on the
+heap, so it does not recurse, and a tree of any depth is walked without
+growing the call stack. This prints an outline, with no code per type:
+
+```rust
+use decls::ast::Program;
+use decls::ast::runtime::{recover, walk};
+use decls::visitor::SourceNode;
+
+fn main() {
+    let path = std::env::args().nth(1).expect("usage: outline <file>");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let tree = decls::parse(&source).unwrap();
+    let root = recover::<Program>(SourceNode { node: tree.root_node(), source: &source })
+        .value
+        .expect("nothing could be built");
+
+    for visit in walk(&root) {
+        let s = visit.node.span();
+        println!(
+            "{}{}{} {}:{}-{}:{}{}",
+            "  ".repeat(visit.depth),
+            visit.field.map(|f| format!("{f}: ")).unwrap_or_default(),
+            visit.node.kind(),
+            s.start.line, s.start.column, s.end.line, s.end.column,
+            visit.node.text().map(|t| format!(" {t:?}")).unwrap_or_default(),
+        );
+    }
+}
+```
+
+On `x = 1;`:
+
+```
+program 1:1-2:1
+  decl 1:1-1:7
+    target: ident 1:1-1:2 "x"
+    = 1:3-1:4 "="
+    value: expr 1:5-1:6
+      num 1:5-1:6 "1"
+    ; 1:6-1:7 ";"
+```
+
+Note `decl`'s children: the `target` ident and the `value` expr, which are
+labelled fields, and the `=` and `;` literals, which are not, come back
+interleaved in the order they are in the file, and `expr` is reached directly,
+not through the enum that holds it. To call these methods on a concrete type
+rather than a `&dyn Reflect`, bring the trait into scope:
+`use ….ast::runtime::Reflect;`.
+
+On a file with a broken line in the middle (`x = 1;`, then `@@@`, then
+`y = 2;`) the same loop prints the region in its place, with nothing extra
+to write:
+
+```
+program 1:1-4:1
+  decl 1:1-1:7
+    target: ident 1:1-1:2 "x"
+    = 1:3-1:4 "="
+    value: expr 1:5-1:6
+      num 1:5-1:6 "1"
+    ; 1:6-1:7 ";"
+  ERROR 2:1-2:4 "@@@"
+  decl 3:1-3:7
+    target: ident 3:1-3:2 "y"
+    = 3:3-3:4 "="
+    value: expr 3:5-3:6
+      num 3:5-3:6 "2"
+    ; 3:6-3:7 ";"
+```
+
+**Deeply nested input.** Building the typed tree is recursive, a few calls
+per level of nesting, and so are `Drop` and `Debug` on the result. Input
+nested deeper than the stack can take (a few hundred parentheses, in a debug
+build on a 2 MiB thread) would not fail with an error you could catch: it
+would abort the whole process. A parser that takes input from somebody else
+cannot allow that, so `recover` stops at a depth limit,
+`runtime::DEFAULT_MAX_DEPTH` (256 levels), chosen to be safe on a small stack
+even in a debug build. A level is one non-leaf node, and the root is level 1.
+A subtree that would be level 257 is not built. Its field is `None` (or it is
+left out of its list), and a diagnostic
+`TooDeep { limit: 256 }` says where, with the span of the subtree that was
+left out, so `&source[span.byte_range.clone()]` is the text that was skipped.
+The rest of the tree, down to the limit, is built as usual, and the
+`ERROR`/`MISSING` diagnostics still cover the whole input however deep it
+goes: that walk over tree-sitter's tree is iterative, too.
+
+A caller that knows its stack is bigger can raise the limit (or lower it,
+for a smaller one):
+
+```rust
+let recovered = runtime::recover_with_limit::<Program>(root, 5_000);
+```
+
+`recover_with_limit` does not make it safe to go deep: past what the stack
+can take, a stack overflow is an abort again. Raise it only together with
+the size of the thread's stack (`std::thread::Builder::stack_size`). Plain
+`--ast-types`, whose `TryFrom` impls have nowhere to carry a limit, has no such
+guard.
 
 **Rerunning.** `--partial-trees` is recorded in `ts-bnf-tool.toml` as
 `partial_trees = true`, and a plain `make generate` keeps it. On the

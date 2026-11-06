@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dom::ast::BuildMode;
 use crate::dom::ast::merge::{MergeConfig, check_merge_config};
-use crate::dom::ast::rust::{RustAst, check_root_rule_not_merged, kind_display_name};
+use crate::dom::ast::rust::{RustAst, check_root_rule_not_merged};
 use crate::util::{hyphens_to_underscores, resolve_output_dir};
 
 use super::grammar_js::{GrammarJs, run_generate};
@@ -49,9 +49,6 @@ pub struct ScaffoldFile {
 struct AstOutput {
     /// The complete generated `ast.rs` source.
     source: String,
-    /// The Rust type name of the grammar's root rule, as declared in `source`
-    /// (already run through any `passthrough` rename).
-    root_rule: String,
     /// Which API `source` exposes, so the example calls the right one.
     mode: BuildMode,
 }
@@ -102,19 +99,9 @@ pub fn render_scaffold(
 ) -> Result<ScaffoldCrate, String> {
     let visitor_source = render_visitor(grammar, name, source, no_header)?;
     let ast_output = if let Some(mode) = ast {
-        // `kind_display_name`, not bare `pascal_case`: a `passthrough`
-        // entry can rename the root rule's own struct, and `examples/ast.rs`
-        // must `use` it under the name it's actually declared under.
-        let root_rule = kind_display_name(
-            grammar
-                .root_rule()
-                .expect("grammar without rules should have been treated earlier"),
-            merge_config,
-        );
         let ast = RustAst::new(grammar, source, no_header, merge_config, mode)?;
         Some(AstOutput {
             source: ast.to_string(),
-            root_rule,
             mode,
         })
     } else {
@@ -349,7 +336,10 @@ fn stale_ast_example_warning(dir: &Path, effective: &config::ScaffoldConfig) -> 
         ("partial", "strict")
     };
     Some(format!(
-        "warning: examples/ast.rs was written for the {was} AST API, but bindings/rust/ast.rs          now uses the {now} one; the example was left untouched and will no longer compile —          update it by hand, or delete it and rerun scaffold to regenerate it"
+        "warning: examples/ast.rs was written for the {was} AST API, but bindings/rust/ast.rs \
+         now uses the {now} one; the example was left untouched, so it may no longer compile \
+         (and does not use the new API) — update it by hand, or delete it and rerun scaffold \
+         to regenerate it"
     ))
 }
 
@@ -451,7 +441,8 @@ fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
 }
 
 /// Patches `bindings/rust/lib.rs` (already written by the caller's own file
-/// loop, fresh or preserved) to add `pub mod ast;` if it's missing.
+/// loop, fresh or preserved) to declare `pub mod ast;` and re-export
+/// `parse_ast` from it, each only if missing.
 ///
 /// `write_if_absent` above leaves an existing `lib.rs` completely
 /// untouched — including the case where [`rust::render`]'s freshly
@@ -464,28 +455,53 @@ fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
 /// passes `--ast-types` is untouched, matching `write_if_absent`'s
 /// documented "won't touch them" guarantee for every other case.
 ///
+/// The same goes for the crate-root `parse_ast` (the tree-sitter-free entry
+/// point the generated `ast.rs` defines): a `lib.rs` written before it
+/// existed never re-exports it, so the example that calls
+/// `{crate}::parse_ast` would not compile. It is added as `pub use
+/// ast::parse_ast;` — unless `lib.rs` already mentions `parse_ast` anywhere,
+/// since a function the user wrote themselves under that name (or an
+/// export they placed differently) would otherwise be shadowed by a
+/// duplicate definition.
+///
 /// Inserted right after the `pub mod visitor;` line — [`rust::render`]'s own
 /// insertion point — so the patched file ends up matching what a fresh
 /// scaffold would have produced; appended at the end as a defensive
 /// fallback if that anchor line isn't found (e.g. removed by hand). A no-op
-/// if `pub mod ast;` is already present, which covers every ordinary
-/// `--ast-types` run, fresh or rerun.
+/// when both lines are already present, which covers every ordinary
+/// `--ast-types` run after the first.
 fn ensure_lib_rs_declares_ast_module(dir: &Path) -> Result<(), Box<dyn Error>> {
     let path = dir.join("bindings/rust/lib.rs");
     let content = fs::read_to_string(&path)?;
-    if content.contains("pub mod ast;") {
+
+    let has_mod = content.contains("pub mod ast;");
+    let has_export = content.contains("parse_ast");
+    if has_mod && has_export {
         return Ok(());
     }
 
-    let anchor = "pub mod visitor;\n";
-    let patched = match content.find(anchor) {
-        Some(idx) => {
-            let mut patched = content;
-            patched.insert_str(idx + anchor.len(), "pub mod ast;\n");
-            patched
+    // The export belongs right after `pub mod ast;`, wherever that is. Only
+    // when the module line is missing too are both inserted, together, at the
+    // `pub mod visitor;` anchor (or at the end if that is gone).
+    let mut patched = content;
+    if has_mod {
+        let anchor = "pub mod ast;\n";
+        match patched.find(anchor) {
+            Some(idx) => patched.insert_str(idx + anchor.len(), "pub use ast::parse_ast;\n"),
+            // `pub mod ast;` is the last line, with no trailing newline.
+            None => patched.push_str("\npub use ast::parse_ast;\n"),
         }
-        None => format!("{content}\npub mod ast;\n"),
-    };
+    } else {
+        let mut missing = String::from("pub mod ast;\n");
+        if !has_export {
+            missing.push_str("pub use ast::parse_ast;\n");
+        }
+        let anchor = "pub mod visitor;\n";
+        match patched.find(anchor) {
+            Some(idx) => patched.insert_str(idx + anchor.len(), &missing),
+            None => patched = format!("{patched}\n{missing}"),
+        }
+    }
     fs::write(&path, patched)?;
     Ok(())
 }
@@ -674,5 +690,75 @@ mod tests {
         assert!(
             stale_ast_example_warning(&first_scaffold, &effective_config(true, true)).is_none()
         );
+    }
+
+    /// Runs [`ensure_lib_rs_declares_ast_module`] on a scratch crate whose
+    /// `lib.rs` is `content`, and returns what it was patched into.
+    fn patched_lib_rs(name: &str, content: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("ts_bnf_ensure_lib_rs_{name}_test"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bindings/rust")).unwrap();
+        let path = dir.join("bindings/rust/lib.rs");
+        fs::write(&path, content).unwrap();
+        ensure_lib_rs_declares_ast_module(&dir).unwrap();
+        fs::read_to_string(&path).unwrap()
+    }
+
+    /// A `lib.rs` with neither line gets both, together, after the
+    /// `pub mod visitor;` anchor — what a fresh scaffold would have produced.
+    #[test]
+    fn ensure_lib_rs_adds_the_module_and_the_export_together() {
+        let patched = patched_lib_rs("neither", "pub mod visitor;\n// mine\n");
+        assert_eq!(
+            patched,
+            "pub mod visitor;\npub mod ast;\npub use ast::parse_ast;\n// mine\n"
+        );
+    }
+
+    /// A crate scaffolded before `parse_ast` existed already has `pub mod
+    /// ast;`: only the export is added, right after it (not after the
+    /// `visitor` anchor, which would put it before the module it names).
+    #[test]
+    fn ensure_lib_rs_adds_only_the_export_right_after_an_existing_module() {
+        let patched = patched_lib_rs(
+            "old_crate",
+            "pub mod visitor;\n// mine\npub mod ast;\npub mod other;\n",
+        );
+        assert_eq!(
+            patched,
+            "pub mod visitor;\n// mine\npub mod ast;\npub use ast::parse_ast;\npub mod other;\n"
+        );
+    }
+
+    /// `pub mod ast;` as the very last line, with no trailing newline, still
+    /// gets the export on its own line.
+    #[test]
+    fn ensure_lib_rs_handles_the_module_as_the_last_line() {
+        let patched = patched_lib_rs("last_line", "pub mod visitor;\npub mod ast;");
+        assert!(
+            patched.ends_with("pub mod ast;\npub use ast::parse_ast;\n"),
+            "{patched}"
+        );
+    }
+
+    /// A `lib.rs` that already mentions `parse_ast` — the user's own function,
+    /// or an export they placed themselves — never gets a second one, which
+    /// would be a duplicate definition. The module line is still added.
+    #[test]
+    fn ensure_lib_rs_never_adds_an_export_next_to_the_users_own_parse_ast() {
+        let patched = patched_lib_rs(
+            "own_parse_ast",
+            "pub mod visitor;\npub fn parse_ast(s: &str) -> usize { s.len() }\n",
+        );
+        assert!(patched.contains("pub mod ast;"));
+        assert!(!patched.contains("pub use ast::parse_ast;"), "{patched}");
+        assert_eq!(patched.matches("parse_ast").count(), 1);
+    }
+
+    /// With both already present nothing is rewritten at all.
+    #[test]
+    fn ensure_lib_rs_leaves_a_complete_lib_rs_alone() {
+        let content = "pub mod visitor;\npub mod ast;\npub use ast::parse_ast;\n// mine\n";
+        assert_eq!(patched_lib_rs("complete", content), content);
     }
 }

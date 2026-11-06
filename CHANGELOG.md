@@ -13,15 +13,68 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Recovered<Root>` with whatever could be built (single-valued fields become
   `Option<T>`) plus a position-ordered list of `Diagnostic`s. The flag changes
   the shape of the generated `ast.rs`, so it is chosen once at scaffold time
-  and recorded in `ts-bnf-tool.toml`; without it the output is unchanged.
-  In this mode each struct also gets `_children`, a typed list of its
-  *unlabelled* children — the kinds it refers to and the string literals it
-  spells out (`Token(String)`), but not extras or error nodes — so a grammar
-  without field labels still produces a usable tree instead of `_pragma`-only
-  structs. `examples/ast.rs` prints the recovered tree and each
+  and recorded in `ts-bnf-tool.toml`; leave it off and a scaffold is a plain
+  `--ast-types` one. In this mode every non-leaf struct also gets `_children`,
+  a list of its *unlabelled* children — the kinds it refers to and the string
+  literals it spells out, but not extras or `MISSING` points — so a grammar
+  without field labels still produces a usable tree instead of `_span`-only
+  structs. The list's element is a per-kind enum (`<Kind>Child`) with a
+  variant for each child kind, `Token` for a literal, and `Error`: a broken
+  region of the source (an `ERROR` node) stays in the tree, in source order
+  under its parent, as a `runtime::ErrorRegion { span, text }` instead of
+  being dropped. Every node also
+  implements the new `runtime::Reflect` trait — `kind()` (the tree-sitter
+  kind), `span()`, `text()` (`Some` only for a leaf or a token), `children()`
+  (labelled fields and unlabelled children in source order, literals
+  included, each paired with the grammar field label it sits under, or `None`)
+  and `is_named()` — so one generic loop can walk any tree instead of a
+  function per type. The generated enums implement it by delegating to
+  the variant they hold, and a parent's `children()` yields that inner node,
+  never the enum. `examples/ast.rs` prints the recovered tree and each
   diagnostic, exiting 1 if there were any (#487).
 
+- `scaffold --ast-types --partial-trees`: `runtime::walk(&root)`, a depth-first,
+  source-order iterator over every node of a typed tree as a `Visit { node,
+  field, depth }`, with an explicit stack instead of recursion, so nobody
+  writes the traversal again and a tree of any depth is walked safely; and a
+  **depth guard**. Building the typed tree is recursive, and a few hundred
+  levels of nesting (parentheses, say) in the input used to abort the whole
+  process with a stack overflow on a 2 MiB stack — not a panic that could be
+  caught. `runtime::recover` now stops at `runtime::DEFAULT_MAX_DEPTH` (256
+  levels): the subtree past the limit is not built (its field is `None`, or it
+  is left out of its list) and a `TooDeep { limit }` diagnostic reports its
+  span; `runtime::recover_with_limit` takes another limit for a caller whose
+  stack is bigger. The walk that reports `ERROR`/`MISSING` nodes is iterative
+  too, so a syntax error deep in a deep tree is still found. Plain
+  `--ast-types` (whose `TryFrom` impls have nowhere to carry a limit) has no
+  such guard (#487).
+
+- `scaffold --ast-types` generates `parse_ast(source: &str)` into `ast.rs`,
+  re-exported at the crate root, so a program can get the typed tree without
+  touching tree-sitter: it parses, wraps the root node and builds the tree in
+  one call. It returns `Result<Root, Box<dyn Error>>`; with `--partial-trees`,
+  `Result<Recovered<Root>, Box<dyn Error>>`, where a syntax error is not an
+  `Err` but comes back in the result. `lib.rs` gets `pub use
+  ast::parse_ast;` — also on a rerun of a crate scaffolded before this, unless
+  its `lib.rs` already mentions `parse_ast`. `examples/ast.rs` now uses it
+  (#487).
+
 ### Changed
+- **Breaking for generated `ast.rs` code:** the `_pragma: runtime::Pragma`
+  field of every generated struct, which recorded only where a node starts,
+  is replaced by `_span: runtime::Span`: the node's byte range in the source
+  plus where it starts and ends, each a `runtime::Pragma` (still 1-indexed,
+  with the character columns and BOM handling `Pragma` already had). This
+  applies to plain `--ast-types` as well as `--partial-trees`. A
+  `--partial-trees` `Diagnostic` now carries the same `span` in place of its
+  separate `byte_range` and `start`. Regenerate `ast.rs` and replace
+  `node._pragma` with `node._span.start` (#487).
+- **Breaking for generated `ast.rs` code:** a bare literal value — a labelled
+  token field, a list of them, or the `Token` variant of an enum that holds
+  either a kind or a literal — is now a `runtime::Token { kind, text, span }`
+  instead of a `String`, in plain `--ast-types` as well as `--partial-trees`,
+  so it keeps where the literal was, not only what it said. Replace `tok` with
+  `tok.text` where a `String` was used (#487).
 - **Breaking for library users of `ts_bnf_tool`:** `RustAst::new` takes a new
   trailing `BuildMode` argument, `render_scaffold`'s `ast_types: bool` is now
   `ast: Option<BuildMode>`, and `ScaffoldRequest` has a new `partial_trees`
@@ -34,6 +87,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `g.annotation-field > g.labeledbox > rect` (#475).
 
 ### Fixed
+- `scaffold --ast-types`: a grammar rule literally named `token` that shares
+  an enum with a literal alternative (`a: (token | 'x')`) generated two
+  variants called `Token` and did not compile; that rule's variant is now
+  `TokenNode`. The same applies to a rule named `error` in a `--partial-trees`
+  children enum. Only a variant that would have clashed is renamed (#487).
 - `scaffold --ast-types`: the `_pragma` start position of a generated AST node
   (`runtime::Pragma`) now reports a **character** column instead of a byte
   column — on a line containing multibyte characters such as `ç` or `ã` the

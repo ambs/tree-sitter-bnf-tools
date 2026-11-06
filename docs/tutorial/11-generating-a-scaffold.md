@@ -539,10 +539,15 @@ Three things appear:
 
 - `bindings/rust/ast.rs`, with one owned Rust struct per grammar rule.
 - `examples/ast.rs`, a runnable dumper, written once like `walk.rs`.
-- a `pub mod ast;` line inserted into your existing `bindings/rust/lib.rs`.
-  That last one is the single exception to `lib.rs` being yours alone: the
-  new `examples/ast.rs` wouldn't compile without it. Nothing you added is
-  removed.
+- a `pub mod ast;` line and a `pub use ast::parse_ast;` line inserted into
+  your existing `bindings/rust/lib.rs`. Those are the single exception to
+  `lib.rs` being yours alone: the new `examples/ast.rs` wouldn't compile
+  without them. Nothing you added is removed.
+
+`examples/ast.rs` is short because of that second line. `decls::parse_ast`
+parses the file and builds the typed tree in one call, so a program that
+only wants the typed tree never has to name tree-sitter at all. (More in
+the [reference](12-scaffold-reference.md#a-tree-sitter-free-entry-point-parse_ast).)
 
 Run the new example on the sample from Step 2:
 
@@ -550,18 +555,25 @@ Run the new example on the sample from Step 2:
 $ cargo run --example ast -- sample.decls
 sample.decls:
 Program {
-    _pragma: Pragma {
-        line: 1,
-        column: 1,
+    _span: Span {
+        byte_range: 0..14,
+        start: Pragma {
+            line: 1,
+            column: 1,
+        },
+        end: Pragma {
+            line: 3,
+            column: 1,
+        },
     },
 }
 ```
 
 That is almost certainly not what you expected: the two declarations are
 missing. Nothing is broken. **Only labelled fields become struct fields**,
-and `program -> decl* ;` never labelled anything. `_pragma`, which records
-the node's start line and column, is injected by the tool, so it's all
-`Program` has.
+and `program -> decl* ;` never labelled anything. `_span`, which records
+where the node is in the source (its byte range, and its start and end
+line and column), is injected by the tool, so it's all `Program` has.
 
 So label it. Edit `decls.bnf` and give that repetition a name:
 
@@ -585,27 +597,55 @@ $ printf 'x = 1;\n' > one.decls
 $ cargo run --example ast -- one.decls
 one.decls:
 Program {
-    _pragma: Pragma {
-        line: 1,
-        column: 1,
+    _span: Span {
+        byte_range: 0..7,
+        start: Pragma {
+            line: 1,
+            column: 1,
+        },
+        end: Pragma {
+            line: 2,
+            column: 1,
+        },
     },
     items: [
         Decl {
-            _pragma: Pragma {
-                line: 1,
-                column: 1,
-            },
-            target: Ident {
-                _pragma: Pragma {
+            _span: Span {
+                byte_range: 0..6,
+                start: Pragma {
                     line: 1,
                     column: 1,
+                },
+                end: Pragma {
+                    line: 1,
+                    column: 7,
+                },
+            },
+            target: Ident {
+                _span: Span {
+                    byte_range: 0..1,
+                    start: Pragma {
+                        line: 1,
+                        column: 1,
+                    },
+                    end: Pragma {
+                        line: 1,
+                        column: 2,
+                    },
                 },
                 _text: "x",
             },
             value: Expr {
-                _pragma: Pragma {
-                    line: 1,
-                    column: 5,
+                _span: Span {
+                    byte_range: 4..5,
+                    start: Pragma {
+                        line: 1,
+                        column: 5,
+                    },
+                    end: Pragma {
+                        line: 1,
+                        column: 6,
+                    },
                 },
             },
         },
@@ -636,6 +676,11 @@ the file, and you get no AST. If you need whatever *can* be built from a
 broken file (an editor, say), add `--partial-trees` and it is reported
 instead; see
 [Input with syntax errors](12-scaffold-reference.md#input-with-syntax-errors---partial-trees).
+That mode also gives you `runtime::walk`, one loop that visits every node of
+the typed tree with its depth and the field label it sits under, so you
+don't write a function per type; and it stops at a depth limit, reporting a
+`TooDeep` diagnostic, instead of overflowing the stack on input nested a few
+hundred levels deep.
 
 The struct-by-struct breakdown, the reserved `_`-prefixed names, and
 `--merge-config` (which collapses related kinds into one enum) are in
