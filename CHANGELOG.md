@@ -40,6 +40,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   column used to overshoot by one per extra byte — and no longer counts a
   leading UTF-8 byte-order mark as part of line 1, which used to shift every
   column on the first line by 3. Regenerate `ast.rs` to pick this up.
+- `scaffold --ast-types` no longer rejects a grammar whose "kind or literal"
+  child set is shared by several rules or fields under different names, with
+  `error: kind 'x' and shape [x, $token] both generate 'X'; rename one of
+  them …`. That error blamed the user for an enum they never wrote: with no
+  single owner to name the shared enum after, it fell back to its kind names,
+  which for one kind is the kind's own struct name. Such an enum is now named
+  `<Kind>OrToken`. Only a name that would have clashed changes, so every
+  grammar that generated before generates identical output (#487).
 
 ## [0.6.0-beta.1] - 2026-09-30
 

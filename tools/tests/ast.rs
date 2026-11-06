@@ -690,3 +690,53 @@ fn partial_unlabelled_children_with_merge_config_compile() {
     );
     assert_no_partial_mode_warnings(&output);
 }
+
+/// Compile-check for the shape that used to be rejected with `kind 'x' and
+/// shape [x, $token] both generate 'X'` (strict mode, labelled fields): two
+/// fields with different names sharing a "kind or literal" shape. The shared
+/// enum is named `<Kind>OrToken` so it can't clash with the kind's own struct.
+#[test]
+fn shared_kind_plus_literal_fields_compile() {
+    let grammar = parse_fixture(
+        "shared kind-plus-literal fields",
+        "root -> a b ;\n\
+         a -> p: (c | 'x') ;\n\
+         b -> q: (c | 'x') ;\n\
+         c -> /[a-z]/ ;\n",
+    );
+
+    compile_generated_ast(
+        "ast_shared_kind_plus_literal_fields_harness",
+        &grammar,
+        "shared_kind_literal_sample",
+        "fn main() {}\n",
+        false,
+        None,
+    );
+}
+
+/// Partial-mode counterpart, with the grammar shape that was actually
+/// reported: two string rules (`'..'` and `".."`) whose unlabelled children
+/// are the same character kind plus a quote literal, so they share one child
+/// enum that used to be named exactly like the character kind's struct.
+#[test]
+fn partial_shared_kind_plus_literal_children_compile() {
+    let grammar = parse_fixture(
+        "partial shared kind-plus-literal children",
+        "root -> single_string double_string ;\n\
+         single_string -> 'a' char* 'a' ;\n\
+         double_string -> 'b' char* 'b' ;\n\
+         char -> /[a-z]/ ;\n",
+    );
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_shared_children_harness",
+        &grammar,
+        "partial_shared_children_sample",
+        "fn main() {}\n",
+        false,
+        None,
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
+}

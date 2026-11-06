@@ -1246,4 +1246,42 @@ mod tests {
         assert!(program_child.contains("ForStatement(ForStatement),"));
         assert!(program_child.contains("Token(String),"));
     }
+
+    /// Two string-like rules whose children are the same "character or quote"
+    /// set (the shape that failed with `kind 'x' and shape [x, $token] both
+    /// generate 'X'`): they share one enum, named so it doesn't clash with the
+    /// character kind's own struct.
+    #[test]
+    fn kinds_sharing_a_kind_plus_literal_child_set_get_one_distinct_enum() {
+        let g = Grammar::from_rules([
+            p(
+                "single_string",
+                Sequence(vec![
+                    TerminalLiteral("'q1'".into()),
+                    ZeroOrMore(Box::new(nt("char"))),
+                    TerminalLiteral("'q1'".into()),
+                ]),
+            ),
+            p(
+                "double_string",
+                Sequence(vec![
+                    TerminalLiteral("'q2'".into()),
+                    ZeroOrMore(Box::new(nt("char"))),
+                    TerminalLiteral("'q2'".into()),
+                ]),
+            ),
+            p("char", TerminalPattern("/[a-z]/".into())),
+        ]);
+        let out = partial(&g, None);
+
+        assert_eq!(out.matches("pub enum CharOrToken {").count(), 1);
+        let shared = item_body(&out, "pub enum CharOrToken {");
+        assert!(shared.contains("Char(Char),"));
+        assert!(shared.contains("Token(String),"));
+        for owner in ["pub struct SingleString {", "pub struct DoubleString {"] {
+            assert!(item_body(&out, owner).contains("pub _children: Vec<CharOrToken>,"));
+        }
+        // The kind's own struct is still there, under its own name.
+        assert!(out.contains("pub struct Char {"));
+    }
 }

@@ -7,6 +7,7 @@ use crate::dom::{
 use crate::util::find_first_name_collision;
 use indexmap::IndexMap;
 use indoc::{formatdoc, indoc};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Formatter};
 
 /// Everything specific to [`BuildMode::Partial`] (`--partial-trees`): the
@@ -867,6 +868,21 @@ enum ShapeName {
     MergeTarget(String),
 }
 
+/// A shape's name as far as [`build_multi_shape_names`]' first pass can tell,
+/// before the second pass resolves clashes between names.
+enum PlannedShape {
+    /// Reuses this `merge` entry's `target` enum ([`ShapeName::MergeTarget`]).
+    MergeTarget(String),
+    /// A generated enum, named `base_name` unless that clashes (see the
+    /// second pass); `has_token` says whether the shape includes a literal.
+    Generated {
+        /// The name [`compute_name`] chose.
+        base_name: String,
+        /// Whether the shape has a `$token` (literal) variant.
+        has_token: bool,
+    },
+}
+
 impl ShapeName {
     /// The Rust name this entry resolves to, regardless of which variant.
     fn name(&self) -> &str {
@@ -934,17 +950,72 @@ fn build_multi_shape_names(
         }
     }
 
-    // compute names
+    // compute names, in two passes. The first settles each shape's base name
+    // (or the merge entry it reuses), keeping `known_shapes`' order so the
+    // generated enums are emitted in the same order as ever.
+    let mut planned: Vec<(Vec<String>, PlannedShape)> = Vec::new();
     for (shape, fields) in known_shapes {
         let (clean_shape, has_token) = shape_kinds(&shape);
         let target = FieldTargetKinds {
             named: clean_shape.into_iter().cloned().collect(),
             anonymous_token: has_token,
         };
-        let shape_name = match merge_entry_for_shape(&target, merge_config) {
-            Some(entry) => ShapeName::MergeTarget(entry.target.clone()),
-            None => ShapeName::Generated(compute_name(&shape, &fields)),
+        let plan = match merge_entry_for_shape(&target, merge_config) {
+            Some(entry) => PlannedShape::MergeTarget(entry.target.clone()),
+            None => PlannedShape::Generated {
+                base_name: compute_name(&shape, &fields),
+                has_token,
+            },
         };
+        planned.push((shape, plan));
+    }
+
+    // The second pass resolves clashes a token-bearing shape can have through
+    // no fault of the grammar's author. Two or more owners sharing a shape
+    // give it no single owner to be named after, so `compute_name` falls back
+    // to the shape's own kind names — and for one kind plus a literal that is
+    // exactly the kind's own struct name (two string rules `'..'` and `".."`
+    // sharing `char* + quote` hit this). Telling the user to rename a rule over
+    // an enum they never wrote would be wrong, so such a shape is named
+    // `<base>OrToken` instead. Only when the base name is already claimed — by
+    // a kind, a merge target, or another shape — so every name that works
+    // today is untouched; and judged against *all* shapes' base names, not
+    // just earlier ones, so the result doesn't depend on declaration order.
+    let mut claimed: HashSet<String> = HashSet::new();
+    for kind in ast_node_specs.keys() {
+        claimed.insert(kind_display_name(kind, merge_config));
+    }
+    if let Some(config) = merge_config {
+        for entry in &config.merge {
+            claimed.insert(entry.target.clone());
+        }
+    }
+    let mut base_name_counts: HashMap<&str, usize> = HashMap::new();
+    for (_, plan) in &planned {
+        if let PlannedShape::Generated { base_name, .. } = plan {
+            *base_name_counts.entry(base_name.as_str()).or_default() += 1;
+        }
+    }
+    let mut resolved: Vec<(Vec<String>, ShapeName)> = Vec::new();
+    for (shape, plan) in &planned {
+        let shape_name = match plan {
+            PlannedShape::MergeTarget(name) => ShapeName::MergeTarget(name.clone()),
+            PlannedShape::Generated {
+                base_name,
+                has_token,
+            } => {
+                let clashes =
+                    claimed.contains(base_name) || base_name_counts[base_name.as_str()] > 1;
+                if *has_token && clashes {
+                    ShapeName::Generated(format!("{base_name}OrToken"))
+                } else {
+                    ShapeName::Generated(base_name.clone())
+                }
+            }
+        };
+        resolved.push((shape.clone(), shape_name));
+    }
+    for (shape, shape_name) in resolved {
         out.insert(shape, shape_name);
     }
 
@@ -1324,6 +1395,153 @@ mod tests {
             .expect("no name collisions");
         assert_eq!(names.len(), 1);
         assert_eq!(names.values().next().unwrap().name(), "NumStr");
+    }
+
+    /// Two owners sharing a "kind or literal" shape under different names have
+    /// no single owner to name the enum after, so it falls back to its kind
+    /// names — which for one kind is that kind's own struct name. The grammar
+    /// author did nothing wrong, so this resolves instead of erroring.
+    #[test]
+    fn build_multi_shape_names_token_shape_clashing_with_its_kind_is_suffixed_not_rejected() {
+        let g = Grammar::from_rules([
+            p(
+                "a",
+                Field(
+                    "p".into(),
+                    Box::new(Choice(vec![nt("c"), TerminalLiteral("'x'".into())])),
+                ),
+            ),
+            p(
+                "b",
+                Field(
+                    "q".into(),
+                    Box::new(Choice(vec![nt("c"), TerminalLiteral("'x'".into())])),
+                ),
+            ),
+            p("c", TerminalPattern("/[a-z]/".into())),
+        ]);
+        let names = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .expect("the clash is resolved, not reported");
+        assert_eq!(names.len(), 1);
+        assert_eq!(names.values().next().unwrap().name(), "COrToken");
+    }
+
+    /// The fallback name of a token-bearing shape is left alone whenever it
+    /// doesn't clash, so grammars that generate today keep their exact output.
+    #[test]
+    fn build_multi_shape_names_token_shape_fallback_name_without_a_clash_is_unchanged() {
+        let g = Grammar::from_rules([
+            p(
+                "x",
+                Field(
+                    "p".into(),
+                    Box::new(Choice(vec![
+                        nt("a"),
+                        nt("b"),
+                        TerminalLiteral("'t'".into()),
+                    ])),
+                ),
+            ),
+            p(
+                "y",
+                Field(
+                    "q".into(),
+                    Box::new(Choice(vec![
+                        nt("a"),
+                        nt("b"),
+                        TerminalLiteral("'t'".into()),
+                    ])),
+                ),
+            ),
+            p("a", TerminalLiteral("'a'".into())),
+            p("b", TerminalLiteral("'b'".into())),
+        ]);
+        let names = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .expect("no name collisions");
+        assert_eq!(names.values().next().unwrap().name(), "AB");
+    }
+
+    /// `[a, b]` and `[a, b, $token]` both fall back to `AB`; the one with the
+    /// literal takes the suffix, whichever is declared first.
+    #[test]
+    fn build_multi_shape_names_token_shape_suffix_does_not_depend_on_declaration_order() {
+        let rules = || {
+            vec![
+                p(
+                    "x1",
+                    Field("f1".into(), Box::new(Choice(vec![nt("a"), nt("b")]))),
+                ),
+                p(
+                    "x2",
+                    Field("f2".into(), Box::new(Choice(vec![nt("a"), nt("b")]))),
+                ),
+                p(
+                    "y1",
+                    Field(
+                        "g1".into(),
+                        Box::new(Choice(vec![
+                            nt("a"),
+                            nt("b"),
+                            TerminalLiteral("'t'".into()),
+                        ])),
+                    ),
+                ),
+                p(
+                    "y2",
+                    Field(
+                        "g2".into(),
+                        Box::new(Choice(vec![
+                            nt("a"),
+                            nt("b"),
+                            TerminalLiteral("'t'".into()),
+                        ])),
+                    ),
+                ),
+                p("a", TerminalLiteral("'a'".into())),
+                p("b", TerminalLiteral("'b'".into())),
+            ]
+        };
+        let mut reversed = rules();
+        reversed.reverse();
+
+        for rules in [rules(), reversed] {
+            let g = Grammar::from_rules(rules);
+            let names =
+                build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+                    .expect("no unresolved collisions");
+            let plain = vec!["a".to_string(), "b".to_string()];
+            let with_token = vec!["a".to_string(), "b".to_string(), "$token".to_string()];
+            assert_eq!(names[&plain].name(), "AB");
+            assert_eq!(names[&with_token].name(), "ABOrToken");
+        }
+    }
+
+    /// A clash that the suffix doesn't resolve — a real kind already named
+    /// `COrToken` — is still reported, so the resolution can't silently
+    /// produce a duplicate type.
+    #[test]
+    fn build_multi_shape_names_suffixed_name_still_clashing_is_an_error() {
+        let g = Grammar::from_rules([
+            p(
+                "a",
+                Field(
+                    "p".into(),
+                    Box::new(Choice(vec![nt("c"), TerminalLiteral("'x'".into())])),
+                ),
+            ),
+            p(
+                "b",
+                Field(
+                    "q".into(),
+                    Box::new(Choice(vec![nt("c"), TerminalLiteral("'x'".into())])),
+                ),
+            ),
+            p("c", TerminalPattern("/[a-z]/".into())),
+            p("c_or_token", TerminalLiteral("'z'".into())),
+        ]);
+        let err = build_multi_shape_names(&derive_ast_node_specs(&g), None, BuildMode::Strict)
+            .unwrap_err();
+        assert!(err.contains("COrToken"), "{err}");
     }
 
     #[test]
