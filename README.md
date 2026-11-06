@@ -159,7 +159,9 @@ no flags needed) to regenerate everything derived from it.
 `--ast-types` additionally emits `bindings/rust/ast.rs`, one owned typed
 Rust struct per grammar rule; `--merge-config <path>` collapses a group of
 related kinds into a single Rust `enum` instead of leaving each with its own
-unrelated struct. See
+unrelated struct; `--partial-trees` builds the typed tree from input with
+syntax errors, returning whatever it can plus diagnostics, instead of failing
+on the first one. See
 [Generating a processing scaffold](docs/tutorial/11-generating-a-scaffold.md)
 for the full walkthrough.
 

@@ -21,6 +21,14 @@ pub struct ScaffoldConfig {
     /// If ast types should be generated
     #[serde(default)]
     pub ast_types: bool,
+    /// If the generated ast types should build partial trees from parse trees
+    /// containing syntax errors (`--partial-trees`). Only meaningful with
+    /// `ast_types`; absent from configs written before the flag existed,
+    /// which therefore keep building strict trees. Omitted from the written
+    /// file when `false`, so a scaffold that never uses the flag produces
+    /// exactly the config it always did.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub partial_trees: bool,
     /// The merge config data
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub merge_config: Option<MergeConfig>,
@@ -37,8 +45,8 @@ pub fn render_scaffold_config(config: &ScaffoldConfig) -> String {
 }
 
 /// Rewrites `dir`'s `ts-bnf-tool.toml` in place so its recorded
-/// `name`/`ast_types`/`merge_config` match `effective`, doing nothing when
-/// they already do.
+/// `name`/`ast_types`/`partial_trees`/`merge_config` match `effective`, doing
+/// nothing when they already do.
 ///
 /// `ts-bnf-tool.toml` is written once with `preserve_existing: true` (like
 /// `Cargo.toml`/`lib.rs`) precisely so it stays hand-editable — a rerun's
@@ -62,6 +70,7 @@ pub fn ensure_scaffold_config_up_to_date(
     let existing = parse_scaffold_config(&fs::read_to_string(&path)?)?;
     if existing.name == effective.name
         && existing.ast_types == effective.ast_types
+        && existing.partial_trees == effective.partial_trees
         && existing.merge_config == effective.merge_config
     {
         return Ok(());
@@ -70,6 +79,7 @@ pub fn ensure_scaffold_config_up_to_date(
         grammar: existing.grammar,
         name: effective.name.clone(),
         ast_types: effective.ast_types,
+        partial_trees: effective.partial_trees,
         merge_config: effective.merge_config.clone(),
     };
     fs::write(&path, render_scaffold_config(&patched))?;
@@ -98,6 +108,7 @@ mod tests {
             grammar: "decls.bnf".to_string(),
             name: "decls".to_string(),
             ast_types: false,
+            partial_trees: false,
             merge_config: None,
         };
         ensure_scaffold_config_up_to_date(&dir, &effective).unwrap();
@@ -121,6 +132,7 @@ mod tests {
                 grammar: "decls.bnf".to_string(),
                 name: "decls".to_string(),
                 ast_types: false,
+                partial_trees: false,
                 merge_config: None,
             }),
         )
@@ -130,6 +142,7 @@ mod tests {
             grammar: "ignored.bnf".to_string(),
             name: "decls".to_string(),
             ast_types: true,
+            partial_trees: false,
             merge_config: None,
         };
         ensure_scaffold_config_up_to_date(&dir, &effective).unwrap();
@@ -137,5 +150,69 @@ mod tests {
         let patched = parse_scaffold_config(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(patched.grammar, "decls.bnf");
         assert!(patched.ast_types);
+    }
+
+    /// A config written before `--partial-trees` existed has no such key and
+    /// must keep meaning strict trees.
+    #[test]
+    fn parse_scaffold_config_without_partial_trees_defaults_to_false() {
+        let config =
+            parse_scaffold_config("grammar = \"decls.bnf\"\nname = \"decls\"\nast_types = true\n")
+                .unwrap();
+        assert!(!config.partial_trees);
+    }
+
+    /// `partial_trees` is only written when set, so a scaffold that never
+    /// uses the flag produces exactly the config it always did; when set it
+    /// round-trips.
+    #[test]
+    fn render_scaffold_config_writes_partial_trees_only_when_set() {
+        let mut config = ScaffoldConfig {
+            grammar: "decls.bnf".to_string(),
+            name: "decls".to_string(),
+            ast_types: true,
+            partial_trees: false,
+            merge_config: None,
+        };
+        assert!(!render_scaffold_config(&config).contains("partial_trees"));
+
+        config.partial_trees = true;
+        let rendered = render_scaffold_config(&config);
+        assert!(rendered.contains("partial_trees = true"));
+        assert!(parse_scaffold_config(&rendered).unwrap().partial_trees);
+    }
+
+    /// Switching `--partial-trees` on or off is patched into an existing
+    /// config like any other recorded setting.
+    #[test]
+    fn ensure_scaffold_config_up_to_date_patches_partial_trees() {
+        let dir = std::env::temp_dir().join("ts_bnf_ensure_scaffold_config_partial_trees_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ts-bnf-tool.toml");
+        let mut config = ScaffoldConfig {
+            grammar: "decls.bnf".to_string(),
+            name: "decls".to_string(),
+            ast_types: true,
+            partial_trees: false,
+            merge_config: None,
+        };
+        fs::write(&path, render_scaffold_config(&config)).unwrap();
+
+        config.partial_trees = true;
+        ensure_scaffold_config_up_to_date(&dir, &config).unwrap();
+        assert!(
+            parse_scaffold_config(&fs::read_to_string(&path).unwrap())
+                .unwrap()
+                .partial_trees
+        );
+
+        config.partial_trees = false;
+        ensure_scaffold_config_up_to_date(&dir, &config).unwrap();
+        assert!(
+            !parse_scaffold_config(&fs::read_to_string(&path).unwrap())
+                .unwrap()
+                .partial_trees
+        );
     }
 }
