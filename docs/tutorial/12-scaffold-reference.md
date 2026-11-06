@@ -296,8 +296,11 @@ Rust struct matching your grammar's shape.
 means no `'tree` lifetime survives construction: once built, a value
 doesn't borrow from the parse tree anymore. Each struct gets a
 `TryFrom<super::visitor::SourceNode<'tree>>` impl, and a `_pragma:
-runtime::Pragma` field recording its start line/column. A leaf kind (one
-with no visible children of its own) also gets a `_text: String` field.
+runtime::Pragma` field recording its start line/column. Both are
+1-indexed, and the column counts characters rather than bytes (so a line
+containing `ç` or `ã` reports the column an editor shows) and does not
+count a leading UTF-8 byte-order mark. A leaf kind (one with no visible
+children of its own) also gets a `_text: String` field.
 
 `Pragma` and `BuildError` (the shared `TryFrom` error type) live inside an
 inner `runtime` module, not at `ast.rs`'s own top level. And the two

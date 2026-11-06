@@ -358,3 +358,85 @@ fn field_labeled_pragma_or_text_compiles() {
         None,
     );
 }
+
+/// Reads and parses `grammar/bnf.bnf` — the dialect's own grammar, the one
+/// grammar this crate has a compiled tree-sitter parser for
+/// (`tree_sitter_bnf::LANGUAGE`), so generated AST code for it can actually
+/// be run against real trees.
+fn dogfood_grammar() -> Grammar {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../grammar/bnf.bnf");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+    let (grammar, diagnostics) =
+        parse_source(&source).unwrap_or_else(|e| panic!("grammar/bnf.bnf must parse: {e}"));
+    assert!(
+        diagnostics.is_empty(),
+        "grammar/bnf.bnf must be diagnostic-free: {diagnostics:?}"
+    );
+    grammar
+}
+
+/// Behaviour test for the generated `runtime::Pragma`: its `column` counts
+/// characters, not bytes (tree-sitter's own column is a byte offset), and a
+/// leading byte-order mark is not counted. Runs the freshly generated
+/// `Pragma::from` against trees the real BNF parser produces, so it checks
+/// the emitted code's behaviour, not its text. Each expected `(line, column)`
+/// is spelled out by hand: the byte column that tree-sitter would report is
+/// noted where it differs.
+#[test]
+fn pragma_column_counts_characters_and_ignores_a_leading_bom() {
+    let runner = r#"
+use tree_sitter::Parser;
+use visitor::SourceNode;
+
+/// `Pragma` of the smallest node covering the first `needle` in `source`,
+/// as `(line, column)`.
+fn position_of(source: &str, needle: &str) -> (usize, usize) {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_bnf::LANGUAGE.into())
+        .expect("Error loading BNF grammar");
+    let tree = parser.parse(source, None).expect("sample must parse");
+    let at = source.find(needle).expect("needle must occur in source");
+    let node = tree
+        .root_node()
+        .descendant_for_byte_range(at, at + needle.len())
+        .expect("a node must cover the needle");
+    assert_eq!(node.start_byte(), at, "needle {needle:?} must start a node");
+    let pragma = ast::runtime::Pragma::from(SourceNode { node, source });
+    (pragma.line, pragma.column)
+}
+
+fn main() {
+    // Plain ASCII: unchanged.
+    assert_eq!(position_of("a -> b ;\n", "b"), (1, 6));
+
+    // Four two-byte characters before `b`: 12 characters, 16 bytes
+    // (tree-sitter's own column would be 17).
+    assert_eq!(position_of("a -> 'çãçã' b ;\n", "b"), (1, 13));
+
+    // The multibyte text is on line 2: the line start is found per line.
+    // 9 characters, 10 bytes before `w` (byte column 11).
+    assert_eq!(position_of("x -> y ;\nz -> 'é' w ;\n", "w"), (2, 10));
+
+    // A leading BOM (three bytes, one character) is not part of line 1.
+    assert_eq!(position_of("\u{feff}a -> b ;\n", "a"), (1, 1));
+    assert_eq!(position_of("\u{feff}a -> b ;\n", "b"), (1, 6));
+
+    // ... and does not touch later lines.
+    assert_eq!(position_of("\u{feff}a -> b ;\nc -> d ;\n", "c"), (2, 1));
+
+    // BOM and multibyte characters together: 10 characters before `b`.
+    assert_eq!(position_of("\u{feff}a -> 'çã' b ;\n", "b"), (1, 11));
+}
+"#;
+
+    compile_generated_ast(
+        "ast_pragma_char_column_harness",
+        &dogfood_grammar(),
+        "bnf",
+        runner,
+        true,
+        None,
+    );
+}

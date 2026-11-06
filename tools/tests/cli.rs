@@ -2417,6 +2417,65 @@ fn scaffold_ast_types_writes_files_and_ast_example_runs() {
     assert!(stdout.contains("Ident"), "{stdout}");
 }
 
+/// A grammar whose string values can hold multibyte characters, for the
+/// `_pragma` character-column end-to-end test below.
+const SCAFFOLD_AST_TEXT_BNF: &str = indoc! {r#"
+    program -> items: decl* ;
+    decl -> target: ident '=' value: text ';' ;
+    ident -> /[a-z]+/ ;
+    text -> /"[^"]*"/ ;
+"#};
+
+/// Extracts every `(line, column)` pair from the pretty-printed `Pragma`s in
+/// a `cargo run --example ast` dump, in print order (`line:` always precedes
+/// `column:` in a `Pragma`'s `Debug` output).
+fn pragma_positions(dump: &str) -> Vec<(usize, usize)> {
+    let mut positions = Vec::new();
+    let mut line = 0;
+    for dump_line in dump.lines() {
+        let dump_line = dump_line.trim();
+        if let Some(n) = dump_line
+            .strip_prefix("line: ")
+            .and_then(|n| n.strip_suffix(','))
+        {
+            line = n.parse().unwrap();
+        } else if let Some(n) = dump_line
+            .strip_prefix("column: ")
+            .and_then(|n| n.strip_suffix(','))
+        {
+            positions.push((line, n.parse().unwrap()));
+        }
+    }
+    positions
+}
+
+#[test]
+/// `_pragma` columns of a scaffolded crate's AST count characters, not
+/// bytes: after `a = "ç"; ` (nine characters, ten bytes) the second
+/// declaration starts at character column 10, not tree-sitter's byte
+/// column 11 — and the columns of everything after it shift the same way.
+fn scaffold_ast_types_pragma_columns_count_characters() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_ast_types(
+        "ts_bnf_scaffold_ast_pragma_chars_project",
+        "astchars",
+        SCAFFOLD_AST_TEXT_BNF,
+    );
+
+    let stdout = support::run_ast_example(&out_dir, "a = \"ç\"; b = \"ã\";\n");
+    // Program, then per declaration: Decl, its `target` ident, its `value` text.
+    assert_eq!(
+        pragma_positions(&stdout),
+        [(1, 1), (1, 1), (1, 1), (1, 5), (1, 10), (1, 10), (1, 14)],
+        "{stdout}"
+    );
+}
+
 /// A grammar for `--merge-config` end-to-end testing (342.5.8): a
 /// `program` root with an `items:` field whose target set is exactly the
 /// three loop-kind choice merged below (Rule 2 — reuses `enum Loop`

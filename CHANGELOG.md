@@ -14,6 +14,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   selector like `g.labeledbox.annotation-field > rect` must become
   `g.annotation-field > g.labeledbox > rect` (#475).
 
+### Fixed
+- `scaffold --ast-types`: the `_pragma` start position of a generated AST node
+  (`runtime::Pragma`) now reports a **character** column instead of a byte
+  column — on a line containing multibyte characters such as `ç` or `ã` the
+  column used to overshoot by one per extra byte — and no longer counts a
+  leading UTF-8 byte-order mark as part of line 1, which used to shift every
+  column on the first line by 3. Regenerate `ast.rs` to pick this up.
+
 ## [0.6.0-beta.1] - 2026-09-30
 
 ### Added
