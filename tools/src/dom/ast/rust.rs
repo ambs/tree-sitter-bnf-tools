@@ -75,7 +75,9 @@ impl<'a> RustAst<'a> {
 impl RustAst<'_> {
     /// Emits `runtime`, an inner module holding the two fixed types every
     /// generated node needs: `Pragma` (a node's start position, 1-indexed —
-    /// tree-sitter itself is 0-indexed, this converts once here) and
+    /// tree-sitter itself is 0-indexed, this converts once here — with the
+    /// column counted in characters rather than bytes, and a leading BOM
+    /// not counted) and
     /// `BuildError` (the shared `TryFrom` error type, [`fmt_build_error`]'s
     /// previous top-level content) — the first real content in the
     /// generated file, right after `fmt_header`'s comment/blank-line pair.
@@ -95,6 +97,9 @@ impl RustAst<'_> {
             pub mod runtime {
                 /// A node's start position in its source file.
                 /// 1-indexed (tree-sitter uses 0-index; this converts once here).
+                /// `column` counts characters (Unicode scalar values), not bytes
+                /// as tree-sitter's own column does, and does not count a leading
+                /// byte-order mark (U+FEFF), so it matches what an editor shows.
                 #[derive(Debug)]
                 pub struct Pragma {
                     pub line: usize,
@@ -104,7 +109,20 @@ impl RustAst<'_> {
                 impl From<super::super::visitor::SourceNode<'_>> for Pragma {
                     fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
                         let point = node.node.start_position();
-                        Pragma { line: point.row + 1, column: point.column + 1 }
+                        let start = node.node.start_byte();
+                        // `point.column` is a byte offset into the line, so the
+                        // line starts that many bytes back. If `source` is not
+                        // the text the tree was parsed from, fall back to the
+                        // byte column rather than panic on a bad slice.
+                        let mut column = node
+                            .source
+                            .get(start - point.column..start)
+                            .map_or(point.column, |line_prefix| line_prefix.chars().count());
+                        // The parser counts a BOM as part of line 1; editors don't.
+                        if point.row == 0 && node.source.starts_with('\u{feff}') {
+                            column = column.saturating_sub(1);
+                        }
+                        Pragma { line: point.row + 1, column: column + 1 }
                     }
                 }
 
