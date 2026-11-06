@@ -11,9 +11,11 @@
 use indoc::{formatdoc, indoc};
 use std::fmt::{self, Formatter};
 
+use indexmap::IndexMap;
+
 use super::{
-    AstFieldSpec, AstNodeSpec, MergeConfig, indent, kind_display_name, rust_field_ident,
-    shape_kinds,
+    AstFieldSpec, AstNodeSpec, MergeConfig, ShapeName, field_element_type, indent,
+    kind_display_name, rust_field_ident, shape_kinds,
 };
 
 /// The items partial mode adds to the generated `runtime` module, flush-left
@@ -33,8 +35,9 @@ pub(super) const RUNTIME_ITEMS: &str = indoc! {r#"
         Missing { expected: String },
         /// A field absent from a node whose subtree contains a syntax error.
         MissingField { kind: &'static str, field: &'static str },
-        /// A child whose kind is outside the variant set of the multi-shape
-        /// (or merged) enum named by `expected`.
+        /// A child whose kind is outside what `expected` can hold: the variant
+        /// set of a multi-shape (or merged) enum, or the kinds a node's
+        /// unlabelled children can have.
         UnexpectedKind { expected: &'static str, found: String },
     }
 
@@ -224,6 +227,86 @@ pub(super) fn fmt_recover_helpers(f: &mut Formatter<'_>) -> fmt::Result {
                 out
             }
 
+            /// Recovers every *unlabelled* child — the ones no field label
+            /// captures — as a `T`, in source order. This is what keeps a
+            /// grammar without field labels from producing empty structs.
+            ///
+            /// `kinds` is every named kind the grammar allows there and
+            /// `expected` names `T`, for the diagnostic when something else
+            /// shows up. `tokens` says whether a string literal (a keyword or
+            /// punctuation, an anonymous node) is a child here too: if so `T`
+            /// has a `Token(String)` variant to take it, and if not,
+            /// anonymous nodes are dropped. Never captured: extras such as
+            /// comments (they can appear anywhere, so they are not part of the
+            /// grammar's structure) and `ERROR`/`MISSING` nodes (reported by
+            /// `runtime::recover`'s syntax walk instead).
+            pub fn recover_children<T: runtime::Recover<'tree>>(
+                &self,
+                kinds: &[&str],
+                tokens: bool,
+                expected: &'static str,
+                diags: &mut Vec<runtime::Diagnostic>,
+            ) -> Vec<T> {
+                let mut out = Vec::new();
+                for child in self.unlabelled_children() {
+                    if !child.node.is_named() {
+                        if tokens {
+                            if let Some(value) = T::recover(child, diags) {
+                                out.push(value);
+                            }
+                        }
+                    } else if kinds.contains(&child.node.kind()) {
+                        if let Some(value) = T::recover(child, diags) {
+                            out.push(value);
+                        }
+                    } else {
+                        let problem = runtime::DiagnosticKind::UnexpectedKind {
+                            expected,
+                            found: child.node.kind().to_string(),
+                        };
+                        diags.push(runtime::Diagnostic::at(child, problem));
+                    }
+                }
+                out
+            }
+
+            /// The source text of every unlabelled anonymous child (string
+            /// literals: keywords, punctuation, operators), in source order —
+            /// for a node whose only unlabelled children are tokens.
+            pub fn child_tokens(&self) -> Vec<String> {
+                let mut out = Vec::new();
+                for child in self.unlabelled_children() {
+                    if !child.node.is_named() {
+                        out.push(child.text().to_string());
+                    }
+                }
+                out
+            }
+
+            /// Every child with no field label, named or anonymous, in source
+            /// order, minus extras and `ERROR`/`MISSING` nodes. The walk
+            /// behind [`Self::recover_children`] and [`Self::child_tokens`].
+            fn unlabelled_children(&self) -> Vec<super::visitor::SourceNode<'tree>> {
+                let mut out = Vec::new();
+                let mut cursor = self.node.walk();
+                if !cursor.goto_first_child() {
+                    return out;
+                }
+                loop {
+                    let node = cursor.node();
+                    if !node.is_extra() && cursor.field_name().is_none() {
+                        let child = super::visitor::SourceNode { node, source: self.source };
+                        if !runtime::is_recovery(child) {
+                            out.push(child);
+                        }
+                    }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+                out
+            }
+
             /// Pushes a `MissingField` diagnostic for an absent `field_name`,
             /// but only if this node's subtree contains a syntax error (see
             /// the note on this impl block).
@@ -278,22 +361,62 @@ fn field_recover(kind: &str, field_name: &str, field: &AstFieldSpec) -> String {
     }
 }
 
+/// Builds the statement that recovers a kind's unlabelled children into its
+/// injected `_children` list, in one of two forms by what the list holds.
+/// Only string literals: `child_tokens()`, a `Vec<String>`. Anything with a
+/// named kind: one call to `recover_children` ([`fmt_recover_helpers`]),
+/// passing every named kind the grammar allows there, whether a literal can
+/// appear too (so the element type has a `Token(String)` variant), and the
+/// Rust type the list holds (the child's own struct when only one kind is
+/// possible, else the shared multi-shape or merge enum —
+/// [`field_element_type`], the same type the `_children` declaration uses).
+fn children_recover(
+    children: &AstFieldSpec,
+    multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
+    merge_config: Option<&MergeConfig>,
+) -> String {
+    let target = &children.target;
+    if target.named.is_empty() {
+        return "let _children = _node.child_tokens();\n".to_string();
+    }
+    let mut kinds = Vec::new();
+    for kind in &target.named {
+        kinds.push(format!("\"{kind}\""));
+    }
+    let kinds_text = kinds.join(", ");
+    let tokens = target.anonymous_token;
+    let expected = field_element_type(children, multi_shape_names, merge_config);
+    format!(
+        "let _children = _node.recover_children(&[{kinds_text}], {tokens}, \"{expected}\", _diags);\n"
+    )
+}
+
 /// Builds one kind's full `impl<'tree> runtime::Recover<'tree> for
 /// {struct_name}` block — the partial-mode replacement for the strict
 /// `TryFrom` impl: `Pragma` first, then one recovery statement per field
-/// ([`field_recover`]), then `_text` for a leaf kind, then the struct
-/// literal. Always returns `Some`: whether a node is recoverable at all
+/// ([`field_recover`]), then the unlabelled children ([`children_recover`]) if
+/// the kind has any, then `_text` for a leaf kind, then the struct literal. Always returns `Some`: whether a node is recoverable at all
 /// (`ERROR`/`MISSING`, or a kind outside an enum's set) is decided by the
 /// caller — a `SourceNode` helper or a multi-shape enum — before this runs.
 ///
 /// `struct_name` is resolved by the caller, same as the declaration it
 /// pairs with, so a `passthrough` rename only changes one call site.
-pub(super) fn fmt_struct_recover(struct_name: &str, kind: &str, spec: &AstNodeSpec) -> String {
+pub(super) fn fmt_struct_recover(
+    struct_name: &str,
+    kind: &str,
+    spec: &AstNodeSpec,
+    multi_shape_names: &IndexMap<Vec<String>, ShapeName>,
+    merge_config: Option<&MergeConfig>,
+) -> String {
     let mut statements = String::new();
     let mut field_list = Vec::new();
     for (field, field_spec) in &spec.fields {
         statements.push_str(&field_recover(kind, field, field_spec));
         field_list.push(rust_field_ident(field));
+    }
+    if let Some(children) = &spec.children {
+        statements.push_str(&children_recover(children, multi_shape_names, merge_config));
+        field_list.push("_children".to_string());
     }
     if spec.is_leaf {
         statements.push_str("let _text = _node.text().to_string();\n");
@@ -718,5 +841,409 @@ mod tests {
         assert!(loop_impl.contains(
             "\"for_statement\" => <ForStatement as runtime::Recover<'tree>>::recover(_node, _diags).map(Loop::ForStatement),"
         ));
+    }
+
+    // ── unlabelled children (`_children`) ───────────────────────────────
+
+    /// A grammar with no field labels at all, like the one that prompted
+    /// this feature: every struct would be `_pragma`-only without
+    /// `_children`. Covers a single child kind (`program`, `decl`), a
+    /// multi-kind choice (`stmt`, `assign`, `expr`), and leaves.
+    fn unlabelled_grammar() -> Grammar {
+        Grammar::from_rules([
+            p("program", ZeroOrMore(Box::new(nt("stmt")))),
+            p("stmt", Choice(vec![nt("decl"), nt("assign")])),
+            p(
+                "decl",
+                Sequence(vec![TerminalLiteral("'var'".into()), nt("ident")]),
+            ),
+            p(
+                "assign",
+                Sequence(vec![nt("ident"), TerminalLiteral("'='".into()), nt("expr")]),
+            ),
+            p("expr", Choice(vec![nt("ident"), nt("num")])),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+            p("num", TerminalPattern("/[0-9]+/".into())),
+        ])
+    }
+
+    /// An unlabelled child kind becomes a `_children` list: the child's own
+    /// struct when only one kind is possible, a generated `<Kind>Child` enum
+    /// when several are. A leaf has none.
+    #[test]
+    fn unlabelled_children_become_a_typed_list() {
+        let out = partial(&unlabelled_grammar(), None);
+
+        let program = item_body(&out, "pub struct Program {");
+        assert!(program.contains("pub _children: Vec<Stmt>,"));
+        let stmt = item_body(&out, "pub struct Stmt {");
+        assert!(stmt.contains("pub _children: Vec<StmtChild>,"));
+        let decl = item_body(&out, "pub struct Decl {");
+        assert!(decl.contains("pub _children: Vec<DeclChild>,"));
+        let assign = item_body(&out, "pub struct Assign {");
+        assert!(assign.contains("pub _children: Vec<AssignChild>,"));
+
+        let ident = item_body(&out, "pub struct Ident {");
+        assert!(!ident.contains("_children"));
+        assert!(ident.contains("pub _text: String,"));
+    }
+
+    /// The per-kind enum has one variant per possible child kind and its own
+    /// `Recover` impl.
+    #[test]
+    fn unlabelled_children_enum_has_a_variant_per_kind() {
+        let out = partial(&unlabelled_grammar(), None);
+        let stmt_child = item_body(&out, "pub enum StmtChild {");
+        assert!(stmt_child.contains("Decl(Decl),"));
+        assert!(stmt_child.contains("Assign(Assign),"));
+        assert!(!stmt_child.contains("Token"));
+        assert!(out.contains("impl<'tree> runtime::Recover<'tree> for StmtChild {"));
+    }
+
+    /// The generated `recover` passes the helper every allowed kind and the
+    /// element type's name, and puts `_children` in the struct literal.
+    #[test]
+    fn recover_collects_children_with_allowed_kinds_and_expected_type() {
+        let out = partial(&unlabelled_grammar(), None);
+
+        let program = item_body(&out, "impl<'tree> runtime::Recover<'tree> for Program {");
+        assert!(program.contains("_node.recover_children(&[\"stmt\"], false, \"Stmt\", _diags)"));
+        assert!(program.contains("Some(Program { _pragma, _children })"));
+
+        let stmt = item_body(&out, "impl<'tree> runtime::Recover<'tree> for Stmt {");
+        assert!(stmt.contains(
+            "_node.recover_children(&[\"decl\", \"assign\"], false, \"StmtChild\", _diags)"
+        ));
+    }
+
+    /// A kind with both a labelled field and unlabelled children keeps both:
+    /// the field first, then `_children`, in the struct and in `recover`.
+    #[test]
+    fn labelled_fields_and_unlabelled_children_coexist_in_order() {
+        let g = Grammar::from_rules([
+            p(
+                "block",
+                Sequence(vec![
+                    Field("name".into(), Box::new(nt("ident"))),
+                    ZeroOrMore(Box::new(nt("stmt"))),
+                ]),
+            ),
+            p("stmt", TerminalLiteral("'s'".into())),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        let out = partial(&g, None);
+
+        let decl = item_body(&out, "pub struct Block {");
+        let name_pos = decl.find("pub name: Option<Ident>,").unwrap();
+        let children_pos = decl.find("pub _children: Vec<Stmt>,").unwrap();
+        assert!(name_pos < children_pos);
+
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for Block {");
+        let field_pos = recover.find("let name = ").unwrap();
+        let children_pos = recover.find("let _children = ").unwrap();
+        assert!(field_pos < children_pos);
+        assert!(recover.contains("Some(Block { _pragma, name, _children })"));
+    }
+
+    /// Nothing is captured twice: a fully labelled kind and a leaf have no
+    /// `_children`.
+    #[test]
+    fn fully_labelled_and_leaf_kinds_have_no_children_list() {
+        let out = partial(&every_shape_grammar(), None);
+        assert!(!out.contains("pub _children"));
+        assert!(!out.contains("let _children"));
+    }
+
+    /// Strict mode is untouched: no `_children`, no per-kind child enum, no
+    /// helper.
+    #[test]
+    fn strict_mode_never_captures_children() {
+        let out = strict(&unlabelled_grammar());
+        for needle in ["_children", "StmtChild", "recover_children", "child_tokens"] {
+            assert!(
+                !out.contains(needle),
+                "strict output must not mention `{needle}`"
+            );
+        }
+    }
+
+    /// The runtime walk only yields what is grammar structure: children with
+    /// no field label, minus extras (comments can appear anywhere) and
+    /// recovery nodes — and `recover_children` reports a named kind the
+    /// grammar doesn't allow instead of mis-typing it.
+    #[test]
+    fn children_runtime_helpers_skip_what_is_not_structure() {
+        let out = partial(&unlabelled_grammar(), None);
+        let walk_start = out.find("fn unlabelled_children(").unwrap();
+        let walk = item_body(
+            &out[walk_start..],
+            ") -> Vec<super::visitor::SourceNode<'tree>> {",
+        );
+        assert!(walk.contains("!node.is_extra()"));
+        assert!(walk.contains("cursor.field_name().is_none()"));
+        assert!(walk.contains("!runtime::is_recovery(child)"));
+
+        let start = out.find("pub fn recover_children<").unwrap();
+        let recover = item_body(&out[start..], ") -> Vec<T> {");
+        assert!(recover.contains("self.unlabelled_children()"));
+        assert!(recover.contains("runtime::DiagnosticKind::UnexpectedKind"));
+    }
+
+    /// The generated crate is pinned to edition 2021, where `if let … && …`
+    /// chains don't exist; the repo itself is edition 2024, so a compile-check
+    /// built inside it would not catch one slipping into generated text.
+    #[test]
+    fn generated_partial_code_uses_no_let_chains() {
+        for grammar in [every_shape_grammar(), unlabelled_grammar()] {
+            let out = partial(&grammar, None);
+            assert!(!out.contains("&& let "), "let-chain in generated code");
+        }
+    }
+
+    /// Two kinds whose unlabelled children are the same set share one enum,
+    /// named from the kinds themselves (as two same-shaped fields do) — they
+    /// have no common label to name it after.
+    #[test]
+    fn kinds_with_the_same_child_set_share_one_enum() {
+        let g = Grammar::from_rules([
+            p("a", Choice(vec![nt("x"), nt("y")])),
+            p("b", Choice(vec![nt("x"), nt("y")])),
+            p("x", TerminalLiteral("'x'".into())),
+            p("y", TerminalLiteral("'y'".into())),
+        ]);
+        let out = partial(&g, None);
+        assert_eq!(out.matches("pub enum XY {").count(), 1);
+        assert!(item_body(&out, "pub struct A {").contains("pub _children: Vec<XY>,"));
+        assert!(item_body(&out, "pub struct B {").contains("pub _children: Vec<XY>,"));
+    }
+
+    /// A `passthrough` rename of the owning kind is followed: the struct and
+    /// its child enum are both named for the display name.
+    #[test]
+    fn child_enum_follows_a_passthrough_rename() {
+        let g = Grammar::from_rules([
+            p("stmt", Choice(vec![nt("decl"), nt("assign")])),
+            p("decl", TerminalLiteral("'d'".into())),
+            p("assign", TerminalLiteral("'a'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![],
+            passthrough: vec![PassthroughEntry {
+                kind: "stmt".to_string(),
+                target: "Statement".to_string(),
+            }],
+            ignore: vec![],
+        };
+        let out = partial(&g, Some(&config));
+        assert!(out.contains("pub enum StatementChild {"));
+        assert!(
+            item_body(&out, "pub struct Statement {")
+                .contains("pub _children: Vec<StatementChild>,")
+        );
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for Statement {");
+        assert!(recover.contains("\"StatementChild\""));
+    }
+
+    /// A child set that is exactly a `merge` entry's `from` reuses that
+    /// entry's enum instead of generating a second one for the same shape.
+    #[test]
+    fn children_reuse_a_merge_entrys_enum_when_the_shape_matches() {
+        let g = Grammar::from_rules([
+            p(
+                "program",
+                ZeroOrMore(Box::new(Choice(vec![
+                    nt("for_statement"),
+                    nt("while_statement"),
+                ]))),
+            ),
+            p("for_statement", TerminalLiteral("'for'".into())),
+            p("while_statement", TerminalLiteral("'while'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = partial(&g, Some(&config));
+
+        assert!(item_body(&out, "pub struct Program {").contains("pub _children: Vec<Loop>,"));
+        assert!(!out.contains("ProgramChild"));
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for Program {");
+        assert!(recover.contains(
+            "_node.recover_children(&[\"for_statement\", \"while_statement\"], false, \"Loop\", _diags)"
+        ));
+    }
+
+    /// A `pub` struct whose `_children` hold a merged-away (private) kind
+    /// directly needs `#[allow(private_interfaces)]`, exactly as a labelled
+    /// field of that kind does.
+    #[test]
+    fn children_of_a_merged_away_kind_allow_private_interfaces() {
+        let g = Grammar::from_rules([
+            p("program", ZeroOrMore(Box::new(nt("for_statement")))),
+            p("for_statement", TerminalLiteral("'for'".into())),
+            p("while_statement", TerminalLiteral("'while'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = partial(&g, Some(&config));
+
+        assert!(
+            item_body(&out, "pub struct Program {").contains("pub _children: Vec<ForStatement>,")
+        );
+        let before = &out[..out.find("pub struct Program {").unwrap()];
+        assert!(
+            before
+                .trim_end()
+                .ends_with("#[allow(private_interfaces)]\n#[derive(Debug)]"),
+            "Program must allow private_interfaces:\n{before}"
+        );
+    }
+
+    /// The generated child enum is a top-level type name like any other, so it
+    /// takes part in the collision check: a kind literally named
+    /// `program_child` clashes with `program`'s child enum in partial mode —
+    /// and only there, since strict mode generates no such enum.
+    #[test]
+    fn child_enum_name_collision_is_rejected_in_partial_mode_only() {
+        let g = Grammar::from_rules([
+            p("program", Choice(vec![nt("a"), nt("b")])),
+            p("a", TerminalLiteral("'a'".into())),
+            p("b", TerminalLiteral("'b'".into())),
+            p("program_child", TerminalLiteral("'c'".into())),
+        ]);
+        match RustAst::new(&g, "g", true, None, BuildMode::Partial) {
+            Err(e) => assert!(e.contains("ProgramChild"), "{e}"),
+            Ok(_) => panic!("partial mode must reject the colliding name"),
+        }
+        assert!(RustAst::new(&g, "g", true, None, BuildMode::Strict).is_ok());
+    }
+
+    // ── literal children (`Token`) ──────────────────────────────────────
+
+    /// A literal beside a named kind joins that kind's child enum as the
+    /// shared `Token(String)` variant, and the recover call says so.
+    #[test]
+    fn literal_beside_a_named_kind_becomes_a_token_variant() {
+        let out = partial(&unlabelled_grammar(), None);
+
+        let decl_child = item_body(&out, "pub enum DeclChild {");
+        assert!(decl_child.contains("Ident(Ident),"));
+        assert!(decl_child.contains("Token(String),"));
+
+        let assign_child = item_body(&out, "pub enum AssignChild {");
+        assert!(assign_child.contains("Token(String),"));
+
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for Decl {");
+        assert!(
+            recover.contains("_node.recover_children(&[\"ident\"], true, \"DeclChild\", _diags)")
+        );
+        // The enum's own `recover` takes an anonymous node as its `Token`.
+        let enum_recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for DeclChild {");
+        assert!(enum_recover.contains("if !_node.node.is_named() {"));
+    }
+
+    /// A kind whose only unlabelled children are literals (a label captures
+    /// everything named) holds plain strings, collected by `child_tokens`.
+    #[test]
+    fn token_only_children_are_a_vec_of_strings() {
+        let g = Grammar::from_rules([
+            p(
+                "call",
+                Sequence(vec![
+                    Field("name".into(), Box::new(nt("ident"))),
+                    TerminalLiteral("'('".into()),
+                    TerminalLiteral("')'".into()),
+                ]),
+            ),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        let out = partial(&g, None);
+
+        assert!(item_body(&out, "pub struct Call {").contains("pub _children: Vec<String>,"));
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for Call {");
+        assert!(recover.contains("let _children = _node.child_tokens();"));
+        assert!(recover.contains("Some(Call { _pragma, name, _children })"));
+        assert!(!out.contains("CallChild"), "no enum when only tokens");
+    }
+
+    /// A leaf's `_text` is its whole source, literals included, so a rule
+    /// that is only literals has no `_children`.
+    #[test]
+    fn literal_only_leaf_has_no_children() {
+        let g = Grammar::from_rules([p(
+            "op",
+            Choice(vec![
+                TerminalLiteral("'+'".into()),
+                TerminalLiteral("'-'".into()),
+            ]),
+        )]);
+        let out = partial(&g, None);
+        let op = item_body(&out, "pub struct Op {");
+        assert!(!op.contains("_children"));
+        assert!(op.contains("pub _text: String,"));
+    }
+
+    /// An inline pattern never appears as a node, so a kind with only a
+    /// pattern beside a named kind gets no `Token` variant for it.
+    #[test]
+    fn inline_pattern_adds_no_token_variant() {
+        let g = Grammar::from_rules([
+            p(
+                "pair",
+                Sequence(vec![nt("key"), TerminalPattern("/[0-9]+/".into())]),
+            ),
+            p("key", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        let out = partial(&g, None);
+        assert!(item_body(&out, "pub struct Pair {").contains("pub _children: Vec<Key>,"));
+        // No enum variant line: the helper docs mention `Token(String)` in prose.
+        assert!(!out.contains("    Token(String),\n"));
+    }
+
+    /// A merge entry's enum has only the entry's kinds, so a child set that
+    /// is those kinds *plus* a literal can't reuse it: it gets its own enum
+    /// with a `Token` variant instead.
+    #[test]
+    fn children_with_a_literal_do_not_reuse_a_merge_entrys_enum() {
+        let g = Grammar::from_rules([
+            p(
+                "program",
+                Sequence(vec![
+                    TerminalLiteral("'{'".into()),
+                    ZeroOrMore(Box::new(Choice(vec![
+                        nt("for_statement"),
+                        nt("while_statement"),
+                    ]))),
+                ]),
+            ),
+            p("for_statement", TerminalLiteral("'for'".into())),
+            p("while_statement", TerminalLiteral("'while'".into())),
+        ]);
+        let config = MergeConfig {
+            merge: vec![MergeEntry {
+                target: "Loop".to_string(),
+                from: vec!["for_statement".to_string(), "while_statement".to_string()],
+            }],
+            passthrough: vec![],
+            ignore: vec![],
+        };
+        let out = partial(&g, Some(&config));
+
+        assert!(
+            item_body(&out, "pub struct Program {").contains("pub _children: Vec<ProgramChild>,")
+        );
+        let program_child = item_body(&out, "pub enum ProgramChild {");
+        assert!(program_child.contains("ForStatement(ForStatement),"));
+        assert!(program_child.contains("Token(String),"));
     }
 }

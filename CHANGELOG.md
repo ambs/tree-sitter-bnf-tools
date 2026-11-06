@@ -14,8 +14,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Option<T>`) plus a position-ordered list of `Diagnostic`s. The flag changes
   the shape of the generated `ast.rs`, so it is chosen once at scaffold time
   and recorded in `ts-bnf-tool.toml`; without it the output is unchanged.
-  `examples/ast.rs` prints the recovered tree and each diagnostic, exiting 1
-  if there were any (#487).
+  In this mode each struct also gets `_children`, a typed list of its
+  *unlabelled* children — the kinds it refers to and the string literals it
+  spells out (`Token(String)`), but not extras or error nodes — so a grammar
+  without field labels still produces a usable tree instead of `_pragma`-only
+  structs. `examples/ast.rs` prints the recovered tree and each
+  diagnostic, exiting 1 if there were any (#487).
 
 ### Changed
 - **Breaking for library users of `ts_bnf_tool`:** `RustAst::new` takes a new

@@ -614,3 +614,79 @@ fn partial_ast_naming_edge_cases_compile() {
     );
     assert_no_partial_mode_warnings(&output);
 }
+
+/// Partial-mode compile-check for a grammar with no field labels at all, the
+/// case that motivated unlabelled-children capture: every struct would be
+/// `_pragma`-only without `_children`. Covers a single child kind, per-kind
+/// child enums, string literals beside named kinds (`Token(String)`
+/// variants), a kind whose only unlabelled children are literals
+/// (`Vec<String>`), and a literal-only leaf (no `_children` at all), all
+/// type-checked against the real `tree_sitter` crate, with no warnings from
+/// the generated code.
+#[test]
+fn partial_unlabelled_children_compile() {
+    let grammar = parse_fixture(
+        "partial unlabelled children",
+        "program -> stmt* ;\n\
+         stmt -> decl | assign | call ;\n\
+         decl -> 'var' ident ';' ;\n\
+         assign -> ident '=' expr op expr ';' ;\n\
+         call -> name: ident '(' ')' ';' ;\n\
+         expr -> ident | num ;\n\
+         op -> '+' | '-' ;\n\
+         ident -> /[a-z]+/ ;\n\
+         num -> /[0-9]+/ ;\n",
+    );
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_unlabelled_children_harness",
+        &grammar,
+        "partial_unlabelled_sample",
+        "fn main() {}\n",
+        false,
+        None,
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
+}
+
+/// Partial-mode compile-check for unlabelled children meeting
+/// `--merge-config`: a three-kind child enum that includes merged-away
+/// (private) structs, a list holding a single merged-away struct directly
+/// (needs `#[allow(private_interfaces)]` on its `pub` owner), a child set
+/// that is exactly one merge entry's `from`, so it reuses that entry's enum,
+/// and a literal beside a merged-away kind (an enum with a `Token` variant
+/// wrapping a private struct).
+#[test]
+fn partial_unlabelled_children_with_merge_config_compile() {
+    let grammar = parse_fixture(
+        "partial unlabelled children with merge config",
+        "root -> program block loops braces ;\n\
+         program -> (for_statement | while_statement | helper)* ;\n\
+         block -> for_statement* ;\n\
+         loops -> (for_statement | while_statement)* ;\n\
+         braces -> '{' for_statement* '}' ;\n\
+         for_statement -> 'for' ;\n\
+         while_statement -> 'while' ;\n\
+         helper -> 'h' ;\n",
+    );
+    let config: MergeConfig = ts_bnf_tool::dom::parse_merge_config(
+        r#"
+            [[merge]]
+            target = "Loop"
+            from = ["for_statement", "while_statement"]
+        "#,
+    )
+    .expect("inline merge-config TOML must parse");
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_unlabelled_children_merge_harness",
+        &grammar,
+        "partial_unlabelled_merge_sample",
+        "fn main() {}\n",
+        false,
+        Some(&config),
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
+}

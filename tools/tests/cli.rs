@@ -2667,6 +2667,116 @@ fn scaffold_partial_trees_with_merge_config_reports_missing_field() {
     );
 }
 
+/// A grammar with no field labels at all, the shape that left every
+/// `--ast-types` struct holding only `_pragma`, plus a `comment` extra that
+/// can appear between any two tokens.
+const SCAFFOLD_UNLABELLED_BNF: &str = indoc! {r#"
+    %extras /\s/, comment
+
+    program -> stmt* ;
+    stmt -> decl | assign | call ;
+    decl -> 'var' ident ';' ;
+    assign -> ident '=' expr ';' ;
+    call -> name: ident '(' ')' ';' ;
+    expr -> ident | num ;
+    ident -> /[a-z][a-zA-Z0-9_]*/ ;
+    num -> /[0-9]+/ ;
+    comment -> /#[^\n]*/ ;
+"#};
+
+#[test]
+/// `--partial-trees` on a grammar with no field labels (#487 follow-up): the
+/// partial tree still holds the real structure, because each struct captures
+/// its unlabelled children as a typed `_children` list — named kinds *and*
+/// string literals (`var`, `=`, `;`), which an operator or keyword would
+/// otherwise be lost to. Against a real parser: a clean file with a comment
+/// (the extra is skipped without a diagnostic), a `MISSING` token (reported,
+/// but not captured as if it were present), and an `ERROR` region between two
+/// good statements.
+fn scaffold_partial_trees_captures_unlabelled_children_and_skips_extras() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_partial_trees_unlabelled_e2e_project",
+        "unlabelled",
+        SCAFFOLD_UNLABELLED_BNF,
+        None,
+    );
+    // The example prints the tree and then one line per diagnostic, and a
+    // `Missing` diagnostic quotes the token it expected — so count literals in
+    // the tree alone, not in the whole output.
+    let tree_of = |stdout: &str, diagnostics: &[String]| -> String {
+        let mut tree = String::new();
+        for line in stdout.lines() {
+            if !diagnostics.iter().any(|d| d == line) {
+                tree.push_str(line);
+                tree.push('\n');
+            }
+        }
+        tree
+    };
+
+    // Clean: the whole tree is there, down to the number's text and every
+    // literal (a kind with a mix holds `Token(..)`; `call`, whose only
+    // unlabelled children are literals, holds plain strings); the comment is
+    // an extra, so it is neither captured nor reported.
+    let (code, stdout, diagnostics) =
+        partial_example_run(&out_dir, "var x;\n# a comment\ny = x;\nz = 42;\nf();\n");
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout.matches("Stmt {").count(), 4, "{stdout}");
+    for expected in [
+        "Decl(",
+        "Assign(",
+        "Call(",
+        "Num(",
+        "_text: \"42\"",
+        "Token(",
+        "\"var\"",
+        "\"=\"",
+        "\"(\"",
+        "\")\"",
+    ] {
+        assert!(stdout.contains(expected), "missing `{expected}`:\n{stdout}");
+    }
+    assert_eq!(
+        tree_of(&stdout, &diagnostics).matches("\";\"").count(),
+        4,
+        "one `;` per statement:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Comment"),
+        "extras are not captured:\n{stdout}"
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    // A missing `;` is reported but not captured: three statements, and only
+    // the two `;` that are really in the file.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "var x;\ny = x\nz = 42;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Stmt {").count(), 3, "{stdout}");
+    assert_eq!(
+        tree_of(&stdout, &diagnostics).matches("\";\"").count(),
+        2,
+        "only the `;` really in the file:\n{stdout}"
+    );
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].ends_with(":2:6: Missing { expected: \";\" }"),
+        "{diagnostics:?}"
+    );
+
+    // Garbage between two statements: the good ones on both sides survive.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "var x;\n@@@\nz = 42;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Stmt {").count(), 2, "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].ends_with(":2:1: Error"), "{diagnostics:?}");
+}
+
 #[test]
 /// `--partial-trees` without `--ast-types` is rejected by the argument parser
 /// before anything is written — it only changes what `--ast-types` generates,
