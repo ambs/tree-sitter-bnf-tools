@@ -100,10 +100,13 @@ impl<'a> RustAst<'a> {
     }
 }
 
-/// The `Pragma` type emitted into the generated `runtime` module — the same
-/// text in every [`BuildMode`], so both modes' `Pragma` can never drift apart.
+/// The declaration of the `Pragma` type emitted into the generated `runtime`
+/// module in [`BuildMode::Strict`] — the same text in every mode that
+/// declares it, so it can never drift from itself. [`BuildMode::Partial`]
+/// does not declare it: it re-exports `ts_bnf_runtime`'s, which has to
+/// declare the same fields (a test in `tools/tests` checks that they agree).
 /// Flush-left: [`RustAst::fmt_runtime_module`] indents it into the module.
-const RUNTIME_PRAGMA: &str = indoc! {r#"
+const RUNTIME_PRAGMA_DECL: &str = indoc! {r#"
     /// A node's start position in its source file.
     /// 1-indexed (tree-sitter uses 0-index; this converts once here).
     /// `column` counts characters (Unicode scalar values), not bytes
@@ -114,7 +117,14 @@ const RUNTIME_PRAGMA: &str = indoc! {r#"
         pub line: usize,
         pub column: usize,
     }
+"#};
 
+/// The `impl From<SourceNode> for Pragma` that turns a tree-sitter node into a
+/// [`RUNTIME_PRAGMA_DECL`] position. Emitted in **both** modes: in partial mode
+/// `Pragma` is `ts_bnf_runtime`'s, a foreign type, but the impl is still
+/// allowed there because `SourceNode` — the trait's type parameter — is local
+/// to the generated crate. Flush-left, like [`RUNTIME_PRAGMA_DECL`].
+const RUNTIME_PRAGMA_FROM: &str = indoc! {r#"
     impl From<super::super::visitor::SourceNode<'_>> for Pragma {
         fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
             let point = node.node.start_position();
@@ -136,13 +146,14 @@ const RUNTIME_PRAGMA: &str = indoc! {r#"
     }
 "#};
 
-/// The `Span` type emitted into the generated `runtime` module, in every
-/// [`BuildMode`]: a node's whole extent, which replaces the start-only
-/// `_pragma` field every generated struct used to carry. Its `start` is that
-/// same [`RUNTIME_PRAGMA`] position (so the character-column and BOM rules
-/// apply), and its `end` follows the same rules, just past the node's last
-/// character. Flush-left, like [`RUNTIME_PRAGMA`], which it builds on.
-const RUNTIME_SPAN: &str = indoc! {r#"
+/// The declaration of the `Span` type emitted into the generated `runtime`
+/// module in [`BuildMode::Strict`]: a node's whole extent, which replaces the
+/// start-only `_pragma` field every generated struct used to carry. Its
+/// `start` is a [`RUNTIME_PRAGMA_DECL`] position (so the character-column and
+/// BOM rules apply), and its `end` follows the same rules, just past the
+/// node's last character. [`BuildMode::Partial`] re-exports
+/// `ts_bnf_runtime`'s instead. Flush-left, like [`RUNTIME_PRAGMA_DECL`].
+const RUNTIME_SPAN_DECL: &str = indoc! {r#"
     /// A node's extent in the source text it was parsed from.
     #[derive(Debug)]
     pub struct Span {
@@ -156,7 +167,12 @@ const RUNTIME_SPAN: &str = indoc! {r#"
         /// counted the same way as `start`.
         pub end: Pragma,
     }
+"#};
 
+/// The `impl From<SourceNode> for Span`, emitted in both modes (see
+/// [`RUNTIME_PRAGMA_FROM`] for why it is allowed on a foreign type).
+/// Builds on [`RUNTIME_PRAGMA_FROM`]. Flush-left, like it.
+const RUNTIME_SPAN_FROM: &str = indoc! {r#"
     impl From<super::super::visitor::SourceNode<'_>> for Span {
         fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
             let point = node.node.end_position();
@@ -182,13 +198,15 @@ const RUNTIME_SPAN: &str = indoc! {r#"
     }
 "#};
 
-/// The `Token` type emitted into the generated `runtime` module, in every
-/// [`BuildMode`]: a literal in the source (a keyword, punctuation, an
-/// operator) — an anonymous tree-sitter node — together with its position.
-/// It is what a bare-token field, a list of them, and the `Token` variant of a
-/// "kind or literal" enum hold, in place of a `String` that would have lost
-/// where the literal was. Builds on [`RUNTIME_SPAN`]. Flush-left, like it.
-const RUNTIME_TOKEN: &str = indoc! {r#"
+/// The declaration of the `Token` type emitted into the generated `runtime`
+/// module in [`BuildMode::Strict`]: a literal in the source (a keyword,
+/// punctuation, an operator) — an anonymous tree-sitter node — together with
+/// its position. It is what a bare-token field, a list of them, and the
+/// `Token` variant of a "kind or literal" enum hold, in place of a `String`
+/// that would have lost where the literal was. Builds on
+/// [`RUNTIME_SPAN_DECL`]. [`BuildMode::Partial`] re-exports
+/// `ts_bnf_runtime`'s instead. Flush-left, like it.
+const RUNTIME_TOKEN_DECL: &str = indoc! {r#"
     /// A literal in the source — a keyword, punctuation or an operator: an
     /// anonymous tree-sitter node. It keeps its position, so it can be located,
     /// and (with `--partial-trees`) ordered among the named nodes around it.
@@ -203,7 +221,11 @@ const RUNTIME_TOKEN: &str = indoc! {r#"
         /// Where the token is in the source.
         pub span: Span,
     }
+"#};
 
+/// The `impl From<SourceNode> for Token`, emitted in both modes (see
+/// [`RUNTIME_PRAGMA_FROM`]). Builds on [`RUNTIME_SPAN_FROM`]. Flush-left, like it.
+const RUNTIME_TOKEN_FROM: &str = indoc! {r#"
     impl From<super::super::visitor::SourceNode<'_>> for Token {
         fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
             Token {
@@ -256,24 +278,55 @@ impl RustAst<'_> {
     /// reference is instead spelled out as `super::visitor::SourceNode`
     /// (`super::super::` from within this nested `runtime` module).
     ///
-    /// The `Pragma`, `Span` and `Token` parts are shared by both
-    /// [`BuildMode`]s ([`RUNTIME_PRAGMA`], [`RUNTIME_SPAN`],
-    /// [`RUNTIME_TOKEN`]); the rest differs — strict mode's
-    /// aborting `BuildError` ([`RUNTIME_BUILD_ERROR`]) versus partial mode's
-    /// diagnostics and `Recover` trait ([`partial::RUNTIME_ITEMS`]).
+    /// What the module holds depends on the [`BuildMode`] — see
+    /// [`RustAst::runtime_items`].
     fn fmt_runtime_module(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mode_items = match self.mode {
-            BuildMode::Strict => RUNTIME_BUILD_ERROR,
-            BuildMode::Partial => partial::RUNTIME_ITEMS,
+        writeln!(
+            f,
+            "pub mod runtime {{\n{}\n}}\n",
+            indent(&self.runtime_items(), 4)
+        )
+    }
+
+    /// The items inside the generated `runtime` module, flush-left.
+    ///
+    /// - [`BuildMode::Strict`] declares everything itself — `Pragma`, `Span`,
+    ///   `Token` (each with its `From<SourceNode>`) and `BuildError` — so a
+    ///   strict crate depends on nothing but tree-sitter.
+    /// - [`BuildMode::Partial`] declares none of the plain-data types: they
+    ///   live in the `ts_bnf_runtime` crate, shared by every generated crate so
+    ///   that two languages' typed trees have the *same* `Reflect`, `Span` and
+    ///   `Diagnostic`, and the module re-exports them under their old paths.
+    ///   What stays is what touches tree-sitter: the `From<SourceNode>`
+    ///   conversions into those types and the recovery machinery
+    ///   ([`partial::RUNTIME_ITEMS`]).
+    fn runtime_items(&self) -> String {
+        let parts: Vec<&str> = match self.mode {
+            BuildMode::Strict => vec![
+                RUNTIME_PRAGMA_DECL,
+                RUNTIME_PRAGMA_FROM,
+                RUNTIME_SPAN_DECL,
+                RUNTIME_SPAN_FROM,
+                RUNTIME_TOKEN_DECL,
+                RUNTIME_TOKEN_FROM,
+                RUNTIME_BUILD_ERROR,
+            ],
+            BuildMode::Partial => vec![
+                partial::RUNTIME_REEXPORTS,
+                RUNTIME_PRAGMA_FROM,
+                RUNTIME_SPAN_FROM,
+                RUNTIME_TOKEN_FROM,
+                partial::RUNTIME_ITEMS,
+            ],
         };
-        let items = format!(
-            "{}\n\n{}\n\n{}\n\n{}",
-            RUNTIME_PRAGMA.trim_end(),
-            RUNTIME_SPAN.trim_end(),
-            RUNTIME_TOKEN.trim_end(),
-            mode_items.trim_end()
-        );
-        writeln!(f, "pub mod runtime {{\n{}\n}}\n", indent(&items, 4))
+        let mut items = String::new();
+        for part in parts {
+            if !items.is_empty() {
+                items.push_str("\n\n");
+            }
+            items.push_str(part.trim_end());
+        }
+        items
     }
 
     /// Emits the generated-file header comment, unless suppressed by
@@ -1454,6 +1507,85 @@ mod tests {
     use crate::dom::GrammarNode::{Choice, Field, TerminalLiteral, TerminalPattern, ZeroOrMore};
     use crate::dom::ast::merge::{MergeConfig, MergeEntry, PassthroughEntry};
     use crate::dom::test_utils::{nt, p};
+
+    /// The declaration of `pub struct {name}` in `source` — its attributes and
+    /// its fields, up to the closing brace — with the doc comments and blank
+    /// lines taken out: what a type *is*, apart from what it says about itself.
+    fn declaration(source: &str, name: &str) -> Vec<String> {
+        let lines: Vec<&str> = source.lines().collect();
+        let header = format!("pub struct {name} {{");
+        let at = lines
+            .iter()
+            .position(|line| line.trim_end() == header)
+            .unwrap_or_else(|| panic!("`{header}` not found"));
+        let mut start = at;
+        while start > 0 {
+            let above = lines[start - 1].trim();
+            if above.starts_with("#[") || above.starts_with("///") {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        let end = lines[at..]
+            .iter()
+            .position(|line| line.trim_end() == "}")
+            .map(|offset| at + offset)
+            .unwrap_or_else(|| panic!("`{header}` is never closed"));
+        let mut out = Vec::new();
+        for line in &lines[start..=end] {
+            let line = line.trim_end();
+            if !line.trim_start().starts_with("///") && !line.trim().is_empty() {
+                out.push(line.to_string());
+            }
+        }
+        out
+    }
+
+    /// Strict mode still declares its own `Pragma`, `Span` and `Token`, and
+    /// partial mode gets the same three from the `ts-bnf-runtime` crate. Two
+    /// copies of one definition are a way for the two modes to drift apart
+    /// unnoticed, so this holds them to the same fields, types and derives —
+    /// only the doc comments may differ (the crate documents every field, and
+    /// strict mode's output is held byte-for-byte).
+    #[test]
+    fn strict_declarations_agree_with_the_runtime_crate() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../runtime/src/span.rs");
+        let crate_source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+
+        for (name, strict_declaration) in [
+            ("Pragma", RUNTIME_PRAGMA_DECL),
+            ("Span", RUNTIME_SPAN_DECL),
+            ("Token", RUNTIME_TOKEN_DECL),
+        ] {
+            assert_eq!(
+                declaration(strict_declaration, name),
+                declaration(&crate_source, name),
+                "`{name}` differs between strict mode's output and ts-bnf-runtime"
+            );
+        }
+    }
+
+    /// The comparison above is not vacuous: it reads what it is meant to (a
+    /// derive, every field) and does tell two different declarations apart.
+    #[test]
+    fn declaration_reads_attributes_and_fields_and_ignores_docs() {
+        let a = "/// doc\n#[derive(Debug)]\npub struct P {\n    /// the line\n    pub line: usize,\n}\n";
+        let b = "#[derive(Debug)]\npub struct P {\n    pub line: usize,\n}\n";
+        let c = "#[derive(Debug)]\npub struct P {\n    pub line: u32,\n}\n";
+        assert_eq!(
+            declaration(a, "P"),
+            [
+                "#[derive(Debug)]",
+                "pub struct P {",
+                "    pub line: usize,",
+                "}"
+            ]
+        );
+        assert_eq!(declaration(a, "P"), declaration(b, "P"));
+        assert_ne!(declaration(a, "P"), declaration(c, "P"));
+    }
 
     /// Builds a `RustAst` with `no_header: true`, for tests that don't care
     /// about the header comment.

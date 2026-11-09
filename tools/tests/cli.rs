@@ -3018,6 +3018,18 @@ fn scaffold_partial_trees_added_on_rerun_updates_config_and_warns_about_stale_ex
         stderr.contains("examples/ast.rs was written for the strict AST API"),
         "{stderr}"
     );
+    // The crate was scaffolded as strict, so its `Cargo.toml` — the user's file
+    // from then on — has no `ts-bnf-runtime`. It is left alone, and the warning
+    // says which line to add.
+    let manifest = std::fs::read_to_string(out_dir.join("Cargo.toml")).unwrap();
+    assert!(!manifest.contains("ts-bnf-runtime"), "{manifest}");
+    assert!(
+        stderr.contains(&format!(
+            "ts-bnf-runtime = \"{}\"",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{stderr}"
+    );
 
     // No flags at all, directory mode: the recorded setting is enough, and the
     // example is no longer news.
@@ -3028,6 +3040,271 @@ fn scaffold_partial_trees_added_on_rerun_updates_config_and_warns_about_stale_ex
     let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
     assert!(ast_rs.contains("Recover") && !ast_rs.contains("TryFrom"));
     assert!(!stderr.contains("was written for"), "{stderr}");
+}
+
+#[test]
+/// `Cargo.toml` is written once and is the user's afterwards, so what a
+/// `--partial-trees` scaffold does about its `ts-bnf-runtime` dependency
+/// depends on whether the file is new:
+///
+/// - a fresh partial scaffold writes the line, and says nothing;
+/// - a fresh strict scaffold has no such dependency, and says nothing;
+/// - an existing crate without the line (here, one that was strict and is
+///   switched to partial) is left untouched and warned, naming the exact line;
+/// - and that line is enough: with it added, the crate builds.
+fn scaffold_partial_trees_runtime_dependency_is_written_once_and_warned_about_otherwise() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let line = format!("ts-bnf-runtime = \"{}\"", env!("CARGO_PKG_VERSION"));
+    let scaffold = |dir_name: &str, name: &str, flags: &[&str]| {
+        let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+        std::fs::write(&bnf_path, SCAFFOLD_AST_BNF).unwrap();
+        let out_dir = std::env::temp_dir().join(dir_name);
+        let output = tool()
+            .args(["scaffold", "--name", name])
+            .args(flags)
+            .arg("--output-dir")
+            .arg(&out_dir)
+            .arg(&bnf_path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        (
+            out_dir,
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // Fresh partial: the line is there, and there is nothing to warn about.
+    let dir_name = "ts_bnf_scaffold_runtime_dep_fresh_partial";
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(dir_name));
+    let (partial_dir, stderr) = scaffold(
+        dir_name,
+        "fresh-partial",
+        &["--ast-types", "--partial-trees"],
+    );
+    let manifest = std::fs::read_to_string(partial_dir.join("Cargo.toml")).unwrap();
+    assert!(manifest.contains(&line), "{manifest}");
+    assert!(!stderr.contains("ts-bnf-runtime"), "{stderr}");
+
+    // Fresh strict: no dependency, no warning.
+    let dir_name = "ts_bnf_scaffold_runtime_dep_fresh_strict";
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(dir_name));
+    let (strict_dir, stderr) = scaffold(dir_name, "fresh-strict", &["--ast-types"]);
+    let manifest = std::fs::read_to_string(strict_dir.join("Cargo.toml")).unwrap();
+    assert!(!manifest.contains("ts-bnf-runtime"), "{manifest}");
+    assert!(!stderr.contains("ts-bnf-runtime"), "{stderr}");
+
+    // Strict, then partial on the same crate: the manifest is the user's, so it
+    // is not edited, and the warning says what to add.
+    let before = std::fs::read_to_string(strict_dir.join("Cargo.toml")).unwrap();
+    let bnf_path = std::env::temp_dir().join("ts_bnf_scaffold_runtime_dep_fresh_strict.bnf");
+    let rerun = tool()
+        .args([
+            "scaffold",
+            "--name",
+            "fresh-strict",
+            "--ast-types",
+            "--partial-trees",
+            "--output-dir",
+        ])
+        .arg(&strict_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&rerun.stderr);
+    assert!(rerun.status.success(), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(strict_dir.join("Cargo.toml")).unwrap(),
+        before,
+        "Cargo.toml is the user's file"
+    );
+    assert!(stderr.contains("does not depend on it"), "{stderr}");
+    assert!(stderr.contains(&line), "{stderr}");
+
+    // Following the warning is enough: add the line it names and the crate
+    // builds, with the shared runtime resolving.
+    let fixed = before.replace(
+        "tree-sitter = \"0.26.8\"",
+        &format!("tree-sitter = \"0.26.8\"\n{line}"),
+    );
+    assert_ne!(fixed, before, "the dependency table was found");
+    std::fs::write(strict_dir.join("Cargo.toml"), fixed).unwrap();
+    let build = support::cargo_in(&strict_dir)
+        .args(["build", "--quiet"])
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the crate must build once the line is added:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let again = tool().args(["scaffold"]).arg(&strict_dir).output().unwrap();
+    assert!(
+        !String::from_utf8_lossy(&again.stderr).contains("does not depend on it"),
+        "no warning once the dependency is there"
+    );
+}
+
+#[test]
+/// The point of `ts-bnf-runtime`: the typed trees of two *different* generated
+/// crates are made of the same types, so code written once against
+/// `ts_bnf_runtime` — a generic function taking `&dyn Reflect`, another taking
+/// a `Recovered<T>` — accepts both languages' trees, with no conversion per
+/// language. A third crate depends on both generated crates and on
+/// `ts-bnf-runtime` itself, and calls each generic function with each
+/// language's value; that only compiles if all of them name one `Reflect`, one
+/// `Span` and one `Recovered`. Cargo is also asked for the one copy of the
+/// runtime crate the whole graph shares (it refuses if there were two).
+fn two_generated_crates_share_one_reflect_span_and_recovered() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let lang_a = support::scaffold_with_partial_trees(
+        "ts_bnf_shared_runtime_lang_a",
+        "shared-lang-a",
+        "program -> decl* ;\n\
+         decl -> target: ident '=' value: num ';' ;\n\
+         ident -> /[a-z]+/ ;\n\
+         num -> /[0-9]+/ ;\n",
+        None,
+    );
+    let lang_b = support::scaffold_with_partial_trees(
+        "ts_bnf_shared_runtime_lang_b",
+        "shared-lang-b",
+        "program -> cmd* ;\n\
+         cmd -> 'print' arg: word ';' ;\n\
+         word -> /[a-z]+/ ;\n",
+        None,
+    );
+
+    let consumer = std::env::temp_dir().join("ts_bnf_shared_runtime_consumer");
+    let _ = std::fs::remove_dir_all(&consumer);
+    std::fs::create_dir_all(consumer.join("src")).unwrap();
+    std::fs::write(
+        consumer.join("Cargo.toml"),
+        format!(
+            "[package]\n\
+             name = \"consumer\"\n\
+             version = \"0.1.0\"\n\
+             edition = \"2021\"\n\n\
+             [dependencies]\n\
+             shared-lang-a = {{ path = {a:?} }}\n\
+             shared-lang-b = {{ path = {b:?} }}\n\
+             ts-bnf-runtime = \"{version}\"\n\n\
+             [workspace]\n",
+            a = lang_a.display().to_string(),
+            b = lang_b.display().to_string(),
+            version = env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        consumer.join("src/main.rs"),
+        r#"use ts_bnf_runtime::{walk, Recovered, Reflect};
+
+/// An outline of any language's typed tree: one line per node, indented by
+/// depth, with the field label it sits under. Written once, for every language.
+fn outline(root: &dyn Reflect) -> String {
+    let mut out = String::new();
+    for visit in walk(root) {
+        out.push_str(&"  ".repeat(visit.depth));
+        if let Some(field) = visit.field {
+            out.push_str(field);
+            out.push_str(": ");
+        }
+        out.push_str(visit.node.kind());
+        out.push('\n');
+    }
+    out
+}
+
+/// Where the first problem of any language's recovery is, if there is one:
+/// the shared `Recovered`, `Diagnostic` and `Span`, in one function.
+fn first_problem<T>(recovered: &Recovered<T>) -> Option<usize> {
+    recovered.diagnostics.first().map(|d| d.span.start.line)
+}
+
+fn main() {
+    let a = shared_lang_a::parse_ast("x = 1;\n").unwrap();
+    let b = shared_lang_b::parse_ast("print hello;\n").unwrap();
+    println!("A\n{}", outline(a.value.as_ref().unwrap()));
+    println!("B\n{}", outline(b.value.as_ref().unwrap()));
+
+    // The generated crates' own paths name the very same types.
+    let via_path: &ts_bnf_runtime::Span = a.value.as_ref().unwrap()._span_for_test();
+    println!("span line {}", via_path.start.line);
+
+    let broken_a = shared_lang_a::parse_ast("x = ;\n").unwrap();
+    let broken_b = shared_lang_b::parse_ast("print ;\n").unwrap();
+    println!("problem A line {:?}", first_problem(&broken_a));
+    println!("problem B line {:?}", first_problem(&broken_b));
+}
+
+/// Each language's `ast::runtime::Span` is `ts_bnf_runtime::Span`, so a value
+/// from one crate's path is accepted where the shared type is named.
+trait SpanForTest {
+    fn _span_for_test(&self) -> &ts_bnf_runtime::Span;
+}
+
+impl SpanForTest for shared_lang_a::ast::Program {
+    fn _span_for_test(&self) -> &shared_lang_a::ast::runtime::Span {
+        &self._span
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let run = support::cargo_in(&consumer)
+        .args(["run", "--quiet"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success(),
+        "a function over the shared runtime types must accept both languages:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // One generic outline, both languages.
+    assert!(
+        stdout.contains("A\nprogram\n  decl\n    target: ident\n    =\n    value: num\n    ;\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("B\nprogram\n  cmd\n    print\n    arg: word\n    ;\n"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("span line 1"), "{stdout}");
+    assert!(stdout.contains("problem A line Some(1)"), "{stdout}");
+    assert!(stdout.contains("problem B line Some(1)"), "{stdout}");
+
+    // Cargo refuses `-i` on an ambiguous name, so success means there is one
+    // `ts-bnf-runtime` in the graph, and the three crates all depend on it.
+    let tree = support::cargo_in(&consumer)
+        .args(["tree", "--invert", "ts-bnf-runtime", "--prefix", "none"])
+        .output()
+        .unwrap();
+    let tree_out = String::from_utf8_lossy(&tree.stdout);
+    assert!(
+        tree.status.success(),
+        "one copy of the runtime crate:\n{tree_out}\n{}",
+        String::from_utf8_lossy(&tree.stderr)
+    );
+    for dependent in ["shared-lang-a", "shared-lang-b", "consumer"] {
+        assert!(
+            tree_out.contains(dependent),
+            "{dependent} depends on it:\n{tree_out}"
+        );
+    }
 }
 
 #[test]

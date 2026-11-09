@@ -1,5 +1,5 @@
 [workspace]
-members = ["tree-sitter-bnf", "tools"]
+members = ["tree-sitter-bnf", "runtime", "tools"]
 resolver = "2"
 
 [workspace.package]

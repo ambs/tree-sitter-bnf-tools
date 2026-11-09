@@ -298,6 +298,11 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
     if let Some(warning) = &stale_example_warning {
         eprintln!("{warning}");
     }
+    // After the write loop: a fresh crate has just been given the dependency,
+    // so only a `Cargo.toml` that was already there (and left alone) can lack it.
+    if let Some(warning) = missing_runtime_dependency_warning(&dir, &effective_config) {
+        eprintln!("{warning}");
+    }
 
     if ast_types {
         ensure_lib_rs_declares_ast_module(&dir)?;
@@ -341,6 +346,52 @@ fn stale_ast_example_warning(dir: &Path, effective: &config::ScaffoldConfig) -> 
          (and does not use the new API) — update it by hand, or delete it and rerun scaffold \
          to regenerate it"
     ))
+}
+
+/// The warning to print when `--partial-trees` is on but the crate's
+/// `Cargo.toml` does not depend on `ts-bnf-runtime`, or `None` when there is
+/// nothing to say.
+///
+/// A partial-mode `ast.rs` re-exports its plain-data types from that crate
+/// rather than declaring its own, so a crate without the dependency does not
+/// compile. A fresh scaffold writes the line, but `Cargo.toml` is written once
+/// and the user's after that, so a crate scaffolded before the runtime crate
+/// existed (or one that was strict and switched to partial) is not touched —
+/// the honest thing is to say exactly which line to add. Run after the files
+/// are written, so it sees the `Cargo.toml` the crate actually has. Silent for
+/// anything but `--ast-types --partial-trees`.
+fn missing_runtime_dependency_warning(
+    dir: &Path,
+    effective: &config::ScaffoldConfig,
+) -> Option<String> {
+    if !(effective.ast_types && effective.partial_trees) {
+        return None;
+    }
+    let manifest = fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+    if declares_runtime_dependency(&manifest) {
+        return None;
+    }
+    Some(format!(
+        "warning: bindings/rust/ast.rs now takes its runtime types from the ts-bnf-runtime \
+         crate, but Cargo.toml does not depend on it, so the crate will not compile; \
+         Cargo.toml was left untouched — add this line under [dependencies]:\n    {}",
+        rust::runtime_dependency_line()
+    ))
+}
+
+/// `true` if the `Cargo.toml` text lists `ts-bnf-runtime` under
+/// `[dependencies]`, in any of the forms Cargo accepts (`name = "1"`,
+/// `name = { .. }`, `[dependencies.name]`). A manifest that does not parse is
+/// searched as plain text instead: it is not this function's job to report a
+/// broken `Cargo.toml`, only to avoid a wrong "add this line".
+fn declares_runtime_dependency(manifest: &str) -> bool {
+    match manifest.parse::<toml::Table>() {
+        Ok(table) => table
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|dependencies| dependencies.contains_key("ts-bnf-runtime")),
+        Err(_) => manifest.contains("ts-bnf-runtime"),
+    }
 }
 
 /// Bundles the grammar source(s) that produced `grammar` into the scaffold's
@@ -760,5 +811,111 @@ mod tests {
     fn ensure_lib_rs_leaves_a_complete_lib_rs_alone() {
         let content = "pub mod visitor;\npub mod ast;\npub use ast::parse_ast;\n// mine\n";
         assert_eq!(patched_lib_rs("complete", content), content);
+    }
+
+    /// A scratch crate directory whose `Cargo.toml` is exactly `manifest`.
+    fn crate_dir_with_manifest(test_name: &str, manifest: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ts_bnf_runtime_dep_{test_name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Cargo.toml"), manifest).unwrap();
+        dir
+    }
+
+    /// A manifest with the given `[dependencies]` body.
+    fn manifest_with_dependencies(body: &str) -> String {
+        format!("[package]\nname = \"decls\"\nversion = \"0.1.0\"\n\n[dependencies]\n{body}")
+    }
+
+    /// An existing crate without the dependency gets a warning that names the
+    /// exact line, at the tool's own version, and says it left the file alone.
+    #[test]
+    fn missing_runtime_dependency_is_reported_with_the_exact_line() {
+        let dir = crate_dir_with_manifest(
+            "missing",
+            &manifest_with_dependencies("tree-sitter = \"0.26.8\"\n"),
+        );
+        let warning = missing_runtime_dependency_warning(&dir, &effective_config(true, true))
+            .expect("a warning");
+        assert!(
+            warning.contains(&format!(
+                "ts-bnf-runtime = \"{}\"",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{warning}"
+        );
+        assert!(warning.contains("left untouched"), "{warning}");
+        assert!(warning.contains("[dependencies]"), "{warning}");
+    }
+
+    /// The warning never edits the manifest: `Cargo.toml` is the user's.
+    #[test]
+    fn missing_runtime_dependency_never_rewrites_the_manifest() {
+        let manifest = manifest_with_dependencies("tree-sitter = \"0.26.8\"\n");
+        let dir = crate_dir_with_manifest("untouched", &manifest);
+        let _ = missing_runtime_dependency_warning(&dir, &effective_config(true, true));
+        assert_eq!(
+            fs::read_to_string(dir.join("Cargo.toml")).unwrap(),
+            manifest
+        );
+    }
+
+    /// Every way Cargo lets a dependency be written counts as having it, and a
+    /// dependency listed only under dev- or build- does not.
+    #[test]
+    fn runtime_dependency_is_recognised_in_every_cargo_form() {
+        for (name, body) in [
+            ("string", "ts-bnf-runtime = \"0.6.0-beta.1\"\n"),
+            (
+                "inline_table",
+                "ts-bnf-runtime = { version = \"0.6\", path = \"../rt\" }\n",
+            ),
+            ("workspace", "ts-bnf-runtime = { workspace = true }\n"),
+            (
+                "table",
+                "\n[dependencies.ts-bnf-runtime]\nversion = \"0.6.0-beta.1\"\n",
+            ),
+        ] {
+            let dir = crate_dir_with_manifest(name, &manifest_with_dependencies(body));
+            assert!(
+                missing_runtime_dependency_warning(&dir, &effective_config(true, true)).is_none(),
+                "`{body}` is a dependency"
+            );
+        }
+
+        let dev_only = crate_dir_with_manifest(
+            "dev_only",
+            "[package]\nname = \"decls\"\nversion = \"0.1.0\"\n\n\
+             [dev-dependencies]\nts-bnf-runtime = \"0.6.0-beta.1\"\n",
+        );
+        assert!(
+            missing_runtime_dependency_warning(&dev_only, &effective_config(true, true)).is_some(),
+            "a dev-dependency is not available to the library"
+        );
+    }
+
+    /// Only `--ast-types --partial-trees` needs the crate: plain `--ast-types`
+    /// declares its own types, and without `--ast-types` there is no `ast.rs`.
+    #[test]
+    fn missing_runtime_dependency_is_only_a_partial_mode_concern() {
+        let dir = crate_dir_with_manifest("modes", &manifest_with_dependencies(""));
+        assert!(missing_runtime_dependency_warning(&dir, &effective_config(true, false)).is_none());
+        assert!(
+            missing_runtime_dependency_warning(&dir, &effective_config(false, false)).is_none()
+        );
+        assert!(missing_runtime_dependency_warning(&dir, &effective_config(true, true)).is_some());
+    }
+
+    /// A manifest that does not parse is searched as text, so a mention of the
+    /// crate still means "has it" rather than a wrong instruction to add it.
+    #[test]
+    fn unparsable_manifest_falls_back_to_a_text_search() {
+        let with =
+            crate_dir_with_manifest("broken_with", "[dependencies\nts-bnf-runtime = \"1\"\n");
+        assert!(missing_runtime_dependency_warning(&with, &effective_config(true, true)).is_none());
+        let without = crate_dir_with_manifest("broken_without", "[dependencies\n");
+        assert!(
+            missing_runtime_dependency_warning(&without, &effective_config(true, true)).is_some()
+        );
     }
 }

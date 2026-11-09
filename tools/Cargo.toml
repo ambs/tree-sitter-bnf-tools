@@ -37,3 +37,7 @@ syn = "3"
 
 [dev-dependencies]
 serde_json = "1"
+# What a generated `--partial-trees` crate depends on: the compile-check tests
+# build generated code as an example of this crate, and the end-to-end tests
+# patch scaffolded crates to use this checkout of it.
+ts-bnf-runtime = { path = "../runtime", version = "0.6.0-beta.1" }

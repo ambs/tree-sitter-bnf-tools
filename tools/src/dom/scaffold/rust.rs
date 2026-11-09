@@ -40,7 +40,7 @@ pub(super) fn render(
     let mut files = vec![
         ScaffoldFile {
             path: PathBuf::from("Cargo.toml"),
-            content: cargo_toml(name),
+            content: cargo_toml(name, ast_output.as_ref().map(|ast| ast.mode)),
             preserve_existing: true,
         },
         ScaffoldFile {
@@ -97,6 +97,15 @@ pub(super) fn render(
     files
 }
 
+/// The `Cargo.toml` dependency line a `--partial-trees` crate needs, and what
+/// [`cargo_toml`] writes for it: `ts-bnf-runtime`, at the version of the tool
+/// doing the generating. The runtime crate and the tool are released together
+/// and share a version, so the crate that matches this tool's generated code is
+/// always the one with this tool's version.
+pub(super) fn runtime_dependency_line() -> String {
+    format!("ts-bnf-runtime = \"{}\"", env!("CARGO_PKG_VERSION"))
+}
+
 /// Renders the generated crate's `Cargo.toml`.
 ///
 /// Pinned to `edition = "2021"`, same as `tree-sitter-bnf`'s own
@@ -105,7 +114,23 @@ pub(super) fn render(
 /// `bindings/rust/lib.rs`), which is a hard error under edition 2024
 /// (requires `unsafe extern "C"` there instead). Bumping this file's
 /// edition without also updating that block breaks generation.
-fn cargo_toml(name: &str) -> String {
+///
+/// With `--partial-trees` (`ast` is `Some(BuildMode::Partial)`) it also lists
+/// `ts-bnf-runtime` ([`runtime_dependency_line`]): the generated `ast.rs`
+/// re-exports that crate's types instead of declaring its own. Every other
+/// configuration, strict `--ast-types` included, gets exactly the file it
+/// always did. The file is written once and the user's from then on, so a crate
+/// that already exists is never given the line (see
+/// `super::missing_runtime_dependency_warning`).
+fn cargo_toml(name: &str, ast: Option<BuildMode>) -> String {
+    let runtime_dependency = if ast == Some(BuildMode::Partial) {
+        format!(
+            "\n# The types a typed AST shares with every other generated crate.\n{}",
+            runtime_dependency_line()
+        )
+    } else {
+        String::new()
+    };
     formatdoc! {r#"
         [package]
         name = "{name}"
@@ -131,7 +156,7 @@ fn cargo_toml(name: &str) -> String {
 
         [dependencies]
         tree-sitter-language = "0.1"
-        tree-sitter = "0.26.8"
+        tree-sitter = "0.26.8"{runtime_dependency}
 
         [build-dependencies]
         cc = "1.2"
@@ -416,6 +441,51 @@ fn walk_example(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only `--partial-trees` makes the crate depend on `ts-bnf-runtime`:
+    /// no AST and strict `--ast-types` get the manifest they always had.
+    #[test]
+    fn cargo_toml_lists_the_runtime_crate_only_in_partial_mode() {
+        assert!(!cargo_toml("decls", None).contains("ts-bnf-runtime"));
+        assert!(!cargo_toml("decls", Some(BuildMode::Strict)).contains("ts-bnf-runtime"));
+        assert!(cargo_toml("decls", Some(BuildMode::Partial)).contains("ts-bnf-runtime"));
+    }
+
+    /// The partial manifest is a valid one with the dependency at the tool's
+    /// version under `[dependencies]`, so it is the version of the runtime
+    /// crate that was released with this tool that the crate resolves.
+    #[test]
+    fn partial_cargo_toml_depends_on_the_runtime_at_the_tools_version() {
+        let manifest: toml::Table = cargo_toml("decls", Some(BuildMode::Partial))
+            .parse()
+            .expect("a valid manifest");
+        let dependencies = manifest["dependencies"].as_table().expect("[dependencies]");
+        assert_eq!(
+            dependencies["ts-bnf-runtime"].as_str(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            !manifest["build-dependencies"]
+                .as_table()
+                .unwrap()
+                .contains_key("ts-bnf-runtime"),
+            "a library dependency, not a build one"
+        );
+        assert!(dependencies.contains_key("tree-sitter"), "the rest is kept");
+    }
+
+    /// The runtime dependency is the *only* difference between the partial
+    /// manifest and the strict one: nothing else about the crate changes.
+    #[test]
+    fn partial_cargo_toml_differs_from_strict_only_by_the_dependency() {
+        let strict = cargo_toml("decls", Some(BuildMode::Strict));
+        let partial = cargo_toml("decls", Some(BuildMode::Partial));
+        let added = format!(
+            "\n# The types a typed AST shares with every other generated crate.\n{}",
+            runtime_dependency_line()
+        );
+        assert_eq!(partial.replace(&added, ""), strict);
+    }
 
     /// The partial-mode example goes through `parse_ast`, so it needs no
     /// tree-sitter and no `SourceNode`, and reports diagnostics instead of

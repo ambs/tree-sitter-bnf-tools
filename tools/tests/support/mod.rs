@@ -30,6 +30,37 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The `ts-bnf-runtime` crate of this checkout.
+pub fn runtime_crate_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../runtime")
+        .canonicalize()
+        .expect("the runtime crate must be in the workspace")
+}
+
+/// A `cargo` command that runs in `crate_dir`, a scaffolded crate.
+///
+/// A `--partial-trees` crate depends on `ts-bnf-runtime` at the tool's own
+/// version, as it will once released, and that crate is not on crates.io until
+/// then. So when the crate's manifest lists it, the command is given a
+/// `[patch.crates-io]` pointing at this checkout's `runtime/` (through
+/// `--config`, so the manifest under test stays exactly what the tool wrote). A
+/// crate that does not list it is left alone: an unused patch would only make
+/// cargo complain.
+pub fn cargo_in(crate_dir: &Path) -> Command {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let mut command = Command::new(cargo);
+    let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap_or_default();
+    if manifest.contains("ts-bnf-runtime") {
+        command.arg("--config").arg(format!(
+            "patch.crates-io.ts-bnf-runtime.path={:?}",
+            runtime_crate_dir().display().to_string()
+        ));
+    }
+    command.current_dir(crate_dir);
+    command
+}
+
 /// Returns the installed tree-sitter CLI version as `(major, minor)`, or `None` if not found.
 pub fn tree_sitter_version() -> Option<(u32, u32)> {
     let out = Command::new("tree-sitter").arg("--version").output().ok()?;
@@ -104,11 +135,9 @@ pub fn run_walk_example(crate_dir: &Path, input: &str) -> String {
     let input_path = crate_dir.join("sample-input.txt");
     std::fs::write(&input_path, input).unwrap();
 
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let out = Command::new(&cargo)
+    let out = cargo_in(crate_dir)
         .args(["run", "--quiet", "--example", "walk", "--"])
         .arg(&input_path)
-        .current_dir(crate_dir)
         .output()
         .unwrap();
     assert!(
@@ -220,11 +249,9 @@ pub fn run_ast_example_output(crate_dir: &Path, input: &str) -> std::process::Ou
     let input_path = crate_dir.join("sample-input.txt");
     std::fs::write(&input_path, input).unwrap();
 
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    Command::new(&cargo)
+    cargo_in(crate_dir)
         .args(["run", "--quiet", "--example", "ast", "--"])
         .arg(&input_path)
-        .current_dir(crate_dir)
         .output()
         .unwrap()
 }
@@ -235,11 +262,9 @@ pub fn run_ast_example(crate_dir: &Path, input: &str) -> String {
     let input_path = crate_dir.join("sample-input.txt");
     std::fs::write(&input_path, input).unwrap();
 
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let out = Command::new(&cargo)
+    let out = cargo_in(crate_dir)
         .args(["run", "--quiet", "--example", "ast", "--"])
         .arg(&input_path)
-        .current_dir(crate_dir)
         .output()
         .unwrap();
     assert!(
@@ -257,10 +282,8 @@ pub fn run_ast_example(crate_dir: &Path, input: &str) -> String {
 /// (e.g. a doc-example override copied verbatim into `examples/`). Panics if
 /// the subprocess does not exit successfully. Returns the captured stdout.
 pub fn run_example(crate_dir: &Path, example: &str) -> String {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let out = Command::new(&cargo)
+    let out = cargo_in(crate_dir)
         .args(["run", "--quiet", "--example", example])
-        .current_dir(crate_dir)
         .output()
         .unwrap();
     assert!(

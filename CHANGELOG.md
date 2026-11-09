@@ -33,6 +33,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   never the enum. `examples/ast.rs` prints the recovered tree and each
   diagnostic, exiting 1 if there were any (#487).
 
+- **`ts-bnf-runtime`, a new crate** (released with `ts-bnf-tool`, same version):
+  the part of a `--partial-trees` crate's `ast::runtime` that has nothing to do
+  with tree-sitter — `Pragma`, `Span`, `Token`, `ErrorRegion`, `Diagnostic`,
+  `DiagnosticKind`, `Recovered`, `DEFAULT_MAX_DEPTH`, and the `Reflect` trait
+  with `walk`, `Walk` and `Visit` — declared once instead of copied into every
+  generated crate. Two generated crates used to have unrelated, incompatible
+  `Reflect`/`Span`/`Diagnostic` types, so a program handling several languages
+  needed a conversion for each; now they are the same types, and code written
+  once against `&dyn ts_bnf_runtime::Reflect` accepts the typed tree of any of
+  them. The crate has no dependencies (tree-sitter included). A
+  `--partial-trees` scaffold writes `ts-bnf-runtime = "<the tool's version>"`
+  into the new crate's `Cargo.toml`, and the generated `ast::runtime`
+  re-exports the items, so `ast::runtime::Span`, `::Reflect`, `::walk`,
+  `::Recovered` and the rest resolve as before; `recover`, `recover_with_limit`,
+  `Recover`, `Context` and the conversions from a tree-sitter node stay
+  generated. `Diagnostic::at(node, kind)`, which cannot be an inherent method
+  on a type from another crate, is now a free function used only by the
+  generated code. Plain `--ast-types` output is unchanged. `Cargo.toml` is
+  never edited on a rerun, so a crate that lacks the dependency (one scaffolded
+  as plain `--ast-types`, say) gets a warning naming the line to add (#492).
+
 - `scaffold --ast-types --partial-trees`: `runtime::walk(&root)`, a depth-first,
   source-order iterator over every node of a typed tree as a `Visit { node,
   field, depth }`, with an explicit stack instead of recursion, so nobody

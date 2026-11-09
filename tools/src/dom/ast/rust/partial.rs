@@ -16,201 +16,46 @@ use super::{
     kind_display_name, rust_field_ident, shape_has_error, shape_kinds, variant_name,
 };
 
+/// The `pub use` that makes the generated `runtime` module offer, under the
+/// paths it has always had, the plain-data items that now live in the
+/// `ts_bnf_runtime` crate: positions (`Pragma`, `Span`, `Token`,
+/// `ErrorRegion`), diagnostics (`Diagnostic`, `DiagnosticKind`, `Recovered`,
+/// `DEFAULT_MAX_DEPTH`) and the `Reflect` view with its `walk`/`Walk`/`Visit`.
+/// Declared once there, shared by every generated crate. Flush-left.
+pub(super) const RUNTIME_REEXPORTS: &str = indoc! {r#"
+    // The plain data of the typed tree — positions, diagnostics, the `Reflect`
+    // view and its `walk` — is declared once, in the `ts_bnf_runtime` crate that
+    // every generated crate shares, so the typed trees of two languages have the
+    // very same types. They are re-exported here so that `ast::runtime::Span`,
+    // `ast::runtime::Reflect` and the rest are the paths they have always had.
+    pub use ts_bnf_runtime::{
+        DEFAULT_MAX_DEPTH, Diagnostic, DiagnosticKind, ErrorRegion, Pragma, Recovered, Reflect,
+        Span, Token, Visit, Walk, walk,
+    };
+"#};
+
 /// The items partial mode adds to the generated `runtime` module, flush-left
-/// (the caller indents them into the module): the diagnostic types, the
-/// `Recover` trait, and the `recover` entry point with its syntax-error walk.
-/// Takes the place of strict mode's `BuildError`.
+/// (the caller indents them into the module), after [`RUNTIME_REEXPORTS`] and
+/// the `From<SourceNode>` conversions: what touches tree-sitter and so cannot
+/// live in the tree-sitter-free `ts_bnf_runtime` crate — the `Recover` trait,
+/// the depth-limiting `Context`, and the `recover` entry points with their
+/// syntax-error walk — plus the two small helpers that build the shared types
+/// from a `SourceNode`. Takes the place of strict mode's `BuildError`.
 pub(super) const RUNTIME_ITEMS: &str = indoc! {r#"
-    /// What kind of problem a [`Diagnostic`] reports.
-    #[derive(Debug)]
-    pub enum DiagnosticKind {
-        /// A tree-sitter `ERROR` node: source text the parser could not fit
-        /// into the grammar. Reported once per error region, not once per
-        /// nested `ERROR` node.
-        Error,
-        /// A tree-sitter `MISSING` node: a zero-width stand-in for something
-        /// the grammar required. `expected` is the kind (or token) it stands in for.
-        Missing { expected: String },
-        /// A field absent from a node whose subtree contains a syntax error.
-        MissingField { kind: &'static str, field: &'static str },
-        /// A child whose kind is outside what `expected` can hold: the variant
-        /// set of a multi-shape (or merged) enum, or the kinds a node's
-        /// unlabelled children can have.
-        UnexpectedKind { expected: &'static str, found: String },
-        /// A subtree nested deeper than the recovery's limit
-        /// ([`DEFAULT_MAX_DEPTH`], or the one given to [`recover_with_limit`]):
-        /// it was not built, so the node at this diagnostic's span is missing from
-        /// the tree. Building the typed tree is recursive, and a tree nested
-        /// deeper than the stack can take would otherwise abort the process.
-        TooDeep { limit: usize },
-    }
-
-    /// One problem found while recovering a typed AST from a parse tree.
-    #[derive(Debug)]
-    pub struct Diagnostic {
-        /// What went wrong.
-        pub kind: DiagnosticKind,
-        /// Where: the offending node's extent (empty for `MISSING`).
-        pub span: Span,
-    }
-
-    impl Diagnostic {
-        /// A diagnostic of `kind` located at `node`.
-        pub fn at(node: super::super::visitor::SourceNode<'_>, kind: DiagnosticKind) -> Self {
-            Diagnostic { kind, span: Span::from(node) }
-        }
-    }
-
-    /// A uniform, read-only view of any node in the typed tree, so one generic
-    /// loop — a serializer, a pretty-printer, a visitor — can walk the whole
-    /// thing without a function per type. Every generated struct implements it;
-    /// every generated enum implements it by delegating to the variant it
-    /// holds; so does [`Token`].
-    pub trait Reflect {
-        /// The node's tree-sitter kind: the grammar rule's name (or alias),
-        /// not the Rust type's name. For a [`Token`], the literal's kind.
-        fn kind(&self) -> &str;
-
-        /// Where the node is in the source.
-        fn span(&self) -> &Span;
-
-        /// The node's source text: `Some` only for a leaf (a kind with no
-        /// children of its own), a [`Token`] or an [`ErrorRegion`]; `None` for
-        /// a node whose text is made up of its children.
-        fn text(&self) -> Option<&str>;
-
-        /// The node's children in source order, each as a pair: the grammar
-        /// field label it sits under (`None` for an unlabelled child, a literal
-        /// token or a broken region), and the node. Labelled fields and
-        /// unlabelled children come together, literal tokens included. An enum
-        /// is transparent here: what comes back is the node the enum holds,
-        /// never the enum itself. The label is the grammar's own (`target`, not
-        /// the Rust identifier `r#type` a keyword label would need), and is the
-        /// same one tree-sitter reports for that child.
-        fn children(&self) -> Vec<(Option<&'static str>, &dyn Reflect)>;
-
-        /// `true` for a node of a named rule — and for an [`ErrorRegion`], as in
-        /// tree-sitter — `false` for a literal [`Token`].
-        fn is_named(&self) -> bool;
-    }
-
-    impl Reflect for Token {
-        fn kind(&self) -> &str {
-            &self.kind
-        }
-
-        fn span(&self) -> &Span {
-            &self.span
-        }
-
-        fn text(&self) -> Option<&str> {
-            Some(&self.text)
-        }
-
-        fn children(&self) -> Vec<(Option<&'static str>, &dyn Reflect)> {
-            Vec::new()
-        }
-
-        fn is_named(&self) -> bool {
-            false
-        }
-    }
-
-    /// One node met by [`walk`]: the node itself, the grammar field label it sits
-    /// under in its parent (`None` for the root, for an unlabelled child, a
-    /// literal token or a broken region), and how deep it is (the root is 0).
-    #[derive(Clone, Copy)]
-    pub struct Visit<'a> {
-        /// The node.
-        pub node: &'a dyn Reflect,
-        /// The field label it sits under in its parent, if any.
-        pub field: Option<&'static str>,
-        /// Its depth below the root: 0 for the root itself.
-        pub depth: usize,
-    }
-
-    /// Walks `root` and everything below it, depth first, in source order — a
-    /// node before its children — without recursion: an explicit stack on the
-    /// heap, so a tree of any depth is walked without growing the call stack.
-    /// This is the traversal every consumer of [`Reflect`] would otherwise
-    /// write for itself; the depth and field label of each node are what is
-    /// needed to rebuild the tree's shape from the flat sequence.
-    pub fn walk(root: &dyn Reflect) -> Walk<'_> {
-        Walk { stack: vec![(None, root, 0)] }
-    }
-
-    /// The iterator [`walk`] returns.
-    pub struct Walk<'a> {
-        stack: Vec<(Option<&'static str>, &'a dyn Reflect, usize)>,
-    }
-
-    impl<'a> Iterator for Walk<'a> {
-        type Item = Visit<'a>;
-
-        fn next(&mut self) -> Option<Visit<'a>> {
-            let (field, node, depth) = self.stack.pop()?;
-            // Pushed in reverse, so the first child is the next one popped.
-            for (child_field, child) in node.children().into_iter().rev() {
-                self.stack.push((child_field, child, depth + 1));
-            }
-            Some(Visit { node, field, depth })
-        }
-    }
-
-    /// A region of source text tree-sitter could not fit into the grammar: an
-    /// `ERROR` node, kept where it sits in the tree so that it can be located,
-    /// and walked past like any other child. It has no children of its own:
-    /// whatever tree-sitter did recognise inside it is simply part of its text.
-    #[derive(Debug)]
-    pub struct ErrorRegion {
-        /// Where the region is in the source.
-        pub span: Span,
-        /// The region's source text, as written.
-        pub text: String,
+    /// A diagnostic of `kind` located at `node`. A free function rather than
+    /// `Diagnostic::at`: `Diagnostic` lives in `ts_bnf_runtime` and an inherent
+    /// method cannot be added to a foreign type from here. Only the generated
+    /// code in this file builds diagnostics, so it is not public.
+    pub(super) fn diagnostic_at(
+        node: super::super::visitor::SourceNode<'_>,
+        kind: DiagnosticKind,
+    ) -> Diagnostic {
+        Diagnostic { kind, span: Span::from(node) }
     }
 
     impl From<super::super::visitor::SourceNode<'_>> for ErrorRegion {
         fn from(node: super::super::visitor::SourceNode<'_>) -> Self {
             ErrorRegion { span: Span::from(node), text: node.text().to_string() }
-        }
-    }
-
-    impl Reflect for ErrorRegion {
-        fn kind(&self) -> &str {
-            "ERROR"
-        }
-
-        fn span(&self) -> &Span {
-            &self.span
-        }
-
-        fn text(&self) -> Option<&str> {
-            Some(&self.text)
-        }
-
-        fn children(&self) -> Vec<(Option<&'static str>, &dyn Reflect)> {
-            Vec::new()
-        }
-
-        fn is_named(&self) -> bool {
-            true
-        }
-    }
-
-    /// The result of recovering a typed AST: whatever could be built, and
-    /// everything that could not.
-    #[derive(Debug)]
-    pub struct Recovered<T> {
-        /// The recovered value, or `None` if not even the root could be built.
-        pub value: Option<T>,
-        /// Every problem found, ordered by position in the source.
-        pub diagnostics: Vec<Diagnostic>,
-    }
-
-    impl<T> Recovered<T> {
-        /// `true` if a value was built and no problem was found.
-        pub fn is_complete(&self) -> bool {
-            self.value.is_some() && self.diagnostics.is_empty()
         }
     }
 
@@ -225,14 +70,6 @@ pub(super) const RUNTIME_ITEMS: &str = indoc! {r#"
             cx: &mut Context,
         ) -> Option<Self>;
     }
-
-    /// How many levels of nesting a recovery builds by default. Building is
-    /// recursive — a few calls per level — so a tree nested deeper than the
-    /// stack can take does not fail, it *aborts the process*; and `Drop` and
-    /// `Debug` on the typed tree are recursive too. 256 keeps even a debug
-    /// build safe on a 2 MiB thread. A caller with a bigger stack can raise it
-    /// with [`recover_with_limit`].
-    pub const DEFAULT_MAX_DEPTH: usize = 256;
 
     /// What a recovery carries down the tree: the problems found so far, and
     /// how many levels deep it is and may go.
@@ -257,7 +94,7 @@ pub(super) const RUNTIME_ITEMS: &str = indoc! {r#"
         pub fn enter(&mut self, node: super::super::visitor::SourceNode<'_>) -> bool {
             if self.depth >= self.max_depth {
                 let problem = DiagnosticKind::TooDeep { limit: self.max_depth };
-                self.diagnostics.push(Diagnostic::at(node, problem));
+                self.diagnostics.push(diagnostic_at(node, problem));
                 return false;
             }
             self.depth += 1;
@@ -337,9 +174,9 @@ pub(super) const RUNTIME_ITEMS: &str = indoc! {r#"
             };
             if node.node.is_missing() {
                 let expected = node.node.kind().to_string();
-                diagnostics.push(Diagnostic::at(node, DiagnosticKind::Missing { expected }));
+                diagnostics.push(diagnostic_at(node, DiagnosticKind::Missing { expected }));
             } else if node.node.is_error() && inside_error == 0 {
-                diagnostics.push(Diagnostic::at(node, DiagnosticKind::Error));
+                diagnostics.push(diagnostic_at(node, DiagnosticKind::Error));
             }
             // Down, into a subtree that contains an error.
             if node.node.has_error() && cursor.goto_first_child() {
@@ -488,7 +325,7 @@ pub(super) fn fmt_recover_helpers(f: &mut Formatter<'_>) -> fmt::Result {
                             expected,
                             found: child.node.kind().to_string(),
                         };
-                        cx.diagnostics.push(runtime::Diagnostic::at(child, problem));
+                        cx.diagnostics.push(runtime::diagnostic_at(child, problem));
                     }
                 }
                 out
@@ -532,7 +369,7 @@ pub(super) fn fmt_recover_helpers(f: &mut Formatter<'_>) -> fmt::Result {
             ) {
                 if self.node.has_error() {
                     let problem = runtime::DiagnosticKind::MissingField { kind, field: field_name };
-                    cx.diagnostics.push(runtime::Diagnostic::at(*self, problem));
+                    cx.diagnostics.push(runtime::diagnostic_at(*self, problem));
                 }
             }
         }
@@ -723,7 +560,7 @@ pub(super) fn fmt_multi_shape_enum_recover(
                             expected: "{name}",
                             found: found.to_string(),
                         }};
-                        _cx.diagnostics.push(runtime::Diagnostic::at(_node, problem));
+                        _cx.diagnostics.push(runtime::diagnostic_at(_node, problem));
                         None
                     }}
                 }}
@@ -1171,20 +1008,21 @@ mod tests {
         assert!(decl.contains("Token(runtime::Token),"));
     }
 
-    /// The runtime module carries the diagnostics machinery next to the
-    /// shared `Pragma`, and no `BuildError`.
+    /// The runtime module carries the recovery machinery that touches
+    /// tree-sitter — the `Recover` trait, the entry points, the free function
+    /// that builds a diagnostic — and no `BuildError`. The plain data it works
+    /// on is not declared here; see `partial_runtime_reexports_the_shared_crate_items`.
     #[test]
-    fn runtime_module_has_diagnostics_machinery() {
+    fn runtime_module_has_the_recovery_machinery() {
         let out = partial(&every_shape_grammar(), None);
         let runtime = item_body(&out, "pub mod runtime {");
         for needle in [
-            "pub struct Pragma {",
-            "pub enum DiagnosticKind {",
-            "pub struct Diagnostic {",
-            "pub struct Recovered<T> {",
             "pub trait Recover<'tree>: Sized {",
+            "pub struct Context {",
             "pub fn recover<'tree, T: Recover<'tree>>(",
+            "pub fn recover_with_limit<'tree, T: Recover<'tree>>(",
             "pub fn is_recovery(",
+            "pub(super) fn diagnostic_at(",
         ] {
             assert!(
                 runtime.contains(needle),
@@ -1763,70 +1601,92 @@ mod tests {
     // ── Span, Token and Reflect ─────────────────────────────────────────
 
     /// A struct carries `_span` in both modes (it replaced the start-only
-    /// `_pragma`), and `Span` lives in the shared part of `runtime`, next to
-    /// `Pragma`, which it reuses for its start and end.
+    /// `_pragma`), and `Span` is the module's own in strict mode, next to the
+    /// `Pragma` it reuses for its start and end; in partial mode it is
+    /// `ts_bnf_runtime`'s, re-exported. Either way a tree-sitter node converts
+    /// into it from the generated crate.
     #[test]
     fn span_replaces_pragma_in_both_modes() {
-        for out in [
-            partial(&every_shape_grammar(), None),
-            strict(&every_shape_grammar()),
+        for (is_partial, out) in [
+            (true, partial(&every_shape_grammar(), None)),
+            (false, strict(&every_shape_grammar())),
         ] {
             assert!(item_body(&out, "pub struct Decl {").contains("pub _span: runtime::Span,"));
             assert!(!out.contains("_pragma"), "`_pragma` is gone");
             let runtime = item_body(&out, "pub mod runtime {");
-            assert!(runtime.contains("pub struct Pragma {"));
-            assert!(runtime.contains("pub struct Span {"));
-            let span = item_body(&runtime, "pub struct Span {");
-            assert!(span.contains("pub byte_range: std::ops::Range<usize>,"));
-            assert!(span.contains("pub start: Pragma,"));
-            assert!(span.contains("pub end: Pragma,"));
+            for target in ["Pragma", "Span"] {
+                assert!(
+                    runtime.contains(&format!(
+                        "impl From<super::super::visitor::SourceNode<'_>> for {target} {{"
+                    )),
+                    "a node converts into `{target}`, in either mode"
+                );
+            }
+            if is_partial {
+                assert!(
+                    !runtime.contains("pub struct Span {"),
+                    "declared by ts_bnf_runtime"
+                );
+                assert!(
+                    !runtime.contains("pub struct Pragma {"),
+                    "declared by ts_bnf_runtime"
+                );
+            } else {
+                let span = item_body(&runtime, "pub struct Span {");
+                assert!(span.contains("pub byte_range: std::ops::Range<usize>,"));
+                assert!(span.contains("pub start: Pragma,"));
+                assert!(span.contains("pub end: Pragma,"));
+            }
         }
     }
 
-    /// A diagnostic is located by a `Span` rather than a byte range plus a
-    /// separate start position — the same pair of fields a node's span has.
+    /// A diagnostic is built from a node by a free function, because
+    /// `Diagnostic` is `ts_bnf_runtime`'s and a foreign type takes no inherent
+    /// method: what it locates itself by is that node's `Span`. No `Diagnostic::at`
+    /// is left anywhere in the generated file.
     #[test]
-    fn diagnostic_is_located_by_a_span() {
+    fn diagnostics_are_built_by_a_free_function_from_a_node() {
         let out = partial(&every_shape_grammar(), None);
         let runtime = item_body(&out, "pub mod runtime {");
-        let diagnostic = item_body(&runtime, "pub struct Diagnostic {");
-        assert!(diagnostic.contains("pub span: Span,"));
-        assert!(!diagnostic.contains("byte_range"));
-        assert!(!diagnostic.contains("pub start"));
+        assert!(
+            !runtime.contains("pub struct Diagnostic {"),
+            "declared by ts_bnf_runtime"
+        );
+        assert!(
+            !runtime.contains("impl Diagnostic {"),
+            "a foreign type takes no inherent impl"
+        );
+        assert!(!out.contains("Diagnostic::at("));
+
+        let builder = item_body(&runtime, "pub(super) fn diagnostic_at(");
+        assert!(builder.contains("kind: DiagnosticKind,"));
+        assert!(builder.contains("-> Diagnostic {"));
+        assert!(builder.contains("span: Span::from(node)"));
     }
 
-    /// A token carries its kind, text and span, and is `Reflect` itself: an
-    /// unnamed leaf with no children, so a generic walk can include it.
+    /// A token is built from a node by the generated crate — kind, text and
+    /// span all from the node — and is `ts_bnf_runtime`'s type, re-exported,
+    /// along with its `Reflect` impl (an unnamed leaf), which that crate tests.
     #[test]
-    fn token_carries_a_span_and_is_an_unnamed_leaf() {
+    fn token_is_built_from_a_node_with_its_span() {
         let out = partial(&unlabelled_grammar(), None);
         let runtime = item_body(&out, "pub mod runtime {");
-        let token = item_body(&runtime, "pub struct Token {");
-        assert!(token.contains("pub kind: String,"));
-        assert!(token.contains("pub text: String,"));
-        assert!(token.contains("pub span: Span,"));
+        assert!(
+            !runtime.contains("pub struct Token {"),
+            "declared by ts_bnf_runtime"
+        );
+        assert!(
+            !runtime.contains("impl Reflect for Token {"),
+            "implemented by ts_bnf_runtime"
+        );
 
-        let reflect = item_body(&runtime, "impl Reflect for Token {");
-        assert!(reflect.contains("Some(&self.text)"));
-        assert!(reflect.contains("Vec::new()"));
-        assert!(reflect.contains("false"), "a token is not named");
-    }
-
-    /// The trait has exactly the five methods a generic walk needs.
-    #[test]
-    fn reflect_trait_has_the_five_methods() {
-        let out = partial(&every_shape_grammar(), None);
-        let runtime = item_body(&out, "pub mod runtime {");
-        let reflect = item_body(&runtime, "pub trait Reflect {");
-        for signature in [
-            "fn kind(&self) -> &str;",
-            "fn span(&self) -> &Span;",
-            "fn text(&self) -> Option<&str>;",
-            "fn children(&self) -> Vec<(Option<&'static str>, &dyn Reflect)>;",
-            "fn is_named(&self) -> bool;",
-        ] {
-            assert!(reflect.contains(signature), "missing `{signature}`");
-        }
+        let from = item_body(
+            &runtime,
+            "impl From<super::super::visitor::SourceNode<'_>> for Token {",
+        );
+        assert!(from.contains("kind: node.node.kind().to_string(),"));
+        assert!(from.contains("text: node.text().to_string(),"));
+        assert!(from.contains("span: Span::from(node),"));
     }
 
     /// A struct reflects its grammar kind, span and (for a non-leaf) no text,
@@ -2051,28 +1911,29 @@ mod tests {
 
     // ── ERROR regions kept in the tree ──────────────────────────────────
 
-    /// An error region is a span plus its source text, and is `Reflect`: kind
-    /// `"ERROR"`, named (as tree-sitter reports it), text but no children.
+    /// An error region is built from an `ERROR` node by the generated crate —
+    /// its span and its source text. The type, and its `Reflect` impl (kind
+    /// `"ERROR"`, named as tree-sitter reports it, text but no children), are
+    /// `ts_bnf_runtime`'s.
     #[test]
-    fn error_region_is_a_span_and_text_and_reflect() {
+    fn error_region_is_built_from_an_error_node() {
         let out = partial(&every_shape_grammar(), None);
         let runtime = item_body(&out, "pub mod runtime {");
-
-        let region = item_body(&runtime, "pub struct ErrorRegion {");
-        assert!(region.contains("pub span: Span,"));
-        assert!(region.contains("pub text: String,"));
         assert!(
-            runtime.contains("impl From<super::super::visitor::SourceNode<'_>> for ErrorRegion {")
+            !runtime.contains("pub struct ErrorRegion {"),
+            "declared by ts_bnf_runtime"
+        );
+        assert!(
+            !runtime.contains("impl Reflect for ErrorRegion {"),
+            "implemented by ts_bnf_runtime"
         );
 
-        let reflect = item_body(&runtime, "impl Reflect for ErrorRegion {");
-        assert!(reflect.contains("\"ERROR\""));
-        assert!(reflect.contains("Some(&self.text)"));
-        assert!(reflect.contains("Vec::new()"));
-        assert!(
-            reflect.contains("true"),
-            "tree-sitter reports ERROR as named"
+        let from = item_body(
+            &runtime,
+            "impl From<super::super::visitor::SourceNode<'_>> for ErrorRegion {",
         );
+        assert!(from.contains("span: Span::from(node),"));
+        assert!(from.contains("text: node.text().to_string()"));
     }
 
     /// A children enum builds its `Error` variant from an `ERROR` node before
@@ -2310,32 +2171,6 @@ mod tests {
         assert!(pushed("for v in &self._children {").contains("out.push((None, v.inner()));"));
     }
 
-    /// The runtime offers one iterative traversal, so nobody writes their own:
-    /// an explicit stack, a node before its children, in source order.
-    #[test]
-    fn runtime_has_an_iterative_walk() {
-        let out = partial(&every_shape_grammar(), None);
-        let runtime = item_body(&out, "pub mod runtime {");
-        assert!(runtime.contains("pub fn walk(root: &dyn Reflect) -> Walk<'_> {"));
-        let visit = item_body(&runtime, "pub struct Visit<'a> {");
-        for field in [
-            "pub node: &'a dyn Reflect,",
-            "pub field: Option<&'static str>,",
-            "pub depth: usize,",
-        ] {
-            assert!(visit.contains(field), "Visit is missing `{field}`");
-        }
-
-        let start = runtime.find("fn next(&mut self)").unwrap();
-        let next = item_body(&runtime[start..], "-> Option<Visit<'a>> {");
-        assert!(next.contains("self.stack.pop()?"));
-        assert!(
-            next.contains(".rev()"),
-            "children are pushed in reverse, so the first pops first"
-        );
-        assert!(!next.contains("walk("), "no recursion");
-    }
-
     /// The depth limit is counted in exactly one place: a non-leaf struct's
     /// `recover` enters before it reads anything and leaves just before it
     /// returns. A leaf has nothing to recurse into and isn't counted.
@@ -2355,25 +2190,34 @@ mod tests {
         assert!(!ident.contains("enter") && !ident.contains("leave"));
     }
 
-    /// The runtime carries the context, the default limit, the explicit-limit
-    /// entry point and the diagnostic for a subtree that was too deep.
+    /// The generated runtime carries the context and the explicit-limit entry
+    /// point; the default limit and the diagnostic for a subtree that was too
+    /// deep are `ts_bnf_runtime`'s, re-exported.
     #[test]
     fn runtime_has_the_depth_limit_machinery() {
         let out = partial(&every_shape_grammar(), None);
         let runtime = item_body(&out, "pub mod runtime {");
         for needle in [
-            "pub const DEFAULT_MAX_DEPTH: usize = 256;",
             "pub struct Context {",
             "pub fn enter(&mut self,",
             "pub fn leave(&mut self) {",
-            "TooDeep { limit: usize },",
             "pub fn recover_with_limit<'tree, T: Recover<'tree>>(",
+            "recover_with_limit(root, DEFAULT_MAX_DEPTH)",
+            "DiagnosticKind::TooDeep { limit: self.max_depth }",
         ] {
             assert!(
                 runtime.contains(needle),
                 "runtime module missing `{needle}`"
             );
         }
+        assert!(
+            !runtime.contains("pub const DEFAULT_MAX_DEPTH"),
+            "ts_bnf_runtime's"
+        );
+        assert!(
+            !runtime.contains("TooDeep { limit: usize }"),
+            "declared by ts_bnf_runtime"
+        );
         // `Recover` takes the context, not a bare vector of diagnostics.
         let recover = item_body(&runtime, "pub trait Recover<'tree>: Sized {");
         assert!(recover.contains("cx: &mut Context,"));
@@ -2394,5 +2238,123 @@ mod tests {
             !body.contains("collect_syntax_problems("),
             "it must not recurse"
         );
+    }
+
+    // ── the plain data lives in `ts_bnf_runtime` ────────────────────────
+
+    /// The names the partial `runtime` module re-exports from `ts_bnf_runtime`:
+    /// everything that moved, and nothing else.
+    const MOVED: [&str; 12] = [
+        "DEFAULT_MAX_DEPTH",
+        "Diagnostic",
+        "DiagnosticKind",
+        "ErrorRegion",
+        "Pragma",
+        "Recovered",
+        "Reflect",
+        "Span",
+        "Token",
+        "Visit",
+        "Walk",
+        "walk",
+    ];
+
+    /// The generated `runtime` module re-exports exactly the moved items from
+    /// `ts_bnf_runtime`, so every old path (`ast::runtime::Span`, `::Reflect`,
+    /// `::walk`, `::Recovered`, …) keeps resolving — and that one `pub use` is
+    /// the only place the crate is named.
+    #[test]
+    fn partial_runtime_reexports_the_shared_crate_items() {
+        let out = partial(&every_shape_grammar(), None);
+        let runtime = item_body(&out, "pub mod runtime {");
+
+        let from = runtime
+            .find("pub use ts_bnf_runtime::{")
+            .expect("a `pub use ts_bnf_runtime::{..}`");
+        let list = &runtime[from + "pub use ts_bnf_runtime::{".len()..];
+        let list = &list[..list.find("};").expect("the use list ends")];
+        let mut names: Vec<&str> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.sort_unstable();
+        let mut expected = MOVED.to_vec();
+        expected.sort_unstable();
+        assert_eq!(names, expected);
+
+        assert_eq!(
+            out.matches("ts_bnf_runtime::").count(),
+            1,
+            "the crate is named once, in the `pub use`"
+        );
+    }
+
+    /// None of the moved items is declared in the generated file: each would
+    /// be a second, incompatible copy, which is what the shared crate removes.
+    #[test]
+    fn partial_runtime_declares_none_of_the_moved_items() {
+        for out in [
+            partial(&every_shape_grammar(), None),
+            partial(&unlabelled_grammar(), None),
+        ] {
+            for declaration in [
+                "pub struct Pragma",
+                "pub struct Span",
+                "pub struct Token",
+                "pub struct ErrorRegion",
+                "pub struct Diagnostic",
+                "pub enum DiagnosticKind",
+                "pub struct Recovered",
+                "pub struct Visit",
+                "pub struct Walk",
+                "pub trait Reflect",
+                "pub fn walk(",
+                "pub const DEFAULT_MAX_DEPTH",
+                "impl Reflect for Token",
+                "impl Reflect for ErrorRegion",
+                "impl<T> Recovered<T>",
+            ] {
+                assert!(
+                    !out.contains(declaration),
+                    "`{declaration}` belongs to ts_bnf_runtime, not the generated file"
+                );
+            }
+        }
+    }
+
+    /// What does stay generated is the conversion from a tree-sitter node into
+    /// each shared type: legal on a foreign type because `SourceNode`, the
+    /// trait's parameter, is the generated crate's own.
+    #[test]
+    fn partial_runtime_keeps_the_node_conversions() {
+        let out = partial(&every_shape_grammar(), None);
+        let runtime = item_body(&out, "pub mod runtime {");
+        for target in ["Pragma", "Span", "Token", "ErrorRegion"] {
+            assert!(
+                runtime.contains(&format!(
+                    "impl From<super::super::visitor::SourceNode<'_>> for {target} {{"
+                )),
+                "missing the conversion into `{target}`"
+            );
+        }
+    }
+
+    /// Strict mode does not depend on the shared crate at all: it still
+    /// declares its own `Pragma`, `Span`, `Token` and `BuildError`, and never
+    /// names `ts_bnf_runtime`.
+    #[test]
+    fn strict_runtime_stays_self_contained() {
+        let out = strict(&every_shape_grammar());
+        assert!(!out.contains("ts_bnf_runtime"));
+        let runtime = item_body(&out, "pub mod runtime {");
+        for declaration in [
+            "pub struct Pragma {",
+            "pub struct Span {",
+            "pub struct Token {",
+            "pub enum BuildError {",
+        ] {
+            assert!(runtime.contains(declaration), "strict lost `{declaration}`");
+        }
     }
 }

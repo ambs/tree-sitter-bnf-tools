@@ -1,0 +1,20 @@
+[package]
+name = "ts-bnf-runtime"
+description = "Types shared by the typed ASTs that ts-bnf-tool generates: spans, diagnostics and the Reflect trait"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.90"
+authors.workspace = true
+license.workspace = true
+repository = "https://github.com/ambs/tree-sitter-bnf-tools"
+readme = "README.md"
+keywords = ["bnf", "tree-sitter", "ast", "parser"]
+categories = ["parser-implementations", "development-tools"]
+
+[lints]
+workspace = true
+
+# Deliberately no dependencies: this crate is the part of the generated typed
+# ASTs that has nothing to do with tree-sitter, so a consumer can depend on it
+# alone (`tests/no_tree_sitter.rs` guards that).
+[dependencies]

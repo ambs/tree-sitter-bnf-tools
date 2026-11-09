@@ -36,7 +36,7 @@ so you know what files are safe to hand-edit.
 | `queries/highlights.scm` | A starter syntax-highlighting query. | Written once, then left alone. Edit/extend freely (see [Keeping the grammar in sync](#keeping-the-grammar-in-sync) below). |
 | `ts-bnf-tool.toml` | Records how the crate was scaffolded: the bundled grammar's filename, the crate name, and which flags were used. | Written once; a rerun updates only the fields matching a flag you actually pass. |
 | `Makefile` | A makefile with useful targets, like `generate` that reruns `scaffold` for you. | Written once. Add your own targets. |
-| `Cargo.toml` | The crate manifest. | Written once. Edit freely. |
+| `Cargo.toml` | The crate manifest. With `--partial-trees` it also depends on `ts-bnf-runtime` (see [the shared runtime crate](#input-with-syntax-errors---partial-trees)). | Written once. Edit freely. |
 | `bindings/rust/build.rs` | Compiles `src/parser.c` (and `src/scanner.c`, if present). | No: regenerated on every rerun. |
 | `bindings/rust/lib.rs` | Parser bindings (`LANGUAGE`, `NODE_TYPES`), plus a `parse` convenience function. | Written once. **This is where you add `pub mod` for your own `Visitor` implementations.** |
 | `bindings/rust/visitor.rs` | The generated `Visitor<'tree>` trait (described below). | **No: always regenerated. Never hand-edit this file.** Write your own visitor in a different file instead, and register it in `lib.rs`. |
@@ -603,7 +603,9 @@ when you scaffold, not something you pick at each call site:
 `_span`, `_text` and `runtime::Token` are as in plain `--ast-types`, and
 `TryFrom` and `BuildError` are not generated at all in this mode. Leave the
 flag off and the scaffold is a plain `--ast-types` one: this flag changes
-nothing about it.
+nothing about it. (One more difference, covered under "One runtime for every
+language" below: the plain-data types of `runtime` come from a crate, rather
+than being declared in `ast.rs`.)
 
 `runtime::recover` returns a `Recovered<T>` with two public fields:
 `value: Option<T>`, which is `None` only when not even the root could be
@@ -947,6 +949,49 @@ the size of the thread's stack (`std::thread::Builder::stack_size`). Plain
 `--ast-types`, whose `TryFrom` impls have nowhere to carry a limit, has no such
 guard.
 
+**One runtime for every language.** The data a partial tree is made of has
+nothing to do with tree-sitter: `Span`, `Pragma`, `Token`, `ErrorRegion`,
+`Diagnostic`, `DiagnosticKind`, `Recovered`, `DEFAULT_MAX_DEPTH`, and the
+`Reflect` trait with `walk`, `Walk` and `Visit`. So they are not generated
+into each crate: they are declared once, in the tree-sitter-free
+[`ts-bnf-runtime`](https://crates.io/crates/ts-bnf-runtime) crate, which
+every `--partial-trees` crate depends on. The scaffold writes
+`ts-bnf-runtime = "<version>"` into its `Cargo.toml`, where `<version>` is the
+version of the `ts-bnf-tool` that generated it (the two are released
+together), and `ast::runtime` re-exports the items, so every path in this
+chapter (`decls::ast::runtime::Span`, `::Reflect`, `::walk`, `::Recovered`)
+is the same as ever. What stays generated is what needs tree-sitter: `recover`
+and `recover_with_limit`, the `Recover` trait, the conversions from a
+tree-sitter node into those types, and the `Reflect` impls for the
+grammar's own structs and enums.
+
+That matters to a program that handles more than one language. If each crate
+declared its own `Reflect`, two languages would have two unrelated traits and
+unrelated `Span`s, and the program would convert between them. With one
+crate, they share them, and code written once against it works for every
+language:
+
+```rust
+use ts_bnf_runtime::{walk, Reflect};
+
+/// How many nodes a tree has, whichever language it is a tree of.
+fn size(root: &dyn Reflect) -> usize {
+    walk(root).count()
+}
+
+let decls_tree = decls::parse_ast(&decls_source)?.value;     // `decls`
+let other_tree = otherlang::parse_ast(&other_source)?.value; // another language
+println!("{} and {}", size(&decls_tree.unwrap()), size(&other_tree.unwrap()));
+```
+
+Add `ts-bnf-runtime` to your own `Cargo.toml` to name the trait, with the same
+version requirement as the generated crates, so that Cargo builds one copy of
+it for all of them. A second copy (a different version, say) would be a
+different `Reflect`, and the program would stop compiling with "the trait
+bound `…: ts_bnf_runtime::Reflect` is not satisfied" (and a note that there
+are multiple versions of the crate), which is the conversion problem back
+again.
+
 **Rerunning.** `--partial-trees` is recorded in `ts-bnf-tool.toml` as
 `partial_trees = true`, and a plain `make generate` keeps it. On the
 command line it is a one-way switch, like `--ast-types`. To turn it back
@@ -957,6 +1002,22 @@ after it is first written, does not follow. Delete it so the matching one
 is regenerated, or update it by hand. When you switch with the command-line
 flag, `scaffold` warns you that the example was left untouched; when you
 edit `ts-bnf-tool.toml` instead, it can't tell, so remember to do this.
+
+`Cargo.toml` is yours too, so a rerun never edits it. That matters for a
+crate that has no `ts-bnf-runtime` in it yet: one scaffolded as plain
+`--ast-types`, or with `--partial-trees` by an older `ts-bnf-tool`. Its new
+`ast.rs` does not compile without the dependency, so `scaffold` warns, and
+names the line to add under `[dependencies]`:
+
+```
+warning: bindings/rust/ast.rs now takes its runtime types from the ts-bnf-runtime
+crate, but Cargo.toml does not depend on it, so the crate will not compile;
+Cargo.toml was left untouched — add this line under [dependencies]:
+    ts-bnf-runtime = "<version>"
+```
+
+The warning repeats on each run until the line is there. A crate that is not
+partial, or has the line, hears nothing.
 
 `--partial-trees` composes with `--merge-config`: a merged `enum Loop`
 dispatches to its variants in the same way, and a kind outside its set is

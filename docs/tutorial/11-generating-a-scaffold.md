@@ -680,7 +680,9 @@ That mode also gives you `runtime::walk`, one loop that visits every node of
 the typed tree with its depth and the field label it sits under, so you
 don't write a function per type; and it stops at a depth limit, reporting a
 `TooDeep` diagnostic, instead of overflowing the stack on input nested a few
-hundred levels deep.
+hundred levels deep. Its positions, diagnostics and `Reflect` trait come from
+the shared `ts-bnf-runtime` crate, which the scaffold adds to `Cargo.toml` for
+you, so a program working with several languages writes that code once.
 
 The struct-by-struct breakdown, the reserved `_`-prefixed names, and
 `--merge-config` (which collapses related kinds into one enum) are in

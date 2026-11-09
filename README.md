@@ -161,7 +161,10 @@ Rust struct per grammar rule; `--merge-config <path>` collapses a group of
 related kinds into a single Rust `enum` instead of leaving each with its own
 unrelated struct; `--partial-trees` builds the typed tree from input with
 syntax errors, returning whatever it can plus diagnostics, instead of failing
-on the first one. See
+on the first one; the types such trees are made of (`Span`, `Diagnostic`,
+`Reflect`, …) come from the tree-sitter-free `ts-bnf-runtime` crate, which
+every such crate depends on, so code that handles several languages is
+written once. See
 [Generating a processing scaffold](docs/tutorial/11-generating-a-scaffold.md)
 for the full walkthrough.
 
@@ -169,7 +172,7 @@ for the full walkthrough.
 
 ```sh
 make            # show all available targets
-make build      # build both crates
+make build      # build all crates
 make test       # run Rust tests (generates parser.c if needed)
 make test-grammar  # run tree-sitter corpus tests
 make lint       # clippy
