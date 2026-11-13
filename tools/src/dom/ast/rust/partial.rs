@@ -506,7 +506,10 @@ pub(super) fn fmt_struct_recover(
 /// return when `shape` includes the `"$token"` sentinel, then a `match` on
 /// `node.node.kind()` with one arm per real kind delegating to that kind's
 /// own `Recover`. A kind outside the set yields an `UnexpectedKind`
-/// diagnostic and `None` instead of an error. Each variant goes through
+/// diagnostic and `None` instead of an error. A shape with no real kind at all
+/// has nothing to dispatch on, so it gets the diagnostic without the `match`
+/// (a `match` with only a catch-all arm is a clippy warning in generated
+/// code). Each variant goes through
 /// [`kind_display_name`], so a `passthrough`-renamed kind's variant still
 /// names the type it is actually declared under.
 pub(super) fn fmt_multi_shape_enum_recover(
@@ -525,7 +528,33 @@ pub(super) fn fmt_multi_shape_enum_recover(
             "\"{kind}\" => <{payload} as runtime::Recover<'tree>>::recover(_node, _cx).map({name}::{variant}),\n"
         ));
     }
-    let arms_text = indent(arms.trim_end(), 12);
+
+    // The diagnostic for a kind none of the arms took, and `None`.
+    let unexpected_kind = formatdoc! {r#"
+        let problem = runtime::DiagnosticKind::UnexpectedKind {{
+            expected: "{name}",
+            found: found.to_string(),
+        }};
+        _cx.diagnostics.push(runtime::diagnostic_at(_node, problem));
+        None
+    "#};
+    // With no kind to dispatch on (an enum that can only hold an `ERROR`
+    // region and/or a bare token, as the children enum of a struct whose
+    // children are all labelled fields is) a `match` would have the one
+    // catch-all arm, which clippy flags (`infallible_destructuring_match`).
+    let dispatch = if arms.is_empty() {
+        format!(
+            "let found = _node.node.kind();\n{}",
+            unexpected_kind.trim_end()
+        )
+    } else {
+        format!(
+            "match _node.node.kind() {{\n{}\n    found => {{\n{}\n    }}\n}}",
+            indent(arms.trim_end(), 4),
+            indent(unexpected_kind.trim_end(), 8)
+        )
+    };
+    let dispatch_text = indent(&dispatch, 8);
 
     // Checked before the token branch: an `ERROR` node is named, but its kind
     // is `"ERROR"`, which no arm below would take.
@@ -553,17 +582,7 @@ pub(super) fn fmt_multi_shape_enum_recover(
                 _cx: &mut runtime::Context,
             ) -> Option<Self> {{
         {token_early_return_text}
-                match _node.node.kind() {{
-        {arms_text}
-                    found => {{
-                        let problem = runtime::DiagnosticKind::UnexpectedKind {{
-                            expected: "{name}",
-                            found: found.to_string(),
-                        }};
-                        _cx.diagnostics.push(runtime::diagnostic_at(_node, problem));
-                        None
-                    }}
-                }}
+        {dispatch_text}
             }}
         }}
     "#}
@@ -743,7 +762,7 @@ pub(super) fn fmt_multi_shape_enum_reflect(
 #[cfg(test)]
 mod tests {
     use super::super::RustAst;
-    use super::{AstFieldSpec, field_recover};
+    use super::{AstFieldSpec, field_recover, fmt_multi_shape_enum_recover};
     use crate::dom::Grammar;
     use crate::dom::GrammarNode::{
         Choice, Field, Sequence, TerminalLiteral, TerminalPattern, ZeroOrMore,
@@ -975,6 +994,26 @@ mod tests {
         assert!(body.contains("None"));
         assert!(!body.contains("Err("));
         assert!(!body.contains("Token"));
+    }
+
+    /// An enum with no kind of its own to dispatch on — only an `ERROR` region
+    /// and/or a bare token, which is what the children enum of a struct whose
+    /// children are all labelled fields is — reports every other kind as
+    /// unexpected without a `match` that has nothing but a catch-all arm, which
+    /// clippy rejects (`infallible_destructuring_match`).
+    #[test]
+    fn multi_shape_enum_with_no_kinds_has_no_single_arm_match() {
+        for shape in [
+            vec!["$error".to_string()],
+            vec!["$token".to_string(), "$error".to_string()],
+        ] {
+            let out = fmt_multi_shape_enum_recover(&shape, "ProgramChild", None);
+            assert!(!out.contains("match "), "{out}");
+            assert!(out.contains("let found = _node.node.kind();"), "{out}");
+            assert!(out.contains("expected: \"ProgramChild\","), "{out}");
+            assert!(out.contains("found: found.to_string(),"), "{out}");
+            assert!(out.trim_end().ends_with("None\n    }\n}"), "{out}");
+        }
     }
 
     /// A shape that can also be a bare token keeps its `Token(runtime::Token)`

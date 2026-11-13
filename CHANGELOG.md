@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `scaffold` now runs `rustfmt` (edition 2021, no options of its own) over the
+  Rust files it writes, so a freshly scaffolded crate passes `cargo fmt
+  --check` and a rerun no longer leaves a whitespace-only diff in the
+  regenerated `visitor.rs`/`ast.rs`. Only files written on that run are
+  formatted: `bindings/rust/lib.rs`, `examples/walk.rs` and `examples/ast.rs`
+  keep your edits on a rerun, as before. A missing or failing `rustfmt` is a
+  warning, not an error, and leaves the files unformatted. A fresh `lib.rs`
+  now lists `pub mod ast;` and its `parse_ast` re-export before `pub mod
+  visitor;`, the order `rustfmt` keeps, and a rerun that adds `--ast-types` to
+  an older `lib.rs` inserts them there too (#496).
+
+### Fixed
+- `scaffold --ast-types --partial-trees` no longer generates code that trips
+  `clippy::infallible_destructuring_match`. The `Recover` impl of a
+  `<Kind>Child` enum with no kinds of its own (the children of a struct whose
+  children are all labelled fields) was a `match` with only a catch-all arm; it
+  is now a plain `let`. Generated crates now pass `cargo clippy --all-targets
+  -- -D warnings` in every mode (#496).
+
 ## [0.6.0-beta.2] - 2026-11-13
 
 ### Added

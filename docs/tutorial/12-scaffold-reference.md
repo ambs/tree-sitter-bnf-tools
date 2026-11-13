@@ -71,6 +71,23 @@ way on its next rerun, unless `lib.rs` already mentions `parse_ast`: a
 function of your own under that name is left alone. It never removes
 anything you've added yourself.
 
+### Formatting
+
+After writing the files, `scaffold` runs `rustfmt` (edition 2021, the
+crate's own) over the Rust files **it wrote on that run**, so a freshly
+scaffolded crate already passes `cargo fmt --check`. The tool passes no
+formatting options of its own; a `rustfmt.toml` you keep above the crate is
+honoured, as it is for your own `cargo fmt`.
+
+Because only files written on that run are formatted, a rerun reformats the
+regenerated `bindings/rust/visitor.rs`, `bindings/rust/ast.rs` and
+`bindings/rust/build.rs`, and leaves `lib.rs`, `examples/walk.rs` and
+`examples/ast.rs` exactly as you left them, however you formatted them.
+
+Formatting is cosmetic, so a missing or failing `rustfmt` does not fail the
+run: the whole crate is still written, with a `warning:` on stderr saying
+the Rust files were left unformatted.
+
 ## Other ways to invoke it
 
 Putting the `.bnf` file inside a folder and using that folder as the
