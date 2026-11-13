@@ -15,7 +15,9 @@
 // module path `examples/*.rs` `use`s — needs a strict Rust/C identifier
 // (#378).
 
-use std::path::PathBuf;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use indoc::formatdoc;
 
@@ -24,6 +26,13 @@ use crate::util::hyphens_to_underscores;
 use crate::dom::ast::BuildMode;
 
 use super::{AstOutput, ScaffoldFile};
+
+/// The Rust edition the generated crate is pinned to: written into its
+/// `Cargo.toml` by [`cargo_toml`] and handed to `rustfmt` by
+/// [`format_sources`], so the two cannot drift apart (a formatter parsing
+/// under a different edition than the compiler will is a bug waiting for the
+/// first edition-specific syntax). See [`cargo_toml`] for why it is 2021.
+const EDITION: &str = "2021";
 
 /// Renders every file this target's generated crate needs, at the paths a
 /// Rust crate expects them: `Cargo.toml`/`bindings/rust/lib.rs`/
@@ -97,6 +106,70 @@ pub(super) fn render(
     files
 }
 
+/// Formats the Rust sources among `written` with `rustfmt`, so the generated
+/// crate is already what the user's own `cargo fmt --check` expects (#496), or
+/// returns the warning to print when that could not be done.
+///
+/// `written` is every file this run actually wrote, relative to `dir` — not
+/// every file the crate has. A preserved file that already existed
+/// (`bindings/rust/lib.rs`, `examples/walk.rs`, …) is the user's by now and is
+/// never passed in, so a rerun cannot reformat hand-edits. Only `.rs` files
+/// are formatted; the rest (`Cargo.toml`, the bundled `.bnf`, …) are skipped
+/// here, which is why the caller can hand over the whole list.
+///
+/// The tool passes `rustfmt` no formatting options of its own — only the
+/// crate's [`EDITION`] — so the output is default `rustfmt` style, plus
+/// whatever `rustfmt.toml` the user has above `dir`, which is the
+/// configuration their own `cargo fmt` will apply.
+///
+/// Formatting is cosmetic and the crate is already complete when this runs, so
+/// a missing or failing `rustfmt` is a warning, not an error: unlike
+/// `tree-sitter generate`, nothing the crate needs depends on it.
+pub(super) fn format_sources(dir: &Path, written: &[PathBuf]) -> Option<String> {
+    format_sources_with("rustfmt", dir, written)
+}
+
+/// [`format_sources`] with the formatter's program name injectable, so tests
+/// can exercise the "not installed" path without uninstalling anything.
+fn format_sources_with(program: &str, dir: &Path, written: &[PathBuf]) -> Option<String> {
+    let mut sources = Vec::new();
+    for path in written {
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            sources.push(dir.join(path));
+        }
+    }
+    if sources.is_empty() {
+        return None;
+    }
+
+    let output = match Command::new(program)
+        .args(["--edition", EDITION])
+        .args(&sources)
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Some(format!(
+                "warning: `{program}` not found on PATH; the generated Rust files were left \
+                 unformatted (install it with `rustup component add rustfmt`)"
+            ));
+        }
+        Err(e) => {
+            return Some(format!(
+                "warning: could not run `{program}`: {e}; the generated Rust files were left \
+                 unformatted"
+            ));
+        }
+    };
+    if output.status.success() {
+        return None;
+    }
+    Some(format!(
+        "warning: `{program}` failed, so the generated Rust files may be unformatted:\n{}",
+        String::from_utf8_lossy(&output.stderr).trim_end()
+    ))
+}
+
 /// The `Cargo.toml` dependency line a `--partial-trees` crate needs, and what
 /// [`cargo_toml`] writes for it: `ts-bnf-runtime`, at the version of the tool
 /// doing the generating. The runtime crate and the tool are released together
@@ -138,7 +211,7 @@ fn cargo_toml(name: &str, ast: Option<BuildMode>) -> String {
         version = "0.1.0"
         # Pinned: bindings/rust/lib.rs's `extern "C" {{ ... }}` block requires
         # `unsafe extern "C"` under edition 2024; bump both together, or not at all.
-        edition = "2021"
+        edition = "{EDITION}"
         license = "MIT"
 
         build = "bindings/rust/build.rs"
@@ -258,6 +331,12 @@ fn build_rs(name: &str, no_header: bool) -> String {
 /// never needs to change on a grammar edit, and it's exactly where the
 /// tutorial invites users to add `pub mod` declarations for their own
 /// hand-written `Visitor` implementations.
+///
+/// The module declarations are written in the order `rustfmt` keeps them in —
+/// `pub mod ast;`, its `parse_ast` re-export, then `pub mod visitor;` — because
+/// the file is formatted after it is written (#496), and a template `rustfmt`
+/// reorders would make a fresh `lib.rs` differ from the one
+/// `super::ensure_lib_rs_declares_ast_module` patches an older crate's into.
 fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
     let header = if no_header {
         String::new()
@@ -282,8 +361,8 @@ fn lib_rs(name: &str, no_header: bool, has_ast: bool) -> String {
 
         use tree_sitter_language::LanguageFn;
 
-        pub mod visitor;
-        {ast_mod}// Add `pub mod` declarations here for your own Visitor implementations.
+        {ast_mod}pub mod visitor;
+        // Add `pub mod` declarations here for your own Visitor implementations.
 
         extern "C" {{
             fn tree_sitter_{name}() -> *const ();
@@ -519,5 +598,153 @@ mod tests {
         assert!(with.contains("pub mod ast;\npub use ast::parse_ast;\n"));
         let without = lib_rs("decls", true, false);
         assert!(!without.contains("parse_ast"));
+    }
+
+    /// The edition `rustfmt` parses under is the one the manifest declares:
+    /// both come from [`EDITION`], so bumping one cannot leave the other behind.
+    #[test]
+    fn cargo_toml_declares_the_edition_the_formatter_uses() {
+        let manifest: toml::Table = cargo_toml("decls", None).parse().expect("a valid manifest");
+        assert_eq!(manifest["package"]["edition"].as_str(), Some(EDITION));
+    }
+
+    /// A program name that is on no PATH, to exercise the "not installed" path.
+    const NO_SUCH_FORMATTER: &str = "ts-bnf-test-no-such-formatter";
+
+    /// `true` if a real `rustfmt` can be run, so the tests that need one can
+    /// skip on a machine without it, like the ones that need `tree-sitter`.
+    fn rustfmt_available() -> bool {
+        Command::new("rustfmt").arg("--version").output().is_ok()
+    }
+
+    /// A fresh, empty directory under the system temp dir for one test.
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Only `.rs` files are handed to the formatter: a run that wrote nothing
+    /// else but `Cargo.toml`, the bundled grammar and the like never tries to
+    /// run it at all (which a missing program would otherwise report).
+    #[test]
+    fn format_sources_ignores_files_that_are_not_rust() {
+        let written = [
+            PathBuf::from("Cargo.toml"),
+            PathBuf::from("Makefile"),
+            PathBuf::from("decls.bnf"),
+            PathBuf::from("ts-bnf-tool.toml"),
+        ];
+        assert_eq!(
+            format_sources_with(NO_SUCH_FORMATTER, Path::new("crate"), &written),
+            None
+        );
+        assert_eq!(
+            format_sources_with(NO_SUCH_FORMATTER, Path::new("crate"), &[]),
+            None
+        );
+    }
+
+    /// A missing `rustfmt` is a warning that says how to get it, not an error:
+    /// the crate is complete without formatting.
+    #[test]
+    fn format_sources_warns_when_the_formatter_is_missing() {
+        let warning = format_sources_with(
+            NO_SUCH_FORMATTER,
+            Path::new("crate"),
+            &[PathBuf::from("bindings/rust/visitor.rs")],
+        )
+        .expect("a missing formatter must produce a warning");
+        assert!(warning.starts_with("warning: "), "{warning}");
+        assert!(warning.contains(NO_SUCH_FORMATTER), "{warning}");
+        assert!(warning.contains("not found on PATH"), "{warning}");
+        assert!(
+            warning.contains("rustup component add rustfmt"),
+            "{warning}"
+        );
+    }
+
+    /// A formatter that exists but cannot be run (a permission error, not a
+    /// missing binary) is not reported as "not found on PATH".
+    #[test]
+    #[cfg(unix)]
+    fn format_sources_reports_an_unrunnable_formatter_as_such() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch_dir("ts_bnf_format_sources_unrunnable");
+        let program = dir.join("rustfmt");
+        std::fs::write(&program, "").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let warning = format_sources_with(
+            program.to_str().unwrap(),
+            &dir,
+            &[PathBuf::from("visitor.rs")],
+        )
+        .expect("an unrunnable formatter must produce a warning");
+        assert!(warning.contains("could not run"), "{warning}");
+        assert!(!warning.contains("not found on PATH"), "{warning}");
+    }
+
+    /// Exactly the files listed are formatted — each relative to `dir` — and a
+    /// `.rs` file beside them that was not listed (a preserved, user-owned one)
+    /// is left byte-for-byte alone.
+    #[test]
+    fn format_sources_formats_only_the_listed_files() {
+        if !rustfmt_available() {
+            return;
+        }
+        let dir = scratch_dir("ts_bnf_format_sources_listed");
+        std::fs::write(dir.join("listed.rs"), "fn   main( ){ }\n").unwrap();
+        std::fs::write(dir.join("unlisted.rs"), "fn   main( ){ }\n").unwrap();
+
+        let warning = format_sources(&dir, &[PathBuf::from("listed.rs")]);
+
+        assert_eq!(warning, None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("listed.rs")).unwrap(),
+            "fn main() {}\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("unlisted.rs")).unwrap(),
+            "fn   main( ){ }\n"
+        );
+    }
+
+    /// The formatter parses under the crate's edition, not `rustfmt`'s own
+    /// 2015 default: `async fn` is a hard parse error there.
+    #[test]
+    fn format_sources_parses_under_the_crates_edition() {
+        if !rustfmt_available() {
+            return;
+        }
+        let dir = scratch_dir("ts_bnf_format_sources_edition");
+        std::fs::write(dir.join("a.rs"), "async fn   f( ) { }\n").unwrap();
+
+        assert_eq!(format_sources(&dir, &[PathBuf::from("a.rs")]), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.rs")).unwrap(),
+            "async fn f() {}\n"
+        );
+    }
+
+    /// A source `rustfmt` cannot parse is a warning carrying its own message,
+    /// not an error and not silence.
+    #[test]
+    fn format_sources_warns_with_rustfmts_message_when_it_fails() {
+        if !rustfmt_available() {
+            return;
+        }
+        let dir = scratch_dir("ts_bnf_format_sources_failure");
+        std::fs::write(dir.join("broken.rs"), "fn (\n").unwrap();
+
+        let warning = format_sources(&dir, &[PathBuf::from("broken.rs")])
+            .expect("an unparseable source must produce a warning");
+        assert!(
+            warning.starts_with("warning: `rustfmt` failed"),
+            "{warning}"
+        );
+        assert!(warning.contains("unclosed delimiter"), "{warning}");
     }
 }

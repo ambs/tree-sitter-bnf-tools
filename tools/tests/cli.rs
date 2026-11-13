@@ -1640,6 +1640,291 @@ fn scaffold_rerun_preserves_user_edits_but_regenerates_visitor() {
     );
 }
 
+// ── scaffold formats its Rust output (#496) ─────────────────────────────────
+
+/// `true` if `rustfmt` can be run, so the tests that need it can skip like the
+/// ones that need `tree-sitter` do.
+fn rustfmt_available() -> bool {
+    Command::new("rustfmt").arg("--version").output().is_ok()
+}
+
+/// Asserts that every file in `files` (relative to `dir`) is already exactly
+/// what `rustfmt --edition 2021` would write — the check a user's own
+/// `cargo fmt --check` makes of the generated crate.
+fn assert_rustfmt_clean(dir: &std::path::Path, files: &[&str]) {
+    for file in files {
+        let out = Command::new("rustfmt")
+            .args(["--check", "--edition", "2021"])
+            .arg(dir.join(file))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{file} is not rustfmt-clean:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+/// Every Rust file `scaffold` writes is rustfmt-clean, in each shape of crate
+/// it can produce (visitor only, `--ast-types`, `--ast-types
+/// --partial-trees`), so a user's first `cargo fmt` changes nothing (#496).
+fn scaffold_output_is_rustfmt_clean() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) || !rustfmt_available() {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let base = [
+        "bindings/rust/build.rs",
+        "bindings/rust/lib.rs",
+        "bindings/rust/visitor.rs",
+        "examples/walk.rs",
+    ];
+    let with_ast = [
+        "bindings/rust/build.rs",
+        "bindings/rust/lib.rs",
+        "bindings/rust/visitor.rs",
+        "bindings/rust/ast.rs",
+        "examples/walk.rs",
+        "examples/ast.rs",
+    ];
+
+    let plain = support::scaffold("ts_bnf_scaffold_fmt_plain", "fmtlang", SCAFFOLD_BNF);
+    assert_rustfmt_clean(&plain, &base);
+
+    let strict =
+        support::scaffold_with_ast_types("ts_bnf_scaffold_fmt_strict", "fmtlang", SCAFFOLD_AST_BNF);
+    assert_rustfmt_clean(&strict, &with_ast);
+
+    let partial = support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_fmt_partial",
+        "fmtlang",
+        SCAFFOLD_AST_BNF,
+        None,
+    );
+    assert_rustfmt_clean(&partial, &with_ast);
+}
+
+/// A grammar that exercises most of what the AST generators emit: optional,
+/// repeated and labelled fields, choices of kinds, a labelled choice of tokens,
+/// extras, and a root whose fields are all labelled (so, in `--partial-trees`,
+/// its `_children` enum has no kind of its own).
+const SCAFFOLD_CLIPPY_BNF: &str = indoc! {r#"
+    %extras /\s/, comment
+
+    program -> items: item* ;
+    item -> func | var_decl ;
+    func -> 'fn' name: ident '(' params: param_list? ')' ret: ('->' ident)? body: block ;
+    param_list -> param (',' param)* ;
+    param -> name: ident ':' ty: ident ;
+    block -> '{' stmts: stmt* '}' ;
+    stmt -> assign | call | block ;
+    var_decl -> 'let' name: ident (':' ty: ident)? ('=' value: expr)? ';' ;
+    assign -> target: ident op: ('=' | '+=') value: expr ';' ;
+    call -> callee: ident '(' args: arg_list? ')' ';' ;
+    arg_list -> expr (',' expr)* ;
+    expr -> ident | num | text ;
+    ident -> /[a-z_][a-zA-Z0-9_]*/ ;
+    num -> /[0-9]+/ ;
+    text -> /"[^"]*"/ ;
+    comment -> /#[^\n]*/ ;
+"#};
+
+/// `true` if `cargo clippy` can be run, so the tests that need it can skip.
+fn clippy_available() -> bool {
+    Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string()))
+        .args(["clippy", "--version"])
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
+/// Asserts that `cargo clippy --all-targets -- -D warnings` passes in the
+/// scaffolded crate at `dir`: no clippy lint, and no rustc one either, in
+/// anything `scaffold` generated, examples included. Every crate shares one
+/// target directory so the dependencies (tree-sitter, `cc`) are built once.
+fn assert_clippy_clean(dir: &std::path::Path) {
+    let out = support::cargo_in(dir)
+        .env(
+            "CARGO_TARGET_DIR",
+            std::env::temp_dir().join("ts_bnf_scaffold_clippy_target"),
+        )
+        .args(["clippy", "--quiet", "--all-targets", "--", "-D", "warnings"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "clippy is not clean on {}:\n{}",
+        dir.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+/// Generated code passes clippy with `-D warnings`, in each shape of crate
+/// `scaffold` can produce — a user's own `cargo clippy` in CI must not fail on
+/// files the tool wrote (#496).
+fn scaffold_output_is_clippy_clean() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) || !clippy_available() {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    assert_clippy_clean(&support::scaffold(
+        "ts_bnf_scaffold_clippy_plain",
+        "clippyplain",
+        SCAFFOLD_BNF,
+    ));
+    assert_clippy_clean(&support::scaffold_with_ast_types(
+        "ts_bnf_scaffold_clippy_strict",
+        "clippystrict",
+        SCAFFOLD_CLIPPY_BNF,
+    ));
+    assert_clippy_clean(&support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_clippy_partial",
+        "clippypartial",
+        SCAFFOLD_CLIPPY_BNF,
+        None,
+    ));
+    assert_clippy_clean(&support::scaffold_with_merge_config(
+        "ts_bnf_scaffold_clippy_strict_merge",
+        "clippystrictmerge",
+        SCAFFOLD_MERGE_BNF,
+        SCAFFOLD_MERGE_CONFIG_TOML,
+    ));
+    assert_clippy_clean(&support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_clippy_partial_merge",
+        "clippypartialmerge",
+        SCAFFOLD_MERGE_BNF,
+        Some(SCAFFOLD_MERGE_CONFIG_TOML),
+    ));
+}
+
+#[test]
+/// A rerun formats only what it wrote: `bindings/rust/visitor.rs` is
+/// regenerated and comes out rustfmt-clean, while `bindings/rust/lib.rs` and
+/// `examples/walk.rs`, which are the user's after the first run, keep their
+/// hand-written (and deliberately badly formatted) content byte for byte (#496).
+fn scaffold_rerun_does_not_reformat_preserved_files() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) || !rustfmt_available() {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let path = write_tmp("ts_bnf_scaffold_fmt_rerun.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_fmt_rerun_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let run = || {
+        tool()
+            .args(["scaffold", "--name", "fmtlang", "--output-dir"])
+            .arg(&out_dir)
+            .arg(&path)
+            .output()
+            .unwrap()
+    };
+    let first = run();
+    assert!(
+        first.status.success(),
+        "first scaffold run must succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let lib_rs_path = out_dir.join("bindings/rust/lib.rs");
+    let walk_rs_path = out_dir.join("examples/walk.rs");
+    let visitor_rs_path = out_dir.join("bindings/rust/visitor.rs");
+    let hand_lib = "pub mod visitor;\npub   fn   hand( ){ }\n";
+    let hand_walk = "fn   main( ){ println!( \"hand\" ); }\n";
+    std::fs::write(&lib_rs_path, hand_lib).unwrap();
+    std::fs::write(&walk_rs_path, hand_walk).unwrap();
+    // An unformatted stand-in a rerun must replace with the formatted original.
+    std::fs::write(&visitor_rs_path, "pub   fn   stale( ){ }\n").unwrap();
+
+    let second = run();
+    assert!(
+        second.status.success(),
+        "second scaffold run must succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    assert_eq!(std::fs::read_to_string(&lib_rs_path).unwrap(), hand_lib);
+    assert_eq!(std::fs::read_to_string(&walk_rs_path).unwrap(), hand_walk);
+    let visitor_after = std::fs::read_to_string(&visitor_rs_path).unwrap();
+    assert!(
+        visitor_after.contains("pub trait Visitor<'tree>"),
+        "visitor.rs must be regenerated: {visitor_after}"
+    );
+    assert_rustfmt_clean(&out_dir, &["bindings/rust/visitor.rs"]);
+}
+
+#[test]
+#[cfg(unix)]
+/// With no `rustfmt` on PATH, `scaffold` still succeeds and writes the whole
+/// crate; it only warns that the Rust files were left unformatted (#496).
+fn scaffold_without_rustfmt_warns_and_still_succeeds() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    // A PATH holding only what `tree-sitter generate` needs (itself, and the
+    // `node` it evaluates grammar.js with), so `rustfmt` is the one thing
+    // missing. Skipped if either cannot be found to link.
+    let (Some(tree_sitter), Some(node)) = (find_on_path("tree-sitter"), find_on_path("node"))
+    else {
+        return;
+    };
+    let bin_dir = std::env::temp_dir().join("ts_bnf_scaffold_norustfmt_bin");
+    let _ = fs::remove_dir_all(&bin_dir);
+    fs::create_dir_all(&bin_dir).unwrap();
+    std::os::unix::fs::symlink(&tree_sitter, bin_dir.join("tree-sitter")).unwrap();
+    std::os::unix::fs::symlink(&node, bin_dir.join("node")).unwrap();
+
+    let path = write_tmp("ts_bnf_scaffold_norustfmt.bnf", SCAFFOLD_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_norustfmt_project");
+    let _ = fs::remove_dir_all(&out_dir);
+    let out = tool()
+        .env("PATH", &bin_dir)
+        .args(["scaffold", "--name", "fmtlang", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a missing rustfmt must not fail scaffold: {stderr}"
+    );
+    assert!(
+        stderr.contains("warning: `rustfmt` not found on PATH"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        fs::read_to_string(out_dir.join("bindings/rust/visitor.rs"))
+            .unwrap()
+            .contains("pub trait Visitor<'tree>"),
+        "the crate must still be written in full"
+    );
+}
+
+/// The first `name` found in a directory of `PATH`, or `None`.
+#[cfg(unix)]
+fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    for dir in std::env::split_paths(&std::env::var_os("PATH")?) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 // ── scaffold bundling / ts-bnf-tool.toml (#395) ─────────────────────────────
 
 #[test]
