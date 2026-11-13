@@ -149,7 +149,9 @@ cargo run --example walk -- sample.decls
 
 (shells out to the `tree-sitter` CLI, so `tree-sitter-cli` >= 0.25 must be on
 `PATH` — `npm install -g tree-sitter-cli`; the generated crate also needs a C
-compiler to build `src/parser.c`.)
+compiler to build `src/parser.c`. The generated Rust files are formatted with
+`rustfmt` if it is on `PATH`; without it they are left unformatted, with a
+warning.)
 
 The grammar is bundled into the crate alongside a `ts-bnf-tool.toml`
 recording how it was scaffolded and a `Makefile` with a `generate` target —

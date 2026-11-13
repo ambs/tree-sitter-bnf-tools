@@ -48,6 +48,10 @@ Thus, beyond `ts-bnf-tool` itself, you need:
   it, `scaffold` fails with `` `tree-sitter` not found on PATH ``.
 - **A working C compiler** (`cc`, `gcc` or `clang`). Without it,
   `cargo build` and `cargo run` will fail compiling `src/parser.c`.
+- **`rustfmt` on `PATH`** (optional; `rustup component add rustfmt`).
+  `scaffold` formats the Rust files it writes, so `cargo fmt --check` passes
+  on a fresh crate. Without it, `scaffold` still succeeds, prints a warning,
+  and leaves those files unformatted.
 - **`ts-bnf-tool` itself, installed and on `PATH`.** The generated
   `Makefile`'s `generate` target calls it directly (`$(BNF_TOOL)
   scaffold .`), not through `cargo run`. If it isn't installed

@@ -271,18 +271,28 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
     // Read the previously recorded mode before anything below can patch it.
     let stale_example_warning = stale_ast_example_warning(&dir, &effective_config);
 
+    // Only the files this run actually wrote: a preserved file that already
+    // existed is the user's, and formatting it would rewrite their edits (#496).
+    let mut written = Vec::new();
     for file in crate_files.files {
         let path = dir.join(&file.path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        if file.preserve_existing {
-            write_if_absent(&path, &file.content)?;
+        let did_write = if file.preserve_existing {
+            write_if_absent(&path, &file.content)?
         } else {
             fs::write(&path, &file.content)?;
+            true
+        };
+        if did_write {
+            written.push(file.path);
         }
     }
     config::ensure_scaffold_config_up_to_date(&dir, &effective_config)?;
+    if let Some(warning) = rust::format_sources(&dir, &written) {
+        eprintln!("{warning}");
+    }
 
     if is_fresh_external_bundle {
         eprintln!(
@@ -483,12 +493,15 @@ fn bundle_grammar_sources(
 /// grammar change must not destroy those edits, unlike
 /// `bindings/rust/visitor.rs` and the parser scaffold, which are genuinely
 /// derived and are meant to be regenerated every time.
-fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
+///
+/// Returns whether it wrote the file, so the caller can tell a file it just
+/// created (and may format) from one that was already the user's (#496).
+fn write_if_absent(path: &Path, content: &str) -> Result<bool, Box<dyn Error>> {
     if path.exists() {
-        return Ok(());
+        return Ok(false);
     }
     fs::write(path, content)?;
-    Ok(())
+    Ok(true)
 }
 
 /// Patches `bindings/rust/lib.rs` (already written by the caller's own file
@@ -515,8 +528,9 @@ fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
 /// export they placed differently) would otherwise be shadowed by a
 /// duplicate definition.
 ///
-/// Inserted right after the `pub mod visitor;` line — [`rust::render`]'s own
-/// insertion point — so the patched file ends up matching what a fresh
+/// Inserted right before the `pub mod visitor;` line — where the Rust
+/// emitter's own `lib.rs` template puts them (in the order `rustfmt` keeps,
+/// see [`rust::render`]) — so the patched file ends up matching what a fresh
 /// scaffold would have produced; appended at the end as a defensive
 /// fallback if that anchor line isn't found (e.g. removed by hand). A no-op
 /// when both lines are already present, which covers every ordinary
@@ -549,7 +563,7 @@ fn ensure_lib_rs_declares_ast_module(dir: &Path) -> Result<(), Box<dyn Error>> {
         }
         let anchor = "pub mod visitor;\n";
         match patched.find(anchor) {
-            Some(idx) => patched.insert_str(idx + anchor.len(), &missing),
+            Some(idx) => patched.insert_str(idx, &missing),
             None => patched = format!("{patched}\n{missing}"),
         }
     }
@@ -755,14 +769,14 @@ mod tests {
         fs::read_to_string(&path).unwrap()
     }
 
-    /// A `lib.rs` with neither line gets both, together, after the
+    /// A `lib.rs` with neither line gets both, together, before the
     /// `pub mod visitor;` anchor — what a fresh scaffold would have produced.
     #[test]
     fn ensure_lib_rs_adds_the_module_and_the_export_together() {
         let patched = patched_lib_rs("neither", "pub mod visitor;\n// mine\n");
         assert_eq!(
             patched,
-            "pub mod visitor;\npub mod ast;\npub use ast::parse_ast;\n// mine\n"
+            "pub mod ast;\npub use ast::parse_ast;\npub mod visitor;\n// mine\n"
         );
     }
 
