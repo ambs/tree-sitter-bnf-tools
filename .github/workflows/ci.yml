@@ -60,12 +60,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
+      # Deliberately not caching `target/`. cargo-llvm-cov reports every
+      # instrumented executable it finds under target/llvm-cov-target, and a
+      # restored one can have been built from an older version of the sources
+      # (a version bump or a toolchain/cargo upgrade changes the units' hashes
+      # and layout, so the old test executables are never overwritten). Their
+      # coverage mappings are merged in at the line numbers of the current
+      # files: lines that never run, which added over 2,000 phantom uncovered
+      # lines to this job's report and failed `codecov/patch` on a PR whose
+      # changes were ~99.8% covered. `cargo llvm-cov clean --workspace` does
+      # not remove them.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target/
           key: ubuntu-latest-cargo-llvm-cov-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ubuntu-latest-cargo-llvm-cov-
       - name: Cache tree-sitter-cli
