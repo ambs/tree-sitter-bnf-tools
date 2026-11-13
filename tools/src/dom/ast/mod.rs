@@ -476,6 +476,20 @@ mod tests {
         assert!(unlabelled_has_token(&g, &body));
     }
 
+    /// An alias whose target is neither a name nor a literal — not something
+    /// the parser produces, but a tree can be built by hand — names no node
+    /// tree-sitter would report, so it contributes no child of either kind.
+    #[test]
+    fn unlabelled_children_alias_to_neither_name_nor_literal_contributes_nothing() {
+        let g = Grammar::from_rules([p("term", TerminalLiteral("'t'".into()))]);
+        let body = Alias(
+            Box::new(nt("term")),
+            Box::new(TerminalPattern("/x/".into())),
+        );
+        assert!(unlabelled(&g, &body).is_empty());
+        assert!(!unlabelled_has_token(&g, &body));
+    }
+
     /// Mutually recursive hidden rules terminate rather than looping.
     #[test]
     fn unlabelled_children_cycle_protection_terminates() {

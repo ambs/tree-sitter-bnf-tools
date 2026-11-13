@@ -379,6 +379,23 @@ mod tests {
         assert!(region.children().is_empty());
     }
 
+    /// The walk does not skip unnamed nodes: a literal such as a bracket is
+    /// visited like any other node, and what a visit reports about it — that
+    /// it is unnamed, and where it is — is that node's own, not its parent's.
+    #[test]
+    fn walk_visits_unnamed_nodes_and_reports_their_own_spans() {
+        let mut unnamed = Vec::new();
+        for visit in walk(small_tree()) {
+            if !visit.node.is_named() {
+                unnamed.push((
+                    visit.node.kind().to_string(),
+                    visit.node.span().byte_range.clone(),
+                ));
+            }
+        }
+        assert_eq!(unnamed, [("(".to_string(), 0..1), (")".to_string(), 8..9)]);
+    }
+
     /// `Visit` is `Copy`, so a consumer can keep a visit while it goes on.
     #[test]
     fn a_visit_is_copy() {

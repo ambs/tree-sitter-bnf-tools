@@ -576,13 +576,14 @@ pub(super) fn fmt_multi_shape_enum_recover(
 /// enum is transparent to whoever reads `children()`; a struct or a token is
 /// pushed as itself. `access` is the Rust expression naming the field
 /// (`self.name`) and `label` is the grammar's own field label, verbatim —
-/// not the escaped Rust identifier — or `None`.
+/// not the escaped Rust identifier. (Unlabelled children are not fields; the
+/// caller pushes them with a `None` label itself.)
 ///
 /// Deliberately no `if let … && …`: the generated crate is pinned to edition
 /// 2021, where let-chains don't exist.
 fn reflect_push(
     access: &str,
-    label: Option<&str>,
+    label: &str,
     field: &AstFieldSpec,
     merge_config: Option<&MergeConfig>,
 ) -> String {
@@ -591,10 +592,7 @@ fn reflect_push(
     } else {
         "v"
     };
-    let label = match label {
-        Some(label) => format!("Some(\"{label}\")"),
-        None => "None".to_string(),
-    };
+    let label = format!("Some(\"{label}\")");
     if field.multiple {
         format!("for v in &{access} {{\n    out.push(({label}, {item}));\n}}\n")
     } else {
@@ -634,12 +632,7 @@ pub(super) fn fmt_struct_reflect(
     let mut pushes = String::new();
     for (field, field_spec) in &spec.fields {
         let access = format!("self.{}", rust_field_ident(field));
-        pushes.push_str(&reflect_push(
-            &access,
-            Some(field),
-            field_spec,
-            merge_config,
-        ));
+        pushes.push_str(&reflect_push(&access, field, field_spec, merge_config));
     }
     if !spec.is_leaf {
         // Always a children enum, so always unwrapped to the node it holds.
@@ -750,6 +743,7 @@ pub(super) fn fmt_multi_shape_enum_reflect(
 #[cfg(test)]
 mod tests {
     use super::super::RustAst;
+    use super::{AstFieldSpec, field_recover};
     use crate::dom::Grammar;
     use crate::dom::GrammarNode::{
         Choice, Field, Sequence, TerminalLiteral, TerminalPattern, ZeroOrMore,
@@ -1422,11 +1416,21 @@ mod tests {
             p("b", TerminalLiteral("'b'".into())),
             p("program_child", TerminalLiteral("'c'".into())),
         ]);
-        match RustAst::new(&g, "g", true, None, BuildMode::Partial) {
-            Err(e) => assert!(e.contains("ProgramChild"), "{e}"),
-            Ok(_) => panic!("partial mode must reject the colliding name"),
-        }
+        let rejected = RustAst::new(&g, "g", true, None, BuildMode::Partial)
+            .err()
+            .expect("partial mode must reject the colliding name");
+        assert!(rejected.contains("ProgramChild"), "{rejected}");
         assert!(RustAst::new(&g, "g", true, None, BuildMode::Strict).is_ok());
+    }
+
+    /// A field whose target names no kind and no token has no shape to recover
+    /// into. The strict `field_try_from` panics the same way: a field always
+    /// resolves to at least one target kind, so this is a bug guard, not input
+    /// handling.
+    #[test]
+    #[should_panic(expected = "a field always resolves to at least one target kind")]
+    fn field_recover_panics_on_empty_target() {
+        field_recover("kind", "field", &AstFieldSpec::default());
     }
 
     // ── literal children (`Token`) ──────────────────────────────────────
