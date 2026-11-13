@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0-beta.2] - 2026-11-13
+
 ### Added
 - `scaffold --ast-types --partial-trees`: the generated typed AST can now be
   built from a parse tree that contains syntax errors. Instead of failing on
@@ -22,17 +24,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   variant for each child kind, `Token` for a literal, and `Error`: a broken
   region of the source (an `ERROR` node) stays in the tree, in source order
   under its parent, as a `runtime::ErrorRegion { span, text }` instead of
-  being dropped. Every node also
-  implements the new `runtime::Reflect` trait — `kind()` (the tree-sitter
-  kind), `span()`, `text()` (`Some` only for a leaf or a token), `children()`
-  (labelled fields and unlabelled children in source order, literals
-  included, each paired with the grammar field label it sits under, or `None`)
-  and `is_named()` — so one generic loop can walk any tree instead of a
-  function per type. The generated enums implement it by delegating to
-  the variant they hold, and a parent's `children()` yields that inner node,
-  never the enum. `examples/ast.rs` prints the recovered tree and each
-  diagnostic, exiting 1 if there were any (#487).
-
+  being dropped. Every node also implements the new `runtime::Reflect`
+  trait — `kind()` (the tree-sitter kind), `span()`, `text()` (`Some` only for
+  a leaf or a token), `children()` (labelled fields and unlabelled children in
+  source order, literals included, each paired with the grammar field label it
+  sits under, or `None`) and `is_named()` — so one generic loop can walk any
+  tree instead of a function per type. The generated enums implement it by
+  delegating to the variant they hold, and a parent's `children()` yields that
+  inner node, never the enum. `examples/ast.rs` prints the recovered tree and
+  each diagnostic, exiting 1 if there were any (#487).
 - **`ts-bnf-runtime`, a new crate** (released with `ts-bnf-tool`, same version):
   the part of a `--partial-trees` crate's `ast::runtime` that has nothing to do
   with tree-sitter — `Pragma`, `Span`, `Token`, `ErrorRegion`, `Diagnostic`,
@@ -53,7 +53,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   generated code. Plain `--ast-types` output is unchanged. `Cargo.toml` is
   never edited on a rerun, so a crate that lacks the dependency (one scaffolded
   as plain `--ast-types`, say) gets a warning naming the line to add (#492).
-
 - `scaffold --ast-types --partial-trees`: `runtime::walk(&root)`, a depth-first,
   source-order iterator over every node of a typed tree as a `Visit { node,
   field, depth }`, with an explicit stack instead of recursion, so nobody
@@ -69,7 +68,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   too, so a syntax error deep in a deep tree is still found. Plain
   `--ast-types` (whose `TryFrom` impls have nowhere to carry a limit) has no
   such guard (#487).
-
 - `scaffold --ast-types` generates `parse_ast(source: &str)` into `ast.rs`,
   re-exported at the crate root, so a program can get the typed tree without
   touching tree-sitter: it parses, wraps the root node and builds the tree in
@@ -113,12 +111,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   variants called `Token` and did not compile; that rule's variant is now
   `TokenNode`. The same applies to a rule named `error` in a `--partial-trees`
   children enum. Only a variant that would have clashed is renamed (#487).
-- `scaffold --ast-types`: the `_pragma` start position of a generated AST node
-  (`runtime::Pragma`) now reports a **character** column instead of a byte
+- `scaffold --ast-types`: the positions a generated AST node reports
+  (`runtime::Pragma` — `_span.start` and `_span.end`, or `_pragma` before the
+  `_span` change above) now use a **character** column instead of a byte
   column — on a line containing multibyte characters such as `ç` or `ã` the
-  column used to overshoot by one per extra byte — and no longer counts a
+  column used to overshoot by one per extra byte — and no longer count a
   leading UTF-8 byte-order mark as part of line 1, which used to shift every
-  column on the first line by 3. Regenerate `ast.rs` to pick this up.
+  column on the first line by 3. Regenerate `ast.rs` to pick this up (#490).
 - `scaffold --ast-types` no longer rejects a grammar whose "kind or literal"
   child set is shared by several rules or fields under different names, with
   `error: kind 'x' and shape [x, $token] both generate 'X'; rename one of
@@ -690,7 +689,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Line comments (`#`)
   - Warning on undefined rule references in directive and rule bodies
 
-[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.1...HEAD
+[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.2...HEAD
+[0.6.0-beta.2]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.1...v0.6.0-beta.2
 [0.6.0-beta.1]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.5.0...v0.6.0-beta.1
 [0.5.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.3.0...v0.4.0
