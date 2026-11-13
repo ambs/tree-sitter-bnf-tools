@@ -21,6 +21,15 @@ pub struct AstNodeSpec {
     pub kind: String,
     /// the list of fields, and their data
     pub fields: IndexMap<String, AstFieldSpec>,
+    /// What this node can have as *unlabelled* children — the ones no field
+    /// label captures — or `None` when it can have none (always `None` for a
+    /// leaf kind, whose `_text` already covers all of its own source). The
+    /// target is the visible kinds that can occur, plus `anonymous_token` when
+    /// a string literal can (a keyword or punctuation, which tree-sitter keeps
+    /// as an anonymous child node). Always `multiple`. Derived for every kind,
+    /// but only the partial-trees emitter ([`BuildMode::Partial`]) uses it:
+    /// strict mode keeps capturing labelled fields only, exactly as before.
+    pub children: Option<AstFieldSpec>,
     /// true is node is leaf
     pub is_leaf: bool,
 }
@@ -33,6 +42,36 @@ pub struct AstFieldSpec {
     /// `true` if this field's value can occur more than once (`Vec<T>`
     /// in the emitted struct), `false` for exactly one (`T`).
     pub multiple: bool,
+}
+
+/// How a generated AST treats a parse tree that contains tree-sitter
+/// recovery nodes (`ERROR`/`MISSING`).
+///
+/// This changes the *shape* of the generated types, not just their runtime
+/// behaviour (`Partial` makes fields optional), so it's chosen once at
+/// generation time — the `--partial-trees` flag — rather than at the call
+/// site. Language-agnostic: any target-language emitter has the same choice
+/// to make, so it lives here beside the derivation, not in `rust.rs`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BuildMode {
+    /// The first problem aborts the whole build with an error. Today's
+    /// behaviour, and the default.
+    #[default]
+    Strict,
+    /// A tree with syntax errors still yields whatever could be built, plus
+    /// a list of diagnostics describing what couldn't.
+    Partial,
+}
+
+impl From<bool> for BuildMode {
+    /// Maps the `--partial-trees` flag (`true` ⇒ [`BuildMode::Partial`]).
+    fn from(partial_trees: bool) -> Self {
+        if partial_trees {
+            BuildMode::Partial
+        } else {
+            BuildMode::Strict
+        }
+    }
 }
 
 /// Collects every field declared directly under a kind's `body`, each
@@ -172,6 +211,80 @@ fn field_value_is_multiple_into(
     }
 }
 
+/// Collects what `node` can have as unlabelled children: the visible kinds
+/// reachable without passing through a [`GrammarNode::Field`], in
+/// first-encountered order, with `anonymous_token` set when a string literal
+/// is reachable the same way.
+///
+/// The mirror image of [`collect_ast_fields`]: that walk keeps what a field
+/// label captures, this one keeps what is left over. Same traversal rules —
+/// transparent through hidden/`%inline` rules (cycle-protected) and
+/// transparent wrappers, stops at a visible `NonTerminal` (its children are
+/// its own), an `alias(body, name)` contributes `name` when it is a visible
+/// kind, is transparent through `body` when it is a hidden one, and counts as
+/// a literal when it renames to one. Anything under a `Field` is labelled, so
+/// it is skipped entirely.
+///
+/// Only a [`GrammarNode::TerminalLiteral`] counts as a token: tree-sitter
+/// keeps a string literal as an anonymous child node, but an inline pattern
+/// (`/[0-9]+/`) becomes a hidden auxiliary token that never appears in the
+/// tree (checked with `tree-sitter parse --cst`), so there is nothing to
+/// capture. A rule that is a single token is a leaf, handled by the caller.
+fn collect_unlabelled_children(grammar: &Grammar, node: &GrammarNode) -> FieldTargetKinds {
+    let mut out = FieldTargetKinds::default();
+    collect_unlabelled_children_into(grammar, node, &mut HashSet::new(), &mut out);
+    out
+}
+
+/// Recursive worker for [`collect_unlabelled_children`]; `in_progress` holds
+/// the hidden/inline rule names currently being resolved, for cycle
+/// protection.
+fn collect_unlabelled_children_into(
+    grammar: &Grammar,
+    node: &GrammarNode,
+    in_progress: &mut HashSet<String>,
+    out: &mut FieldTargetKinds,
+) {
+    match node {
+        GrammarNode::Field(_, _) => {}
+        GrammarNode::NonTerminal(name) => {
+            if !grammar.is_hidden_rule(name) && !grammar.is_inline_rule(name) {
+                out.named.insert(name.clone());
+                return;
+            }
+            if !in_progress.insert(name.clone()) {
+                return;
+            }
+            if let Some(production) = grammar.productions.get(name) {
+                collect_unlabelled_children_into(grammar, &production.body, in_progress, out);
+            }
+            in_progress.remove(name);
+        }
+        GrammarNode::TerminalLiteral(_) => out.anonymous_token = true,
+        GrammarNode::TerminalPattern(_) => {}
+        GrammarNode::Sequence(children) | GrammarNode::Choice(children) => {
+            for child in children {
+                collect_unlabelled_children_into(grammar, child, in_progress, out);
+            }
+        }
+        GrammarNode::Alias(body, name) => match name.as_ref() {
+            GrammarNode::NonTerminal(n) if !grammar.is_hidden_rule(n) => {
+                out.named.insert(n.clone());
+            }
+            GrammarNode::NonTerminal(_) => {
+                collect_unlabelled_children_into(grammar, body, in_progress, out);
+            }
+            GrammarNode::TerminalLiteral(_) => out.anonymous_token = true,
+            _ => {}
+        },
+        _ => {
+            if let Some(inner) = node.transparent_inner() {
+                collect_unlabelled_children_into(grammar, inner, in_progress, out);
+            }
+        }
+    }
+}
+
 /// Derives one [`AstNodeSpec`] per visible kind ([`visible_kinds`]) of
 /// `grammar`, in the same order, each built from that kind's own body
 /// ([`body_for_kind`]): [`is_leaf_body`] decides `is_leaf`, and
@@ -189,10 +302,28 @@ fn derive_ast_node_specs(grammar: &Grammar) -> IndexMap<String, AstNodeSpec> {
             .expect("every visible kind has a resolvable body");
         let ast_fields = collect_ast_fields(grammar, node);
 
+        // A leaf kind has no children to capture: its `_text` is the whole
+        // node, literals included.
+        let is_leaf = is_leaf_body(grammar, node);
+        let children = if is_leaf {
+            None
+        } else {
+            let target = collect_unlabelled_children(grammar, node);
+            if target.named.is_empty() && !target.anonymous_token {
+                None
+            } else {
+                Some(AstFieldSpec {
+                    target,
+                    multiple: true,
+                })
+            }
+        };
+
         let spec = AstNodeSpec {
             kind: kind.clone(),
             fields: ast_fields,
-            is_leaf: is_leaf_body(grammar, node),
+            children,
+            is_leaf,
         };
         out.insert(kind, spec);
     }
@@ -203,8 +334,258 @@ fn derive_ast_node_specs(grammar: &Grammar) -> IndexMap<String, AstNodeSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── collect_unlabelled_child_kinds / AstNodeSpec::children ───────────
+
+    /// Collects the unlabelled-child *kinds* of `body` in `g` as a plain
+    /// `Vec`, for readable assertions.
+    fn unlabelled(g: &Grammar, body: &GrammarNode) -> Vec<String> {
+        collect_unlabelled_children(g, body)
+            .named
+            .into_iter()
+            .collect()
+    }
+
+    /// Whether a string literal can be an unlabelled child of `body` in `g`.
+    fn unlabelled_has_token(g: &Grammar, body: &GrammarNode) -> bool {
+        collect_unlabelled_children(g, body).anonymous_token
+    }
+
+    /// A repeated reference to a visible kind with no label is an unlabelled
+    /// child — the `program -> decl* ;` shape that gives an empty struct today.
+    #[test]
+    fn unlabelled_children_plain_visible_reference() {
+        let g = Grammar::from_rules([p("decl", TerminalLiteral("'d'".into()))]);
+        let body = ZeroOrMore(Box::new(nt("decl")));
+        assert_eq!(unlabelled(&g, &body), vec!["decl"]);
+    }
+
+    /// Everything under a `Field` is labelled, so it is excluded — including
+    /// when the field sits under a repetition, and when its value is a hidden
+    /// rule holding visible kinds.
+    #[test]
+    fn unlabelled_children_skip_everything_under_a_field() {
+        let g = Grammar::from_rules([
+            p("a", TerminalLiteral("'a'".into())),
+            p("b", TerminalLiteral("'b'".into())),
+            p("_hidden", Choice(vec![nt("a"), nt("b")])),
+        ]);
+        let body = Sequence(vec![
+            Field("x".into(), Box::new(nt("a"))),
+            ZeroOrMore(Box::new(Field("y".into(), Box::new(nt("_hidden"))))),
+        ]);
+        assert!(unlabelled(&g, &body).is_empty());
+    }
+
+    /// A kind reached both under a label and without one is still an
+    /// unlabelled child: the label only captures its own occurrence.
+    #[test]
+    fn unlabelled_children_keep_a_kind_also_used_under_a_label() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'a'".into()))]);
+        let body = Sequence(vec![Field("l".into(), Box::new(nt("a"))), nt("a")]);
+        assert_eq!(unlabelled(&g, &body), vec!["a"]);
+    }
+
+    /// Hidden rules are transparent: their visible kinds are children of the
+    /// referencing node, in first-encountered order, without duplicates.
+    #[test]
+    fn unlabelled_children_transparent_through_hidden_rule() {
+        let g = Grammar::from_rules([
+            p("a", TerminalLiteral("'a'".into())),
+            p("b", TerminalLiteral("'b'".into())),
+            p("_either", Choice(vec![nt("b"), nt("a")])),
+        ]);
+        let body = Sequence(vec![nt("_either"), nt("a")]);
+        assert_eq!(unlabelled(&g, &body), vec!["b", "a"]);
+    }
+
+    /// A visible kind's own children are its own: the walk stops there.
+    #[test]
+    fn unlabelled_children_stop_at_a_visible_reference() {
+        let g = Grammar::from_rules([
+            p("outer", nt("inner")),
+            p("inner", nt("deep")),
+            p("deep", TerminalLiteral("'d'".into())),
+        ]);
+        assert_eq!(unlabelled(&g, &nt("inner")), vec!["inner"]);
+    }
+
+    /// An alias to a visible kind contributes the alias name (that is the
+    /// kind tree-sitter reports), not the aliased rule.
+    #[test]
+    fn unlabelled_children_alias_contributes_its_target_name() {
+        let g = Grammar::from_rules([p("term", TerminalLiteral("'t'".into()))]);
+        let body = Alias(Box::new(nt("term")), Box::new(nt("renamed")));
+        assert_eq!(unlabelled(&g, &body), vec!["renamed"]);
+    }
+
+    /// An alias to a hidden name is transparent: the body's kinds show through.
+    #[test]
+    fn unlabelled_children_alias_to_hidden_name_is_transparent() {
+        let g = Grammar::from_rules([p("term", TerminalLiteral("'t'".into()))]);
+        let body = Alias(Box::new(nt("term")), Box::new(nt("_hidden")));
+        assert_eq!(unlabelled(&g, &body), vec!["term"]);
+    }
+
+    /// A string literal is an anonymous child node, so it counts as a token
+    /// child alongside the named kinds.
+    #[test]
+    fn unlabelled_children_literal_is_a_token_child() {
+        let g = Grammar::from_rules([p("a", TerminalLiteral("'a'".into()))]);
+        let body = Sequence(vec![TerminalLiteral("'+'".into()), nt("a")]);
+        assert_eq!(unlabelled(&g, &body), vec!["a"]);
+        assert!(unlabelled_has_token(&g, &body));
+    }
+
+    /// An inline pattern is a hidden auxiliary token that never appears in
+    /// the tree (checked with `tree-sitter parse --cst`), so there is nothing
+    /// to capture and it is not a token child.
+    #[test]
+    fn unlabelled_children_inline_pattern_is_not_a_child() {
+        let g = Grammar::from_rules([]);
+        let body = Sequence(vec![TerminalPattern("/[a-z]+/".into())]);
+        assert!(unlabelled(&g, &body).is_empty());
+        assert!(!unlabelled_has_token(&g, &body));
+    }
+
+    /// A literal under a field is labelled, so it is not an unlabelled child.
+    #[test]
+    fn unlabelled_children_literal_under_a_field_is_labelled() {
+        let g = Grammar::from_rules([]);
+        let body = Field("op".into(), Box::new(TerminalLiteral("'+'".into())));
+        assert!(!unlabelled_has_token(&g, &body));
+    }
+
+    /// Hidden rules are transparent for literals too.
+    #[test]
+    fn unlabelled_children_literal_through_hidden_rule() {
+        let g = Grammar::from_rules([p("_semi", TerminalLiteral("';'".into()))]);
+        assert!(unlabelled_has_token(&g, &nt("_semi")));
+    }
+
+    /// An alias that renames to a literal produces an anonymous node, so it
+    /// is a token child — and not a named one.
+    #[test]
+    fn unlabelled_children_alias_to_a_literal_is_a_token_child() {
+        let g = Grammar::from_rules([p("term", TerminalLiteral("'t'".into()))]);
+        let body = Alias(
+            Box::new(nt("term")),
+            Box::new(TerminalLiteral("'x'".into())),
+        );
+        assert!(unlabelled(&g, &body).is_empty());
+        assert!(unlabelled_has_token(&g, &body));
+    }
+
+    /// An alias whose target is neither a name nor a literal — not something
+    /// the parser produces, but a tree can be built by hand — names no node
+    /// tree-sitter would report, so it contributes no child of either kind.
+    #[test]
+    fn unlabelled_children_alias_to_neither_name_nor_literal_contributes_nothing() {
+        let g = Grammar::from_rules([p("term", TerminalLiteral("'t'".into()))]);
+        let body = Alias(
+            Box::new(nt("term")),
+            Box::new(TerminalPattern("/x/".into())),
+        );
+        assert!(unlabelled(&g, &body).is_empty());
+        assert!(!unlabelled_has_token(&g, &body));
+    }
+
+    /// Mutually recursive hidden rules terminate rather than looping.
+    #[test]
+    fn unlabelled_children_cycle_protection_terminates() {
+        let g = Grammar::from_rules([p("_a", nt("_b")), p("_b", nt("_a"))]);
+        assert!(unlabelled(&g, &nt("_a")).is_empty());
+    }
+
+    /// The derived spec carries unlabelled children as a `multiple` target —
+    /// and `None` for a leaf or a fully labelled kind.
+    #[test]
+    fn derived_spec_children_is_multiple_named_only_and_absent_when_empty() {
+        let g = Grammar::from_rules([
+            p("program", ZeroOrMore(Box::new(nt("decl")))),
+            p("decl", Field("name".into(), Box::new(nt("ident")))),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        let specs = derive_ast_node_specs(&g);
+
+        let children = specs["program"]
+            .children
+            .as_ref()
+            .expect("program has children");
+        assert!(children.multiple);
+        assert!(!children.target.anonymous_token, "no literal in this body");
+        assert_eq!(
+            children.target.named.iter().cloned().collect::<Vec<_>>(),
+            vec!["decl"]
+        );
+
+        assert!(specs["decl"].children.is_none(), "fully labelled");
+        assert!(specs["ident"].children.is_none(), "leaf");
+    }
+
+    /// A non-leaf kind's literals are part of its children: alongside named
+    /// kinds, or on their own when a label captures everything named.
+    #[test]
+    fn derived_spec_children_include_literals_of_a_non_leaf_kind() {
+        let g = Grammar::from_rules([
+            p(
+                "decl",
+                Sequence(vec![TerminalLiteral("'var'".into()), nt("ident")]),
+            ),
+            p(
+                "call",
+                Sequence(vec![
+                    Field("name".into(), Box::new(nt("ident"))),
+                    TerminalLiteral("'('".into()),
+                    TerminalLiteral("')'".into()),
+                ]),
+            ),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        let specs = derive_ast_node_specs(&g);
+
+        let decl = specs["decl"].children.as_ref().expect("decl has children");
+        assert_eq!(
+            decl.target.named.iter().cloned().collect::<Vec<_>>(),
+            vec!["ident"]
+        );
+        assert!(decl.target.anonymous_token);
+
+        let call = specs["call"].children.as_ref().expect("call has literals");
+        assert!(call.target.named.is_empty());
+        assert!(call.target.anonymous_token);
+    }
+
+    /// A leaf kind has no children even when its body is literals: `_text` is
+    /// the whole node already (`op -> '+' | '-' ;` is a node whose child is
+    /// the anonymous `+`, and its text is that `+`).
+    #[test]
+    fn derived_spec_leaf_kind_has_no_children_even_with_literals() {
+        let g = Grammar::from_rules([p(
+            "op",
+            Choice(vec![
+                TerminalLiteral("'+'".into()),
+                TerminalLiteral("'-'".into()),
+            ]),
+        )]);
+        let specs = derive_ast_node_specs(&g);
+        assert!(specs["op"].is_leaf);
+        assert!(specs["op"].children.is_none());
+    }
+
+    // ── BuildMode ───────────────────────────────────────────────────────
+
+    /// The `--partial-trees` flag maps `true` to partial and `false` to
+    /// strict, and strict is the default.
+    #[test]
+    fn build_mode_from_flag_and_default() {
+        assert_eq!(BuildMode::from(true), BuildMode::Partial);
+        assert_eq!(BuildMode::from(false), BuildMode::Strict);
+        assert_eq!(BuildMode::default(), BuildMode::Strict);
+    }
     use crate::dom::GrammarNode::{
-        Alias, Field, OneOrMore, Optional, Sequence, TerminalLiteral, ZeroOrMore,
+        Alias, Choice, Field, OneOrMore, Optional, Sequence, TerminalLiteral, TerminalPattern,
+        ZeroOrMore,
     };
     use crate::dom::test_utils::{nt, p};
     use crate::dom::visitor::collect_fields;

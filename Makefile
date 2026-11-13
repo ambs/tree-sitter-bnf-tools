@@ -92,10 +92,10 @@ ts-version-check: ## Check that tree-sitter-cli >= TS_MIN is installed
 test-grammar: ts-version-check $(PARSER_C) ## Run tree-sitter corpus tests
 	cd $(GRAMMAR_DIR) && $(TS) test
 
-build: $(PARSER_C) ## Build both crates (debug)
+build: $(PARSER_C) ## Build all crates (debug)
 	$(CARGO) build
 
-release: $(PARSER_C) ## Build both crates (release)
+release: $(PARSER_C) ## Build all crates (release)
 	$(CARGO) build --release
 
 test: $(PARSER_C) ## Run all Rust tests
@@ -138,7 +138,11 @@ publish-guard: ## Fail if the working tree has uncommitted changes beyond the gi
 		exit 1; \
 	fi
 
-publish: publish-guard ## Publish crates to crates.io (tree-sitter-bnf first, then ts-bnf-tool)
+# ts-bnf-runtime goes first: generated `--partial-trees` crates depend on it, and
+# ts-bnf-tool needs it on crates.io to be packaged (its tests build such
+# crates). It and the tool share a version, so they are always released together.
+publish: publish-guard ## Publish crates to crates.io (ts-bnf-runtime and tree-sitter-bnf first, then ts-bnf-tool)
+	$(CARGO) publish -p ts-bnf-runtime
 	$(CARGO) publish -p tree-sitter-bnf --allow-dirty
 	@echo "Waiting for crates.io index to update..."
 	sleep 30

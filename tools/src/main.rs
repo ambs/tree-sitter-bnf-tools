@@ -182,6 +182,11 @@ enum Subcommands {
         /// kinds in the generated AST types (requires `--ast-types`)
         #[arg(long, requires = "ast_types")]
         merge_config: Option<String>,
+        /// Build the generated AST types from parse trees that contain syntax
+        /// errors, returning a partial AST plus diagnostics instead of
+        /// failing (requires `--ast-types`)
+        #[arg(long, requires = "ast_types")]
+        partial_trees: bool,
     },
     /// Pretty-print a BNF file in canonical style.
     Format {
@@ -297,6 +302,8 @@ struct ScaffoldTarget {
     name: String,
     /// Effective `--ast-types` setting.
     ast_types: bool,
+    /// Effective `--partial-trees` setting.
+    partial_trees: bool,
     /// Effective `--merge-config`, already parsed.
     merge_config: Option<MergeConfig>,
     /// `true` when a `ts-bnf-tool.toml` already existed in the resolved
@@ -317,12 +324,13 @@ fn load_cli_merge_config(path: Option<&str>) -> Result<Option<MergeConfig>, Box<
 
 /// Resolves scaffold settings for directory mode: `target` names an
 /// already-scaffolded crate, so everything is read from its
-/// `ts-bnf-tool.toml` (a CLI-given `name`/`ast_types`/merge config
-/// overrides/extends the recorded value; see plan step 2).
+/// `ts-bnf-tool.toml` (a CLI-given `name`/`ast_types`/`partial_trees`/merge
+/// config overrides/extends the recorded value; see plan step 2).
 fn resolve_directory_scaffold_target(
     target: &str,
     name: Option<&str>,
     ast_types: bool,
+    partial_trees: bool,
     cli_merge_config: Option<MergeConfig>,
 ) -> Result<ScaffoldTarget, Box<dyn Error>> {
     let dir = PathBuf::from(target);
@@ -340,6 +348,7 @@ fn resolve_directory_scaffold_target(
         output_dir: Some(target.to_string()),
         name: name.map(str::to_string).unwrap_or(config.name),
         ast_types: config.ast_types || ast_types,
+        partial_trees: config.partial_trees || partial_trees,
         merge_config: cli_merge_config.or(config.merge_config),
         already_bundled: true,
     })
@@ -351,8 +360,9 @@ fn resolve_directory_scaffold_target(
 /// grammar file/`-` (today's from-scratch behavior, plus a check against any
 /// config already sitting in the resolved output directory).
 ///
-/// This is currently hardcoded to Rust's scaffold shape: `ast_types` and
-/// `merge_config` are concepts specific to the Rust AST-types emitter
+/// This is currently hardcoded to Rust's scaffold shape: `ast_types`,
+/// `partial_trees` and `merge_config` are concepts specific to the Rust
+/// AST-types emitter
 /// (`dom::ast::rust`), baked directly into [`ScaffoldTarget`] and
 /// `ts-bnf-tool.toml`. A second target language will need a different
 /// approach here — e.g. a language-tagged/enum'd settings shape — rather
@@ -362,6 +372,7 @@ fn resolve_scaffold_target(
     output_dir: Option<&str>,
     name: Option<&str>,
     ast_types: bool,
+    partial_trees: bool,
     merge_config_path: Option<&str>,
 ) -> Result<ScaffoldTarget, Box<dyn Error>> {
     let cli_merge_config = load_cli_merge_config(merge_config_path)?;
@@ -374,10 +385,23 @@ fn resolve_scaffold_target(
                     .into(),
             );
         }
-        return resolve_directory_scaffold_target(target, name, ast_types, cli_merge_config);
+        return resolve_directory_scaffold_target(
+            target,
+            name,
+            ast_types,
+            partial_trees,
+            cli_merge_config,
+        );
     }
 
-    resolve_file_scaffold_target(target, output_dir, name, ast_types, cli_merge_config)
+    resolve_file_scaffold_target(
+        target,
+        output_dir,
+        name,
+        ast_types,
+        partial_trees,
+        cli_merge_config,
+    )
 }
 
 /// Resolves scaffold settings for file mode: `target` is a `.bnf` path, `-`
@@ -390,6 +414,7 @@ fn resolve_file_scaffold_target(
     output_dir: Option<&str>,
     name: Option<&str>,
     ast_types: bool,
+    partial_trees: bool,
     cli_merge_config: Option<MergeConfig>,
 ) -> Result<ScaffoldTarget, Box<dyn Error>> {
     let computed_name = grammar_name(target, name);
@@ -428,6 +453,8 @@ fn resolve_file_scaffold_target(
         .or_else(|| existing_config.as_ref().map(|c| c.name.clone()))
         .unwrap_or(computed_name);
     let effective_ast_types = existing_config.as_ref().is_some_and(|c| c.ast_types) || ast_types;
+    let effective_partial_trees =
+        existing_config.as_ref().is_some_and(|c| c.partial_trees) || partial_trees;
     let effective_merge_config =
         cli_merge_config.or_else(|| existing_config.and_then(|c| c.merge_config));
 
@@ -436,6 +463,7 @@ fn resolve_file_scaffold_target(
         output_dir: output_dir.map(str::to_string),
         name: effective_name,
         ast_types: effective_ast_types,
+        partial_trees: effective_partial_trees,
         merge_config: effective_merge_config,
         already_bundled,
     })
@@ -726,12 +754,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             no_header,
             ast_types,
             merge_config,
+            partial_trees,
         } => {
             let resolved = resolve_scaffold_target(
                 &target,
                 output_dir.as_deref(),
                 name.as_deref(),
                 ast_types,
+                partial_trees,
                 merge_config.as_deref(),
             )?;
             let root_source = load_grammar_source(&resolved.grammar_path)?;
@@ -755,6 +785,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 output_dir: resolved.output_dir.as_deref(),
                 no_header,
                 ast_types: resolved.ast_types,
+                partial_trees: resolved.partial_trees,
                 merge_config: resolved.merge_config.as_ref(),
                 root_filename: &resolved.grammar_path,
                 root_source: &root_source,

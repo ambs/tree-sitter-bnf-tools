@@ -11,8 +11,9 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::dom::ast::BuildMode;
 use crate::dom::ast::merge::{MergeConfig, check_merge_config};
-use crate::dom::ast::rust::{RustAst, check_root_rule_not_merged, kind_display_name};
+use crate::dom::ast::rust::{RustAst, check_root_rule_not_merged};
 use crate::util::{hyphens_to_underscores, resolve_output_dir};
 
 use super::grammar_js::{GrammarJs, run_generate};
@@ -40,6 +41,16 @@ pub struct ScaffoldFile {
     /// the tutorial invites users to hand-edit); when `false`, it is always
     /// overwritten (for files that are purely derived from the grammar).
     pub preserve_existing: bool,
+}
+
+/// The rendered typed-AST source plus what the scaffolded `examples/ast.rs`
+/// needs to drive it — everything target-language emitters need to know
+/// about `--ast-types` beyond whether it's on.
+struct AstOutput {
+    /// The complete generated `ast.rs` source.
+    source: String,
+    /// Which API `source` exposes, so the example calls the right one.
+    mode: BuildMode,
 }
 
 /// The full set of hand-authored files a scaffolded crate/module/package needs.
@@ -72,28 +83,27 @@ pub struct ScaffoldCrate {
 /// data computed by the caller (`run_scaffold`, via `bundle_grammar_sources`)
 /// — passing it through keeps this function itself free of filesystem
 /// access; it's only used for the Makefile template's prerequisite list.
+///
+/// `ast` is `None` to skip the typed AST types entirely (no `--ast-types`),
+/// or `Some(mode)` to generate them in that [`BuildMode`] — one parameter
+/// rather than a flag plus a mode, so "partial trees without AST types" is
+/// unrepresentable.
 pub fn render_scaffold(
     grammar: &Grammar,
     name: &str,
     source: &str,
     no_header: bool,
-    ast_types: bool,
+    ast: Option<BuildMode>,
     merge_config: Option<&MergeConfig>,
     bundled_bnf_paths: &[PathBuf],
 ) -> Result<ScaffoldCrate, String> {
     let visitor_source = render_visitor(grammar, name, source, no_header)?;
-    let ast_source = if ast_types {
-        // `kind_display_name`, not bare `pascal_case`: a `passthrough`
-        // entry can rename the root rule's own struct, and `examples/ast.rs`
-        // must `use` it under the name it's actually declared under.
-        let root_rule = kind_display_name(
-            grammar
-                .root_rule()
-                .expect("grammar without rules should have been treated earlier"),
-            merge_config,
-        );
-        let ast = RustAst::new(grammar, source, no_header, merge_config)?;
-        Some((ast.to_string(), root_rule))
+    let ast_output = if let Some(mode) = ast {
+        let ast = RustAst::new(grammar, source, no_header, merge_config, mode)?;
+        Some(AstOutput {
+            source: ast.to_string(),
+            mode,
+        })
     } else {
         None
     };
@@ -102,7 +112,7 @@ pub fn render_scaffold(
             name,
             no_header,
             visitor_source,
-            ast_source,
+            ast_output,
             bundled_bnf_paths,
         ),
     })
@@ -125,6 +135,10 @@ pub struct ScaffoldRequest<'a> {
     pub no_header: bool,
     /// Generate ast-types files.
     pub ast_types: bool,
+    /// Build the generated AST from trees containing syntax errors, returning
+    /// a partial AST plus diagnostics (`--partial-trees`). Only meaningful
+    /// together with `ast_types`.
+    pub partial_trees: bool,
     /// `--merge-config`, already parsed.
     pub merge_config: Option<&'a MergeConfig>,
     /// The effective root grammar filename resolved by the caller — `"-"`
@@ -161,6 +175,7 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         output_dir,
         no_header,
         ast_types,
+        partial_trees,
         merge_config,
         root_filename,
         root_source,
@@ -233,7 +248,7 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         name,
         source,
         no_header,
-        ast_types,
+        ast_types.then_some(BuildMode::from(partial_trees)),
         merge_config,
         &bundled_bnf_paths,
     )
@@ -243,6 +258,7 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         grammar: bundled_grammar_basename,
         name: name.to_string(),
         ast_types,
+        partial_trees,
         merge_config: merge_config.cloned(),
     };
     crate_files.files.extend(bundled_files);
@@ -251,6 +267,9 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
         content: config::render_scaffold_config(&effective_config),
         preserve_existing: true,
     });
+
+    // Read the previously recorded mode before anything below can patch it.
+    let stale_example_warning = stale_ast_example_warning(&dir, &effective_config);
 
     for file in crate_files.files {
         let path = dir.join(&file.path);
@@ -276,12 +295,103 @@ pub fn run_scaffold(request: &ScaffoldRequest) -> Result<(), Box<dyn Error>> {
     for warning in &bundle_warnings {
         eprintln!("{warning}");
     }
+    if let Some(warning) = &stale_example_warning {
+        eprintln!("{warning}");
+    }
+    // After the write loop: a fresh crate has just been given the dependency,
+    // so only a `Cargo.toml` that was already there (and left alone) can lack it.
+    if let Some(warning) = missing_runtime_dependency_warning(&dir, &effective_config) {
+        eprintln!("{warning}");
+    }
 
     if ast_types {
         ensure_lib_rs_declares_ast_module(&dir)?;
     }
 
     Ok(())
+}
+
+/// The warning to print when a rerun switches `--partial-trees` on or off
+/// while `examples/ast.rs` — written once, then left alone like `walk.rs` —
+/// still targets the other mode's API, or `None` when there's nothing to say.
+///
+/// The two modes' generated `ast.rs` expose different APIs (`TryFrom` versus
+/// `runtime::recover`), so a preserved example from the other mode stops
+/// compiling. It's left untouched (it's the user's file now, possibly
+/// edited), so the only honest option is to say so. Which mode the example
+/// was written for is read from the crate's recorded `ts-bnf-tool.toml`
+/// rather than sniffed from the example's text, so a hand-edited example is
+/// treated the same as an untouched one. Must run before
+/// [`config::ensure_scaffold_config_up_to_date`] patches that record.
+/// Silent for a first scaffold (no recorded config), when `--ast-types` is
+/// off, when the mode didn't change, or when there's no example to go stale.
+fn stale_ast_example_warning(dir: &Path, effective: &config::ScaffoldConfig) -> Option<String> {
+    if !effective.ast_types || !dir.join("examples/ast.rs").exists() {
+        return None;
+    }
+    let recorded =
+        config::parse_scaffold_config(&fs::read_to_string(dir.join("ts-bnf-tool.toml")).ok()?)
+            .ok()?;
+    if recorded.partial_trees == effective.partial_trees {
+        return None;
+    }
+    let (was, now) = if effective.partial_trees {
+        ("strict", "partial")
+    } else {
+        ("partial", "strict")
+    };
+    Some(format!(
+        "warning: examples/ast.rs was written for the {was} AST API, but bindings/rust/ast.rs \
+         now uses the {now} one; the example was left untouched, so it may no longer compile \
+         (and does not use the new API) — update it by hand, or delete it and rerun scaffold \
+         to regenerate it"
+    ))
+}
+
+/// The warning to print when `--partial-trees` is on but the crate's
+/// `Cargo.toml` does not depend on `ts-bnf-runtime`, or `None` when there is
+/// nothing to say.
+///
+/// A partial-mode `ast.rs` re-exports its plain-data types from that crate
+/// rather than declaring its own, so a crate without the dependency does not
+/// compile. A fresh scaffold writes the line, but `Cargo.toml` is written once
+/// and the user's after that, so a crate scaffolded before the runtime crate
+/// existed (or one that was strict and switched to partial) is not touched —
+/// the honest thing is to say exactly which line to add. Run after the files
+/// are written, so it sees the `Cargo.toml` the crate actually has. Silent for
+/// anything but `--ast-types --partial-trees`.
+fn missing_runtime_dependency_warning(
+    dir: &Path,
+    effective: &config::ScaffoldConfig,
+) -> Option<String> {
+    if !(effective.ast_types && effective.partial_trees) {
+        return None;
+    }
+    let manifest = fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+    if declares_runtime_dependency(&manifest) {
+        return None;
+    }
+    Some(format!(
+        "warning: bindings/rust/ast.rs now takes its runtime types from the ts-bnf-runtime \
+         crate, but Cargo.toml does not depend on it, so the crate will not compile; \
+         Cargo.toml was left untouched — add this line under [dependencies]:\n    {}",
+        rust::runtime_dependency_line()
+    ))
+}
+
+/// `true` if the `Cargo.toml` text lists `ts-bnf-runtime` under
+/// `[dependencies]`, in any of the forms Cargo accepts (`name = "1"`,
+/// `name = { .. }`, `[dependencies.name]`). A manifest that does not parse is
+/// searched as plain text instead: it is not this function's job to report a
+/// broken `Cargo.toml`, only to avoid a wrong "add this line".
+fn declares_runtime_dependency(manifest: &str) -> bool {
+    match manifest.parse::<toml::Table>() {
+        Ok(table) => table
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|dependencies| dependencies.contains_key("ts-bnf-runtime")),
+        Err(_) => manifest.contains("ts-bnf-runtime"),
+    }
 }
 
 /// Bundles the grammar source(s) that produced `grammar` into the scaffold's
@@ -382,7 +492,8 @@ fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
 }
 
 /// Patches `bindings/rust/lib.rs` (already written by the caller's own file
-/// loop, fresh or preserved) to add `pub mod ast;` if it's missing.
+/// loop, fresh or preserved) to declare `pub mod ast;` and re-export
+/// `parse_ast` from it, each only if missing.
 ///
 /// `write_if_absent` above leaves an existing `lib.rs` completely
 /// untouched — including the case where [`rust::render`]'s freshly
@@ -395,28 +506,53 @@ fn write_if_absent(path: &Path, content: &str) -> Result<(), Box<dyn Error>> {
 /// passes `--ast-types` is untouched, matching `write_if_absent`'s
 /// documented "won't touch them" guarantee for every other case.
 ///
+/// The same goes for the crate-root `parse_ast` (the tree-sitter-free entry
+/// point the generated `ast.rs` defines): a `lib.rs` written before it
+/// existed never re-exports it, so the example that calls
+/// `{crate}::parse_ast` would not compile. It is added as `pub use
+/// ast::parse_ast;` — unless `lib.rs` already mentions `parse_ast` anywhere,
+/// since a function the user wrote themselves under that name (or an
+/// export they placed differently) would otherwise be shadowed by a
+/// duplicate definition.
+///
 /// Inserted right after the `pub mod visitor;` line — [`rust::render`]'s own
 /// insertion point — so the patched file ends up matching what a fresh
 /// scaffold would have produced; appended at the end as a defensive
 /// fallback if that anchor line isn't found (e.g. removed by hand). A no-op
-/// if `pub mod ast;` is already present, which covers every ordinary
-/// `--ast-types` run, fresh or rerun.
+/// when both lines are already present, which covers every ordinary
+/// `--ast-types` run after the first.
 fn ensure_lib_rs_declares_ast_module(dir: &Path) -> Result<(), Box<dyn Error>> {
     let path = dir.join("bindings/rust/lib.rs");
     let content = fs::read_to_string(&path)?;
-    if content.contains("pub mod ast;") {
+
+    let has_mod = content.contains("pub mod ast;");
+    let has_export = content.contains("parse_ast");
+    if has_mod && has_export {
         return Ok(());
     }
 
-    let anchor = "pub mod visitor;\n";
-    let patched = match content.find(anchor) {
-        Some(idx) => {
-            let mut patched = content;
-            patched.insert_str(idx + anchor.len(), "pub mod ast;\n");
-            patched
+    // The export belongs right after `pub mod ast;`, wherever that is. Only
+    // when the module line is missing too are both inserted, together, at the
+    // `pub mod visitor;` anchor (or at the end if that is gone).
+    let mut patched = content;
+    if has_mod {
+        let anchor = "pub mod ast;\n";
+        match patched.find(anchor) {
+            Some(idx) => patched.insert_str(idx + anchor.len(), "pub use ast::parse_ast;\n"),
+            // `pub mod ast;` is the last line, with no trailing newline.
+            None => patched.push_str("\npub use ast::parse_ast;\n"),
         }
-        None => format!("{content}\npub mod ast;\n"),
-    };
+    } else {
+        let mut missing = String::from("pub mod ast;\n");
+        if !has_export {
+            missing.push_str("pub use ast::parse_ast;\n");
+        }
+        let anchor = "pub mod visitor;\n";
+        match patched.find(anchor) {
+            Some(idx) => patched.insert_str(idx + anchor.len(), &missing),
+            None => patched = format!("{patched}\n{missing}"),
+        }
+    }
     fs::write(&path, patched)?;
     Ok(())
 }
@@ -526,6 +662,260 @@ mod tests {
         assert!(
             content.contains("pub mod ast;"),
             "pub mod ast; must be appended even without the usual anchor: {content}"
+        );
+    }
+
+    /// Builds a scratch crate directory whose recorded config says
+    /// `recorded_partial`, optionally with an `examples/ast.rs` in place.
+    fn crate_dir_with_recorded_mode(
+        test_name: &str,
+        recorded_partial: bool,
+        with_example: bool,
+    ) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ts_bnf_stale_example_{test_name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("examples")).unwrap();
+        fs::write(
+            dir.join("ts-bnf-tool.toml"),
+            config::render_scaffold_config(&effective_config(true, recorded_partial)),
+        )
+        .unwrap();
+        if with_example {
+            fs::write(dir.join("examples/ast.rs"), "fn main() {}\n").unwrap();
+        }
+        dir
+    }
+
+    /// An effective config with the given `--ast-types`/`--partial-trees`.
+    fn effective_config(ast_types: bool, partial_trees: bool) -> config::ScaffoldConfig {
+        config::ScaffoldConfig {
+            grammar: "decls.bnf".to_string(),
+            name: "decls".to_string(),
+            ast_types,
+            partial_trees,
+            merge_config: None,
+        }
+    }
+
+    /// Strict to partial with an example left behind: warn, naming both modes.
+    #[test]
+    fn stale_ast_example_warning_fires_when_switching_to_partial() {
+        let dir = crate_dir_with_recorded_mode("to_partial", false, true);
+        let warning = stale_ast_example_warning(&dir, &effective_config(true, true)).unwrap();
+        assert!(
+            warning.contains("written for the strict AST API"),
+            "{warning}"
+        );
+        assert!(warning.contains("now uses the partial one"), "{warning}");
+    }
+
+    /// Partial back to strict is the mirror case.
+    #[test]
+    fn stale_ast_example_warning_fires_when_switching_back_to_strict() {
+        let dir = crate_dir_with_recorded_mode("to_strict", true, true);
+        let warning = stale_ast_example_warning(&dir, &effective_config(true, false)).unwrap();
+        assert!(
+            warning.contains("written for the partial AST API"),
+            "{warning}"
+        );
+        assert!(warning.contains("now uses the strict one"), "{warning}");
+    }
+
+    /// Nothing to say when the mode didn't change, when there's no example to
+    /// go stale, when `--ast-types` is off, or on a first scaffold.
+    #[test]
+    fn stale_ast_example_warning_is_silent_when_nothing_went_stale() {
+        let unchanged = crate_dir_with_recorded_mode("unchanged", true, true);
+        assert!(stale_ast_example_warning(&unchanged, &effective_config(true, true)).is_none());
+
+        let no_example = crate_dir_with_recorded_mode("no_example", false, false);
+        assert!(stale_ast_example_warning(&no_example, &effective_config(true, true)).is_none());
+
+        let ast_off = crate_dir_with_recorded_mode("ast_off", false, true);
+        assert!(stale_ast_example_warning(&ast_off, &effective_config(false, true)).is_none());
+
+        let first_scaffold = std::env::temp_dir().join("ts_bnf_stale_example_first_scaffold");
+        let _ = fs::remove_dir_all(&first_scaffold);
+        fs::create_dir_all(first_scaffold.join("examples")).unwrap();
+        fs::write(first_scaffold.join("examples/ast.rs"), "fn main() {}\n").unwrap();
+        assert!(
+            stale_ast_example_warning(&first_scaffold, &effective_config(true, true)).is_none()
+        );
+    }
+
+    /// Runs [`ensure_lib_rs_declares_ast_module`] on a scratch crate whose
+    /// `lib.rs` is `content`, and returns what it was patched into.
+    fn patched_lib_rs(name: &str, content: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("ts_bnf_ensure_lib_rs_{name}_test"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bindings/rust")).unwrap();
+        let path = dir.join("bindings/rust/lib.rs");
+        fs::write(&path, content).unwrap();
+        ensure_lib_rs_declares_ast_module(&dir).unwrap();
+        fs::read_to_string(&path).unwrap()
+    }
+
+    /// A `lib.rs` with neither line gets both, together, after the
+    /// `pub mod visitor;` anchor — what a fresh scaffold would have produced.
+    #[test]
+    fn ensure_lib_rs_adds_the_module_and_the_export_together() {
+        let patched = patched_lib_rs("neither", "pub mod visitor;\n// mine\n");
+        assert_eq!(
+            patched,
+            "pub mod visitor;\npub mod ast;\npub use ast::parse_ast;\n// mine\n"
+        );
+    }
+
+    /// A crate scaffolded before `parse_ast` existed already has `pub mod
+    /// ast;`: only the export is added, right after it (not after the
+    /// `visitor` anchor, which would put it before the module it names).
+    #[test]
+    fn ensure_lib_rs_adds_only_the_export_right_after_an_existing_module() {
+        let patched = patched_lib_rs(
+            "old_crate",
+            "pub mod visitor;\n// mine\npub mod ast;\npub mod other;\n",
+        );
+        assert_eq!(
+            patched,
+            "pub mod visitor;\n// mine\npub mod ast;\npub use ast::parse_ast;\npub mod other;\n"
+        );
+    }
+
+    /// `pub mod ast;` as the very last line, with no trailing newline, still
+    /// gets the export on its own line.
+    #[test]
+    fn ensure_lib_rs_handles_the_module_as_the_last_line() {
+        let patched = patched_lib_rs("last_line", "pub mod visitor;\npub mod ast;");
+        assert!(
+            patched.ends_with("pub mod ast;\npub use ast::parse_ast;\n"),
+            "{patched}"
+        );
+    }
+
+    /// A `lib.rs` that already mentions `parse_ast` — the user's own function,
+    /// or an export they placed themselves — never gets a second one, which
+    /// would be a duplicate definition. The module line is still added.
+    #[test]
+    fn ensure_lib_rs_never_adds_an_export_next_to_the_users_own_parse_ast() {
+        let patched = patched_lib_rs(
+            "own_parse_ast",
+            "pub mod visitor;\npub fn parse_ast(s: &str) -> usize { s.len() }\n",
+        );
+        assert!(patched.contains("pub mod ast;"));
+        assert!(!patched.contains("pub use ast::parse_ast;"), "{patched}");
+        assert_eq!(patched.matches("parse_ast").count(), 1);
+    }
+
+    /// With both already present nothing is rewritten at all.
+    #[test]
+    fn ensure_lib_rs_leaves_a_complete_lib_rs_alone() {
+        let content = "pub mod visitor;\npub mod ast;\npub use ast::parse_ast;\n// mine\n";
+        assert_eq!(patched_lib_rs("complete", content), content);
+    }
+
+    /// A scratch crate directory whose `Cargo.toml` is exactly `manifest`.
+    fn crate_dir_with_manifest(test_name: &str, manifest: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ts_bnf_runtime_dep_{test_name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Cargo.toml"), manifest).unwrap();
+        dir
+    }
+
+    /// A manifest with the given `[dependencies]` body.
+    fn manifest_with_dependencies(body: &str) -> String {
+        format!("[package]\nname = \"decls\"\nversion = \"0.1.0\"\n\n[dependencies]\n{body}")
+    }
+
+    /// An existing crate without the dependency gets a warning that names the
+    /// exact line, at the tool's own version, and says it left the file alone.
+    #[test]
+    fn missing_runtime_dependency_is_reported_with_the_exact_line() {
+        let dir = crate_dir_with_manifest(
+            "missing",
+            &manifest_with_dependencies("tree-sitter = \"0.26.8\"\n"),
+        );
+        let warning = missing_runtime_dependency_warning(&dir, &effective_config(true, true))
+            .expect("a warning");
+        assert!(
+            warning.contains(&format!(
+                "ts-bnf-runtime = \"{}\"",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{warning}"
+        );
+        assert!(warning.contains("left untouched"), "{warning}");
+        assert!(warning.contains("[dependencies]"), "{warning}");
+    }
+
+    /// The warning never edits the manifest: `Cargo.toml` is the user's.
+    #[test]
+    fn missing_runtime_dependency_never_rewrites_the_manifest() {
+        let manifest = manifest_with_dependencies("tree-sitter = \"0.26.8\"\n");
+        let dir = crate_dir_with_manifest("untouched", &manifest);
+        let _ = missing_runtime_dependency_warning(&dir, &effective_config(true, true));
+        assert_eq!(
+            fs::read_to_string(dir.join("Cargo.toml")).unwrap(),
+            manifest
+        );
+    }
+
+    /// Every way Cargo lets a dependency be written counts as having it, and a
+    /// dependency listed only under dev- or build- does not.
+    #[test]
+    fn runtime_dependency_is_recognised_in_every_cargo_form() {
+        for (name, body) in [
+            ("string", "ts-bnf-runtime = \"0.6.0-beta.1\"\n"),
+            (
+                "inline_table",
+                "ts-bnf-runtime = { version = \"0.6\", path = \"../rt\" }\n",
+            ),
+            ("workspace", "ts-bnf-runtime = { workspace = true }\n"),
+            (
+                "table",
+                "\n[dependencies.ts-bnf-runtime]\nversion = \"0.6.0-beta.1\"\n",
+            ),
+        ] {
+            let dir = crate_dir_with_manifest(name, &manifest_with_dependencies(body));
+            assert!(
+                missing_runtime_dependency_warning(&dir, &effective_config(true, true)).is_none(),
+                "`{body}` is a dependency"
+            );
+        }
+
+        let dev_only = crate_dir_with_manifest(
+            "dev_only",
+            "[package]\nname = \"decls\"\nversion = \"0.1.0\"\n\n\
+             [dev-dependencies]\nts-bnf-runtime = \"0.6.0-beta.1\"\n",
+        );
+        assert!(
+            missing_runtime_dependency_warning(&dev_only, &effective_config(true, true)).is_some(),
+            "a dev-dependency is not available to the library"
+        );
+    }
+
+    /// Only `--ast-types --partial-trees` needs the crate: plain `--ast-types`
+    /// declares its own types, and without `--ast-types` there is no `ast.rs`.
+    #[test]
+    fn missing_runtime_dependency_is_only_a_partial_mode_concern() {
+        let dir = crate_dir_with_manifest("modes", &manifest_with_dependencies(""));
+        assert!(missing_runtime_dependency_warning(&dir, &effective_config(true, false)).is_none());
+        assert!(
+            missing_runtime_dependency_warning(&dir, &effective_config(false, false)).is_none()
+        );
+        assert!(missing_runtime_dependency_warning(&dir, &effective_config(true, true)).is_some());
+    }
+
+    /// A manifest that does not parse is searched as text, so a mention of the
+    /// crate still means "has it" rather than a wrong instruction to add it.
+    #[test]
+    fn unparsable_manifest_falls_back_to_a_text_search() {
+        let with =
+            crate_dir_with_manifest("broken_with", "[dependencies\nts-bnf-runtime = \"1\"\n");
+        assert!(missing_runtime_dependency_warning(&with, &effective_config(true, true)).is_none());
+        let without = crate_dir_with_manifest("broken_without", "[dependencies\n");
+        assert!(
+            missing_runtime_dependency_warning(&without, &effective_config(true, true)).is_some()
         );
     }
 }

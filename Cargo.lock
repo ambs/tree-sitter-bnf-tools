@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-bnf"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -847,8 +847,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0af592be68c579aa78a16846bd19422978c3c52e438523d45ff5d1bff1f9d4a"
 
 [[package]]
+name = "ts-bnf-runtime"
+version = "0.6.0-beta.2"
+
+[[package]]
 name = "ts-bnf-tool"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "clap",
  "indexmap",
@@ -861,6 +865,7 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-bnf",
+ "ts-bnf-runtime",
 ]
 
 [[package]]

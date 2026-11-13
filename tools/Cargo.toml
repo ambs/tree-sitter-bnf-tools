@@ -23,7 +23,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-tree-sitter-bnf = { path = "../tree-sitter-bnf", version = "0.6.0-beta.1" }
+tree-sitter-bnf = { path = "../tree-sitter-bnf", version = "0.6.0-beta.2" }
 tree-sitter = "0.27.0"
 clap = { version = "4", features = ["derive"] }
 indexmap = "2"
@@ -37,3 +37,7 @@ syn = "3"
 
 [dev-dependencies]
 serde_json = "1"
+# What a generated `--partial-trees` crate depends on: the compile-check tests
+# build generated code as an example of this crate, and the end-to-end tests
+# patch scaffolded crates to use this checkout of it.
+ts-bnf-runtime = { path = "../runtime", version = "0.6.0-beta.2" }

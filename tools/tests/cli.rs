@@ -2418,7 +2418,7 @@ fn scaffold_ast_types_writes_files_and_ast_example_runs() {
 }
 
 /// A grammar whose string values can hold multibyte characters, for the
-/// `_pragma` character-column end-to-end test below.
+/// `_span` character-column end-to-end test below.
 const SCAFFOLD_AST_TEXT_BNF: &str = indoc! {r#"
     program -> items: decl* ;
     decl -> target: ident '=' value: text ';' ;
@@ -2428,7 +2428,8 @@ const SCAFFOLD_AST_TEXT_BNF: &str = indoc! {r#"
 
 /// Extracts every `(line, column)` pair from the pretty-printed `Pragma`s in
 /// a `cargo run --example ast` dump, in print order (`line:` always precedes
-/// `column:` in a `Pragma`'s `Debug` output).
+/// `column:` in a `Pragma`'s `Debug` output). A node's `_span` prints its
+/// start and then its end, so the pairs alternate start, end per node.
 fn pragma_positions(dump: &str) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
     let mut line = 0;
@@ -2450,10 +2451,12 @@ fn pragma_positions(dump: &str) -> Vec<(usize, usize)> {
 }
 
 #[test]
-/// `_pragma` columns of a scaffolded crate's AST count characters, not
+/// `_span` columns of a scaffolded crate's AST count characters, not
 /// bytes: after `a = "ç"; ` (nine characters, ten bytes) the second
 /// declaration starts at character column 10, not tree-sitter's byte
-/// column 11 — and the columns of everything after it shift the same way.
+/// column 11 — and the columns of everything after it shift the same way,
+/// ends included (`"ç"` ends at column 8, one past its closing quote, though
+/// tree-sitter's byte column would say 9).
 fn scaffold_ast_types_pragma_columns_count_characters() {
     let Some(version) = support::tree_sitter_version() else {
         return; // tree-sitter not in PATH, skip
@@ -2468,11 +2471,117 @@ fn scaffold_ast_types_pragma_columns_count_characters() {
     );
 
     let stdout = support::run_ast_example(&out_dir, "a = \"ç\"; b = \"ã\";\n");
-    // Program, then per declaration: Decl, its `target` ident, its `value` text.
+    // Spelled out by hand from `a = "ç"; b = "ã";` (columns count characters):
+    // Program, then per declaration: Decl, its `target` ident, its `value`
+    // text, each as (start, end). The root runs to the start of line 2: it
+    // includes the trailing newline.
     assert_eq!(
         pragma_positions(&stdout),
-        [(1, 1), (1, 1), (1, 1), (1, 5), (1, 10), (1, 10), (1, 14)],
+        [
+            (1, 1),
+            (2, 1), // Program
+            (1, 1),
+            (1, 9), // Decl `a = "ç";`
+            (1, 1),
+            (1, 2), // ident `a`
+            (1, 5),
+            (1, 8), // text `"ç"`
+            (1, 10),
+            (1, 18), // Decl `b = "ã";`
+            (1, 10),
+            (1, 11), // ident `b`
+            (1, 14),
+            (1, 17), // text `"ã"`
+        ],
         "{stdout}"
+    );
+}
+
+#[test]
+/// A crate scaffolded before `parse_ast` existed has a `lib.rs` that already
+/// declares `pub mod ast;` but never re-exports it, and `lib.rs` is not
+/// rewritten on a rerun. The rerun adds the one missing line, right after the
+/// module it names, so the crate-root `parse_ast` exists and the (regenerated
+/// or preserved) example that calls it compiles and runs — with no
+/// tree-sitter anywhere in the example.
+fn scaffold_rerun_adds_the_parse_ast_export_to_an_older_lib_rs() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_ast_types(
+        "ts_bnf_scaffold_parse_ast_rerun_project",
+        "parseastlang",
+        SCAFFOLD_AST_BNF,
+    );
+    let lib_rs_path = out_dir.join("bindings/rust/lib.rs");
+    let fresh = std::fs::read_to_string(&lib_rs_path).unwrap();
+    assert!(
+        fresh.contains("pub mod ast;\npub use ast::parse_ast;\n"),
+        "a fresh scaffold re-exports it: {fresh}"
+    );
+
+    // Make it look like a crate from before the feature.
+    std::fs::write(&lib_rs_path, fresh.replace("pub use ast::parse_ast;\n", "")).unwrap();
+
+    let rerun = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    assert!(
+        rerun.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    let patched = std::fs::read_to_string(&lib_rs_path).unwrap();
+    assert_eq!(patched, fresh, "the rerun restores exactly the fresh file");
+
+    let stdout = support::run_ast_example(&out_dir, "a = b;\n");
+    assert!(stdout.contains("Program"), "{stdout}");
+}
+
+/// A grammar with a labelled bare-token field (`op: '='`), for the
+/// token-span end-to-end test below.
+const SCAFFOLD_AST_TOKEN_BNF: &str = indoc! {"
+    program -> items: decl* ;
+    decl -> target: ident op: '=' value: ident ';' ;
+    ident -> /[a-z]+/ ;
+"};
+
+#[test]
+/// A bare token value carries its position in plain `--ast-types` too, not
+/// only with `--partial-trees`: the `op: '='` field is a `runtime::Token`
+/// holding its kind, its text and where it is, not a `String` that has lost
+/// where the `=` was. Against a real parser, on `a = b;` the `=` is the
+/// third character: bytes 2..3, starting at column 3 and ending (exclusive)
+/// at column 4.
+fn scaffold_ast_types_token_field_carries_a_span() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_ast_types(
+        "ts_bnf_scaffold_ast_token_span_project",
+        "tokspan",
+        SCAFFOLD_AST_TOKEN_BNF,
+    );
+
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("pub op: runtime::Token,"));
+    assert!(
+        !ast_rs.contains("Reflect"),
+        "Reflect is a partial-trees feature"
+    );
+
+    let stdout = support::run_ast_example(&out_dir, "a = b;\n");
+    let normalized: String = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains(
+            "op: Token { kind: \"=\", text: \"=\", span: Span { byte_range: 2..3, \
+             start: Pragma { line: 1, column: 3, }, end: Pragma { line: 1, column: 4, }, }, },"
+        ),
+        "the `=` token must carry its own span; got: {stdout}"
     );
 }
 
@@ -2540,6 +2649,662 @@ fn scaffold_merge_config_writes_enum_and_hides_merged_structs() {
     assert!(stdout.contains("WhileStatement("), "{stdout}");
     assert!(stdout.contains("RepeatStatement("), "{stdout}");
     assert!(stdout.contains("DocComment"), "{stdout}");
+}
+
+// ── scaffold --partial-trees ────────────────────────────────────────────
+
+/// Splits an `examples/ast.rs` (partial-mode) run into its parts for
+/// assertions: the exit code, the stdout text, and the diagnostic lines — the
+/// lines of the form `<path>:<line>:<column>: <problem>` it prints after the
+/// tree.
+fn partial_example_run(
+    out_dir: &std::path::Path,
+    input: &str,
+) -> (Option<i32>, String, Vec<String>) {
+    let output = support::run_ast_example_output(out_dir, input);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let diagnostics = stdout
+        .lines()
+        .filter(|l| l.contains("sample-input.txt:") && !l.ends_with(':'))
+        .map(str::to_string)
+        .collect();
+    (output.status.code(), stdout, diagnostics)
+}
+
+#[test]
+/// `scaffold --ast-types --partial-trees` end-to-end against a real parser
+/// (#487): the generated crate exposes the `Recover` API instead of
+/// `TryFrom`, and `cargo run --example ast` builds whatever a file with
+/// syntax errors still contains and reports each problem with its position —
+/// a clean file, a `MISSING` token, an `ERROR` region between two good
+/// declarations, and a file with nothing salvageable. Exit code 1 (not a
+/// panic's 101) whenever there is a diagnostic.
+fn scaffold_partial_trees_recovers_typed_tree_from_syntax_errors() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_partial_trees_e2e_project",
+        "partiallang",
+        SCAFFOLD_AST_BNF,
+        None,
+    );
+
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(config.contains("partial_trees = true"), "{config}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("impl<'tree> runtime::Recover<'tree> for Program"));
+    assert!(!ast_rs.contains("TryFrom"));
+    let example = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
+    assert!(example.contains("partiallang::parse_ast(&source)"));
+    assert!(
+        !example.contains("tree_sitter") && !example.contains("SourceNode"),
+        "the example needs no tree-sitter: parse_ast hides it"
+    );
+
+    // A clean file: everything built, nothing reported.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "x = y;\ny = z;\n");
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout.matches("Decl {").count(), 2, "{stdout}");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    // A missing `;` is a MISSING node: all three declarations survive, with
+    // the diagnostic pointing just past `y = z`.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "x = y;\ny = z\nz = x;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Decl {").count(), 3, "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].ends_with(":2:6: Missing { expected: \";\" }"),
+        "{diagnostics:?}"
+    );
+
+    // Garbage between two good declarations is one ERROR region (tree-sitter
+    // nests an ERROR inside it, which must not be reported twice); the good
+    // declarations on both sides are still built.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "x = y;\n@@@\ny = z;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Decl {").count(), 2, "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].ends_with(":2:1: Error"), "{diagnostics:?}");
+    // ... and the region itself stays in the tree, under `Program`, as an
+    // `Error` child holding its span and the text it covers.
+    let normalized: String = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains("Error( ErrorRegion {"), "{stdout}");
+    assert!(normalized.contains("text: \"@@@\","), "{stdout}");
+
+    // Nothing salvageable: still a `Program`, just an empty one.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "@@@ ###\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert!(stdout.contains("items: []"), "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].ends_with(":1:1: Error"), "{diagnostics:?}");
+
+    // A diagnostic carries the whole extent of the problem, not only where it
+    // starts: a byte range plus a start and an exclusive end line/column.
+    // `examples/ast.rs` prints only the start, so drive the API from an
+    // example of our own. Values are worked out by hand from the inputs:
+    // `x = y;\n` is 7 bytes, so on line 2 the `@@@` error region is bytes
+    // 7..10 (columns 1 to 4, end exclusive), and the missing `;` after
+    // `y = z` is the zero-width point at byte 12, column 6.
+    std::fs::write(
+        out_dir.join("examples/diag.rs"),
+        r#"use partiallang::ast::runtime::recover;
+use partiallang::ast::Program;
+use partiallang::visitor::SourceNode;
+
+fn main() {
+    for source in ["x = y;\n@@@\ny = z;\n", "x = y;\ny = z\nz = x;\n"] {
+        let tree = partiallang::parse(source).unwrap();
+        let recovered = recover::<Program>(SourceNode { node: tree.root_node(), source });
+        for d in &recovered.diagnostics {
+            let s = &d.span;
+            println!(
+                "{:?} bytes={}..{} {}:{}-{}:{}",
+                d.kind, s.byte_range.start, s.byte_range.end,
+                s.start.line, s.start.column, s.end.line, s.end.column
+            );
+        }
+        println!("--");
+    }
+}
+"#,
+    )
+    .unwrap();
+    let spans = support::run_example(&out_dir, "diag");
+    assert_eq!(
+        spans.lines().collect::<Vec<_>>(),
+        [
+            "Error bytes=7..10 2:1-2:4",
+            "--",
+            "Missing { expected: \";\" } bytes=12..12 2:6-2:6",
+            "--",
+        ],
+        "{spans}"
+    );
+}
+
+#[test]
+/// `--partial-trees` composes with `--merge-config` (#487): a merged `enum
+/// Loop` still dispatches to its variants, and a required field the parser
+/// had to invent a `MISSING` node for (`doc:` after `for while`) comes back
+/// as `None` with a `Missing` diagnostic naming what was expected, while
+/// everything before it is built.
+fn scaffold_partial_trees_with_merge_config_reports_missing_field() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_partial_trees_merge_e2e_project",
+        "partialmerge",
+        SCAFFOLD_MERGE_BNF,
+        Some(SCAFFOLD_MERGE_CONFIG_TOML),
+    );
+
+    let (code, stdout, diagnostics) =
+        partial_example_run(&out_dir, "for while repeat #a comment\n");
+    assert_eq!(code, Some(0), "{stdout}");
+    for variant in ["ForStatement(", "WhileStatement(", "RepeatStatement("] {
+        assert!(stdout.contains(variant), "{stdout}");
+    }
+    assert!(stdout.contains("doc: Some("), "{stdout}");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "for while\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert!(stdout.contains("ForStatement("), "{stdout}");
+    assert!(stdout.contains("WhileStatement("), "{stdout}");
+    assert!(stdout.contains("doc: None"), "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].ends_with(":1:10: Missing { expected: \"comment\" }"),
+        "{diagnostics:?}"
+    );
+}
+
+/// A grammar with no field labels at all, the shape that left every
+/// `--ast-types` struct holding only `_pragma`, plus a `comment` extra that
+/// can appear between any two tokens.
+const SCAFFOLD_UNLABELLED_BNF: &str = indoc! {r#"
+    %extras /\s/, comment
+
+    program -> stmt* ;
+    stmt -> decl | assign | call ;
+    decl -> 'var' ident ';' ;
+    assign -> ident '=' expr ';' ;
+    call -> name: ident '(' ')' ';' ;
+    expr -> ident | num ;
+    ident -> /[a-z][a-zA-Z0-9_]*/ ;
+    num -> /[0-9]+/ ;
+    comment -> /#[^\n]*/ ;
+"#};
+
+#[test]
+/// `--partial-trees` on a grammar with no field labels (#487 follow-up): the
+/// partial tree still holds the real structure, because each struct captures
+/// its unlabelled children as a typed `_children` list — named kinds *and*
+/// string literals (`var`, `=`, `;`), which an operator or keyword would
+/// otherwise be lost to. Against a real parser: a clean file with a comment
+/// (the extra is skipped without a diagnostic), a `MISSING` token (reported,
+/// but not captured as if it were present), and an `ERROR` region between two
+/// good statements.
+fn scaffold_partial_trees_captures_unlabelled_children_and_skips_extras() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let out_dir = support::scaffold_with_partial_trees(
+        "ts_bnf_scaffold_partial_trees_unlabelled_e2e_project",
+        "unlabelled",
+        SCAFFOLD_UNLABELLED_BNF,
+        None,
+    );
+    // The example prints the tree and then one line per diagnostic, and a
+    // `Missing` diagnostic quotes the token it expected — so count literals in
+    // the tree alone, not in the whole output, and by `text:` (a token prints
+    // both its `kind` and its `text`).
+    let tree_of = |stdout: &str, diagnostics: &[String]| -> String {
+        let mut tree = String::new();
+        for line in stdout.lines() {
+            if !diagnostics.iter().any(|d| d == line) {
+                tree.push_str(line);
+                tree.push('\n');
+            }
+        }
+        tree
+    };
+
+    // Clean: the whole tree is there, down to the number's text and every
+    // literal (a kind with a mix holds `Token(..)`; `call`, whose only
+    // unlabelled children are literals, holds plain strings); the comment is
+    // an extra, so it is neither captured nor reported.
+    let (code, stdout, diagnostics) =
+        partial_example_run(&out_dir, "var x;\n# a comment\ny = x;\nz = 42;\nf();\n");
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(stdout.matches("Stmt {").count(), 4, "{stdout}");
+    for expected in [
+        "Decl(",
+        "Assign(",
+        "Call(",
+        "Num(",
+        "_text: \"42\"",
+        "Token(",
+        "\"var\"",
+        "\"=\"",
+        "\"(\"",
+        "\")\"",
+    ] {
+        assert!(stdout.contains(expected), "missing `{expected}`:\n{stdout}");
+    }
+    assert_eq!(
+        tree_of(&stdout, &diagnostics)
+            .matches("text: \";\"")
+            .count(),
+        4,
+        "one `;` per statement:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Comment"),
+        "extras are not captured:\n{stdout}"
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+    // A missing `;` is reported but not captured: three statements, and only
+    // the two `;` that are really in the file.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "var x;\ny = x\nz = 42;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Stmt {").count(), 3, "{stdout}");
+    assert_eq!(
+        tree_of(&stdout, &diagnostics)
+            .matches("text: \";\"")
+            .count(),
+        2,
+        "only the `;` really in the file:\n{stdout}"
+    );
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].ends_with(":2:6: Missing { expected: \";\" }"),
+        "{diagnostics:?}"
+    );
+
+    // Garbage between two statements: the good ones on both sides survive.
+    let (code, stdout, diagnostics) = partial_example_run(&out_dir, "var x;\n@@@\nz = 42;\n");
+    assert_eq!(code, Some(1), "{stdout}");
+    assert_eq!(stdout.matches("Stmt {").count(), 2, "{stdout}");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].ends_with(":2:1: Error"), "{diagnostics:?}");
+}
+
+#[test]
+/// `--partial-trees` without `--ast-types` is rejected by the argument parser
+/// before anything is written — it only changes what `--ast-types` generates,
+/// so on its own it would silently do nothing.
+fn scaffold_partial_trees_without_ast_types_is_rejected() {
+    let bnf_path = write_tmp("ts_bnf_scaffold_partial_trees_alone.bnf", SCAFFOLD_AST_BNF);
+    let out_dir = std::env::temp_dir().join("ts_bnf_scaffold_partial_trees_alone_project");
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    let out = tool()
+        .args(["scaffold", "--partial-trees", "--output-dir"])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(!out_dir.exists(), "nothing should be written");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--ast-types"), "{stderr}");
+}
+
+#[test]
+/// Rerun semantics for `--partial-trees` (#487), mirroring `--ast-types`'
+/// own: a scaffold that never passes the flag records nothing about it and
+/// keeps the strict `TryFrom` API; adding it on a rerun patches
+/// `ts-bnf-tool.toml` in place and regenerates `ast.rs` with the `Recover`
+/// API, but leaves the user-owned `examples/ast.rs` alone and warns that it
+/// still targets the strict API; and a later rerun that repeats no flag at
+/// all keeps the partial API without warning again.
+fn scaffold_partial_trees_added_on_rerun_updates_config_and_warns_about_stale_example() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let dir_name = "ts_bnf_scaffold_partial_trees_rerun_project";
+    let out_dir = support::scaffold_with_ast_types(dir_name, "rerunlang", SCAFFOLD_AST_BNF);
+    let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(!config.contains("partial_trees ="), "{config}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("TryFrom") && !ast_rs.contains("Recover"));
+    let example_before = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
+    assert!(example_before.contains("::parse_ast(&source)"));
+
+    let second = tool()
+        .args([
+            "scaffold",
+            "--name",
+            "rerunlang",
+            "--ast-types",
+            "--partial-trees",
+            "--output-dir",
+        ])
+        .arg(&out_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(second.status.success(), "{stderr}");
+    let config = std::fs::read_to_string(out_dir.join("ts-bnf-tool.toml")).unwrap();
+    assert!(config.contains("partial_trees = true"), "{config}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("Recover") && !ast_rs.contains("TryFrom"));
+    let example_after = std::fs::read_to_string(out_dir.join("examples/ast.rs")).unwrap();
+    assert_eq!(
+        example_after, example_before,
+        "the example is the user's file"
+    );
+    assert!(
+        stderr.contains("examples/ast.rs was written for the strict AST API"),
+        "{stderr}"
+    );
+    // The crate was scaffolded as strict, so its `Cargo.toml` — the user's file
+    // from then on — has no `ts-bnf-runtime`. It is left alone, and the warning
+    // says which line to add.
+    let manifest = std::fs::read_to_string(out_dir.join("Cargo.toml")).unwrap();
+    assert!(!manifest.contains("ts-bnf-runtime"), "{manifest}");
+    assert!(
+        stderr.contains(&format!(
+            "ts-bnf-runtime = \"{}\"",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{stderr}"
+    );
+
+    // No flags at all, directory mode: the recorded setting is enough, and the
+    // example is no longer news.
+    std::fs::remove_file(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    let third = tool().args(["scaffold"]).arg(&out_dir).output().unwrap();
+    let stderr = String::from_utf8_lossy(&third.stderr);
+    assert!(third.status.success(), "{stderr}");
+    let ast_rs = std::fs::read_to_string(out_dir.join("bindings/rust/ast.rs")).unwrap();
+    assert!(ast_rs.contains("Recover") && !ast_rs.contains("TryFrom"));
+    assert!(!stderr.contains("was written for"), "{stderr}");
+}
+
+#[test]
+/// `Cargo.toml` is written once and is the user's afterwards, so what a
+/// `--partial-trees` scaffold does about its `ts-bnf-runtime` dependency
+/// depends on whether the file is new:
+///
+/// - a fresh partial scaffold writes the line, and says nothing;
+/// - a fresh strict scaffold has no such dependency, and says nothing;
+/// - an existing crate without the line (here, one that was strict and is
+///   switched to partial) is left untouched and warned, naming the exact line;
+/// - and that line is enough: with it added, the crate builds.
+fn scaffold_partial_trees_runtime_dependency_is_written_once_and_warned_about_otherwise() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let line = format!("ts-bnf-runtime = \"{}\"", env!("CARGO_PKG_VERSION"));
+    let scaffold = |dir_name: &str, name: &str, flags: &[&str]| {
+        let bnf_path = std::env::temp_dir().join(format!("{dir_name}.bnf"));
+        std::fs::write(&bnf_path, SCAFFOLD_AST_BNF).unwrap();
+        let out_dir = std::env::temp_dir().join(dir_name);
+        let output = tool()
+            .args(["scaffold", "--name", name])
+            .args(flags)
+            .arg("--output-dir")
+            .arg(&out_dir)
+            .arg(&bnf_path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        (
+            out_dir,
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // Fresh partial: the line is there, and there is nothing to warn about.
+    let dir_name = "ts_bnf_scaffold_runtime_dep_fresh_partial";
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(dir_name));
+    let (partial_dir, stderr) = scaffold(
+        dir_name,
+        "fresh-partial",
+        &["--ast-types", "--partial-trees"],
+    );
+    let manifest = std::fs::read_to_string(partial_dir.join("Cargo.toml")).unwrap();
+    assert!(manifest.contains(&line), "{manifest}");
+    assert!(!stderr.contains("ts-bnf-runtime"), "{stderr}");
+
+    // Fresh strict: no dependency, no warning.
+    let dir_name = "ts_bnf_scaffold_runtime_dep_fresh_strict";
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(dir_name));
+    let (strict_dir, stderr) = scaffold(dir_name, "fresh-strict", &["--ast-types"]);
+    let manifest = std::fs::read_to_string(strict_dir.join("Cargo.toml")).unwrap();
+    assert!(!manifest.contains("ts-bnf-runtime"), "{manifest}");
+    assert!(!stderr.contains("ts-bnf-runtime"), "{stderr}");
+
+    // Strict, then partial on the same crate: the manifest is the user's, so it
+    // is not edited, and the warning says what to add.
+    let before = std::fs::read_to_string(strict_dir.join("Cargo.toml")).unwrap();
+    let bnf_path = std::env::temp_dir().join("ts_bnf_scaffold_runtime_dep_fresh_strict.bnf");
+    let rerun = tool()
+        .args([
+            "scaffold",
+            "--name",
+            "fresh-strict",
+            "--ast-types",
+            "--partial-trees",
+            "--output-dir",
+        ])
+        .arg(&strict_dir)
+        .arg(&bnf_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&rerun.stderr);
+    assert!(rerun.status.success(), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(strict_dir.join("Cargo.toml")).unwrap(),
+        before,
+        "Cargo.toml is the user's file"
+    );
+    assert!(stderr.contains("does not depend on it"), "{stderr}");
+    assert!(stderr.contains(&line), "{stderr}");
+
+    // Following the warning is enough: add the line it names and the crate
+    // builds, with the shared runtime resolving.
+    let fixed = before.replace(
+        "tree-sitter = \"0.26.8\"",
+        &format!("tree-sitter = \"0.26.8\"\n{line}"),
+    );
+    assert_ne!(fixed, before, "the dependency table was found");
+    std::fs::write(strict_dir.join("Cargo.toml"), fixed).unwrap();
+    let build = support::cargo_in(&strict_dir)
+        .args(["build", "--quiet"])
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the crate must build once the line is added:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let again = tool().args(["scaffold"]).arg(&strict_dir).output().unwrap();
+    assert!(
+        !String::from_utf8_lossy(&again.stderr).contains("does not depend on it"),
+        "no warning once the dependency is there"
+    );
+}
+
+#[test]
+/// The point of `ts-bnf-runtime`: the typed trees of two *different* generated
+/// crates are made of the same types, so code written once against
+/// `ts_bnf_runtime` — a generic function taking `&dyn Reflect`, another taking
+/// a `Recovered<T>` — accepts both languages' trees, with no conversion per
+/// language. A third crate depends on both generated crates and on
+/// `ts-bnf-runtime` itself, and calls each generic function with each
+/// language's value; that only compiles if all of them name one `Reflect`, one
+/// `Span` and one `Recovered`. Cargo is also asked for the one copy of the
+/// runtime crate the whole graph shares (it refuses if there were two).
+fn two_generated_crates_share_one_reflect_span_and_recovered() {
+    let Some(version) = support::tree_sitter_version() else {
+        return; // tree-sitter not in PATH, skip
+    };
+    if version < (0, 25) {
+        return; // ABI 15 requires tree-sitter >= 0.25
+    }
+    let lang_a = support::scaffold_with_partial_trees(
+        "ts_bnf_shared_runtime_lang_a",
+        "shared-lang-a",
+        "program -> decl* ;\n\
+         decl -> target: ident '=' value: num ';' ;\n\
+         ident -> /[a-z]+/ ;\n\
+         num -> /[0-9]+/ ;\n",
+        None,
+    );
+    let lang_b = support::scaffold_with_partial_trees(
+        "ts_bnf_shared_runtime_lang_b",
+        "shared-lang-b",
+        "program -> cmd* ;\n\
+         cmd -> 'print' arg: word ';' ;\n\
+         word -> /[a-z]+/ ;\n",
+        None,
+    );
+
+    let consumer = std::env::temp_dir().join("ts_bnf_shared_runtime_consumer");
+    let _ = std::fs::remove_dir_all(&consumer);
+    std::fs::create_dir_all(consumer.join("src")).unwrap();
+    std::fs::write(
+        consumer.join("Cargo.toml"),
+        format!(
+            "[package]\n\
+             name = \"consumer\"\n\
+             version = \"0.1.0\"\n\
+             edition = \"2021\"\n\n\
+             [dependencies]\n\
+             shared-lang-a = {{ path = {a:?} }}\n\
+             shared-lang-b = {{ path = {b:?} }}\n\
+             ts-bnf-runtime = \"{version}\"\n\n\
+             [workspace]\n",
+            a = lang_a.display().to_string(),
+            b = lang_b.display().to_string(),
+            version = env!("CARGO_PKG_VERSION"),
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        consumer.join("src/main.rs"),
+        r#"use ts_bnf_runtime::{walk, Recovered, Reflect};
+
+/// An outline of any language's typed tree: one line per node, indented by
+/// depth, with the field label it sits under. Written once, for every language.
+fn outline(root: &dyn Reflect) -> String {
+    let mut out = String::new();
+    for visit in walk(root) {
+        out.push_str(&"  ".repeat(visit.depth));
+        if let Some(field) = visit.field {
+            out.push_str(field);
+            out.push_str(": ");
+        }
+        out.push_str(visit.node.kind());
+        out.push('\n');
+    }
+    out
+}
+
+/// Where the first problem of any language's recovery is, if there is one:
+/// the shared `Recovered`, `Diagnostic` and `Span`, in one function.
+fn first_problem<T>(recovered: &Recovered<T>) -> Option<usize> {
+    recovered.diagnostics.first().map(|d| d.span.start.line)
+}
+
+fn main() {
+    let a = shared_lang_a::parse_ast("x = 1;\n").unwrap();
+    let b = shared_lang_b::parse_ast("print hello;\n").unwrap();
+    println!("A\n{}", outline(a.value.as_ref().unwrap()));
+    println!("B\n{}", outline(b.value.as_ref().unwrap()));
+
+    // The generated crates' own paths name the very same types.
+    let via_path: &ts_bnf_runtime::Span = a.value.as_ref().unwrap()._span_for_test();
+    println!("span line {}", via_path.start.line);
+
+    let broken_a = shared_lang_a::parse_ast("x = ;\n").unwrap();
+    let broken_b = shared_lang_b::parse_ast("print ;\n").unwrap();
+    println!("problem A line {:?}", first_problem(&broken_a));
+    println!("problem B line {:?}", first_problem(&broken_b));
+}
+
+/// Each language's `ast::runtime::Span` is `ts_bnf_runtime::Span`, so a value
+/// from one crate's path is accepted where the shared type is named.
+trait SpanForTest {
+    fn _span_for_test(&self) -> &ts_bnf_runtime::Span;
+}
+
+impl SpanForTest for shared_lang_a::ast::Program {
+    fn _span_for_test(&self) -> &shared_lang_a::ast::runtime::Span {
+        &self._span
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let run = support::cargo_in(&consumer)
+        .args(["run", "--quiet"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success(),
+        "a function over the shared runtime types must accept both languages:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // One generic outline, both languages.
+    assert!(
+        stdout.contains("A\nprogram\n  decl\n    target: ident\n    =\n    value: num\n    ;\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("B\nprogram\n  cmd\n    print\n    arg: word\n    ;\n"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("span line 1"), "{stdout}");
+    assert!(stdout.contains("problem A line Some(1)"), "{stdout}");
+    assert!(stdout.contains("problem B line Some(1)"), "{stdout}");
+
+    // Cargo refuses `-i` on an ambiguous name, so success means there is one
+    // `ts-bnf-runtime` in the graph, and the three crates all depend on it.
+    let tree = support::cargo_in(&consumer)
+        .args(["tree", "--invert", "ts-bnf-runtime", "--prefix", "none"])
+        .output()
+        .unwrap();
+    let tree_out = String::from_utf8_lossy(&tree.stdout);
+    assert!(
+        tree.status.success(),
+        "one copy of the runtime crate:\n{tree_out}\n{}",
+        String::from_utf8_lossy(&tree.stderr)
+    );
+    for dependent in ["shared-lang-a", "shared-lang-b", "consumer"] {
+        assert!(
+            tree_out.contains(dependent),
+            "{dependent} depends on it:\n{tree_out}"
+        );
+    }
 }
 
 #[test]
@@ -3035,7 +3800,7 @@ fn tutorial_11_ast_types_matches_documented_struct_shapes_and_output() {
             .expect("Decl struct must be closed");
     let decl_struct = &ast_rs[decl_start..=decl_end];
     assert!(
-        decl_struct.contains("pub _pragma: runtime::Pragma,"),
+        decl_struct.contains("pub _span: runtime::Span,"),
         "{decl_struct}"
     );
     assert!(decl_struct.contains("pub target: Ident,"), "{decl_struct}");
@@ -3050,7 +3815,7 @@ fn tutorial_11_ast_types_matches_documented_struct_shapes_and_output() {
             .expect("Ident struct must be closed");
     let ident_struct = &ast_rs[ident_start..=ident_end];
     assert!(
-        ident_struct.contains("pub _pragma: runtime::Pragma,"),
+        ident_struct.contains("pub _span: runtime::Span,"),
         "{ident_struct}"
     );
     assert!(
@@ -3061,7 +3826,10 @@ fn tutorial_11_ast_types_matches_documented_struct_shapes_and_output() {
     let stdout = support::run_ast_example(&out_dir, TUTORIAL_11_SAMPLE);
     let normalized: String = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        normalized.contains("Program { _pragma: Pragma { line: 1, column: 1, }, }"),
+        normalized.contains(
+            "Program { _span: Span { byte_range: 0..14, start: Pragma { line: 1, column: 1, }, \
+             end: Pragma { line: 3, column: 1, }, }, }"
+        ),
         "chapter 11 states this exact Program dump; got: {stdout}"
     );
 }

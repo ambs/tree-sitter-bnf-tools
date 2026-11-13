@@ -1,9 +1,9 @@
 [workspace]
-members = ["tree-sitter-bnf", "tools"]
+members = ["tree-sitter-bnf", "runtime", "tools"]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 edition = "2024"
 license = "MIT"
 authors = ["Alberto Simões <ambs@zbr.pt>"]
