@@ -617,6 +617,16 @@ mod tests {
         Command::new("rustfmt").arg("--version").output().is_ok()
     }
 
+    /// Runs `test` if a real `rustfmt` can be run, and does nothing otherwise.
+    /// The skip is a branch with a body rather than an early `return`, so it
+    /// leaves no line that runs only on a machine without `rustfmt` — one
+    /// that no machine with it (CI included) would ever report as run.
+    fn with_rustfmt(test: impl FnOnce()) {
+        if rustfmt_available() {
+            test();
+        }
+    }
+
     /// A fresh, empty directory under the system temp dir for one test.
     fn scratch_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(name);
@@ -692,59 +702,56 @@ mod tests {
     /// is left byte-for-byte alone.
     #[test]
     fn format_sources_formats_only_the_listed_files() {
-        if !rustfmt_available() {
-            return;
-        }
-        let dir = scratch_dir("ts_bnf_format_sources_listed");
-        std::fs::write(dir.join("listed.rs"), "fn   main( ){ }\n").unwrap();
-        std::fs::write(dir.join("unlisted.rs"), "fn   main( ){ }\n").unwrap();
+        with_rustfmt(|| {
+            let dir = scratch_dir("ts_bnf_format_sources_listed");
+            std::fs::write(dir.join("listed.rs"), "fn   main( ){ }\n").unwrap();
+            std::fs::write(dir.join("unlisted.rs"), "fn   main( ){ }\n").unwrap();
 
-        let warning = format_sources(&dir, &[PathBuf::from("listed.rs")]);
+            let warning = format_sources(&dir, &[PathBuf::from("listed.rs")]);
 
-        assert_eq!(warning, None);
-        assert_eq!(
-            std::fs::read_to_string(dir.join("listed.rs")).unwrap(),
-            "fn main() {}\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.join("unlisted.rs")).unwrap(),
-            "fn   main( ){ }\n"
-        );
+            assert_eq!(warning, None);
+            assert_eq!(
+                std::fs::read_to_string(dir.join("listed.rs")).unwrap(),
+                "fn main() {}\n"
+            );
+            assert_eq!(
+                std::fs::read_to_string(dir.join("unlisted.rs")).unwrap(),
+                "fn   main( ){ }\n"
+            );
+        });
     }
 
     /// The formatter parses under the crate's edition, not `rustfmt`'s own
     /// 2015 default: `async fn` is a hard parse error there.
     #[test]
     fn format_sources_parses_under_the_crates_edition() {
-        if !rustfmt_available() {
-            return;
-        }
-        let dir = scratch_dir("ts_bnf_format_sources_edition");
-        std::fs::write(dir.join("a.rs"), "async fn   f( ) { }\n").unwrap();
+        with_rustfmt(|| {
+            let dir = scratch_dir("ts_bnf_format_sources_edition");
+            std::fs::write(dir.join("a.rs"), "async fn   f( ) { }\n").unwrap();
 
-        assert_eq!(format_sources(&dir, &[PathBuf::from("a.rs")]), None);
-        assert_eq!(
-            std::fs::read_to_string(dir.join("a.rs")).unwrap(),
-            "async fn f() {}\n"
-        );
+            assert_eq!(format_sources(&dir, &[PathBuf::from("a.rs")]), None);
+            assert_eq!(
+                std::fs::read_to_string(dir.join("a.rs")).unwrap(),
+                "async fn f() {}\n"
+            );
+        });
     }
 
     /// A source `rustfmt` cannot parse is a warning carrying its own message,
     /// not an error and not silence.
     #[test]
     fn format_sources_warns_with_rustfmts_message_when_it_fails() {
-        if !rustfmt_available() {
-            return;
-        }
-        let dir = scratch_dir("ts_bnf_format_sources_failure");
-        std::fs::write(dir.join("broken.rs"), "fn (\n").unwrap();
+        with_rustfmt(|| {
+            let dir = scratch_dir("ts_bnf_format_sources_failure");
+            std::fs::write(dir.join("broken.rs"), "fn (\n").unwrap();
 
-        let warning = format_sources(&dir, &[PathBuf::from("broken.rs")])
-            .expect("an unparseable source must produce a warning");
-        assert!(
-            warning.starts_with("warning: `rustfmt` failed"),
-            "{warning}"
-        );
-        assert!(warning.contains("unclosed delimiter"), "{warning}");
+            let warning = format_sources(&dir, &[PathBuf::from("broken.rs")])
+                .expect("an unparseable source must produce a warning");
+            assert!(
+                warning.starts_with("warning: `rustfmt` failed"),
+                "{warning}"
+            );
+            assert!(warning.contains("unclosed delimiter"), "{warning}");
+        });
     }
 }
