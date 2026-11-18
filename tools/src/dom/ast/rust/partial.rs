@@ -509,6 +509,12 @@ pub(super) fn fmt_struct_recover(
 /// diagnostic and `None` instead of an error. Each variant goes through
 /// [`kind_display_name`], so a `passthrough`-renamed kind's variant still
 /// names the type it is actually declared under.
+///
+/// An enum with no real kind (a rule whose named children are all labelled,
+/// leaving only `Token` and `Error`) has no arm for the `match` to dispatch
+/// to, so the catch-all alone would be a `match` on a single binding —
+/// `clippy::match_single_binding`. There the catch-all body follows a plain
+/// `let found = …` instead.
 pub(super) fn fmt_multi_shape_enum_recover(
     shape: &[String],
     name: &str,
@@ -518,14 +524,13 @@ pub(super) fn fmt_multi_shape_enum_recover(
     let has_error = shape_has_error(shape);
 
     let mut arms = String::new();
-    for kind in clean_shape {
+    for kind in &clean_shape {
         let payload = kind_display_name(kind, merge_config);
         let variant = variant_name(kind, merge_config, has_token, has_error);
         arms.push_str(&format!(
             "\"{kind}\" => <{payload} as runtime::Recover<'tree>>::recover(_node, _cx).map({name}::{variant}),\n"
         ));
     }
-    let arms_text = indent(arms.trim_end(), 12);
 
     // Checked before the token branch: an `ERROR` node is named, but its kind
     // is `"ERROR"`, which no arm below would take.
@@ -546,6 +551,26 @@ pub(super) fn fmt_multi_shape_enum_recover(
     }
     let token_early_return_text = indent(early_returns.trim_end(), 8);
 
+    // The rejection both dispatch shapes end in: report the unexpected kind.
+    let unexpected = formatdoc! {r#"
+        let problem = runtime::DiagnosticKind::UnexpectedKind {{
+            expected: "{name}",
+            found: found.to_string(),
+        }};
+        _cx.diagnostics.push(runtime::diagnostic_at(_node, problem));
+        None
+    "#};
+    let dispatch = if clean_shape.is_empty() {
+        format!("let found = _node.node.kind();\n{}", unexpected.trim_end())
+    } else {
+        format!(
+            "match _node.node.kind() {{\n{}\n    found => {{\n{}\n    }}\n}}",
+            indent(arms.trim_end(), 4),
+            indent(unexpected.trim_end(), 8),
+        )
+    };
+    let dispatch_text = indent(&dispatch, 8);
+
     formatdoc! {r#"
         impl<'tree> runtime::Recover<'tree> for {name} {{
             fn recover(
@@ -553,17 +578,7 @@ pub(super) fn fmt_multi_shape_enum_recover(
                 _cx: &mut runtime::Context,
             ) -> Option<Self> {{
         {token_early_return_text}
-                match _node.node.kind() {{
-        {arms_text}
-                    found => {{
-                        let problem = runtime::DiagnosticKind::UnexpectedKind {{
-                            expected: "{name}",
-                            found: found.to_string(),
-                        }};
-                        _cx.diagnostics.push(runtime::diagnostic_at(_node, problem));
-                        None
-                    }}
-                }}
+        {dispatch_text}
             }}
         }}
     "#}
@@ -1484,6 +1499,91 @@ mod tests {
             !out.contains("child_tokens"),
             "the token-only helper is gone"
         );
+    }
+
+    /// A children enum with no node-kind variant (every named child of the
+    /// rule is labelled, so only `Token` and `Error` remain) has nothing for
+    /// a `match` to dispatch to: its `recover` must not be a `match` whose
+    /// only arm is the catch-all (`clippy::match_single_binding`), yet still
+    /// report the unexpected kind and yield `None`.
+    #[test]
+    fn children_enum_without_kinds_has_no_single_arm_match() {
+        let g = Grammar::from_rules([
+            p(
+                "loop",
+                Sequence(vec![
+                    TerminalLiteral("'WHILE'".into()),
+                    Field("condition".into(), Box::new(nt("expr"))),
+                    TerminalLiteral("'DO'".into()),
+                    Field("body".into(), Box::new(nt("block"))),
+                    TerminalLiteral("'END'".into()),
+                ]),
+            ),
+            p("expr", TerminalPattern("/[a-z]+/".into())),
+            p("block", TerminalPattern("/[0-9]+/".into())),
+        ]);
+        let out = partial(&g, None);
+
+        let child = item_body(&out, "pub enum LoopChild {");
+        assert!(child.contains("Token(runtime::Token),"));
+        assert!(child.contains("Error(runtime::ErrorRegion),"));
+        assert_eq!(
+            child.matches('(').count(),
+            2,
+            "only Token and Error: {child}"
+        );
+
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for LoopChild {");
+        assert!(!recover.contains("match"), "no single-arm match: {recover}");
+        assert!(recover.contains("if _node.node.is_error() {"));
+        assert!(recover.contains("if !_node.node.is_named() {"));
+        assert!(recover.contains("let found = _node.node.kind();"));
+        assert!(recover.contains("expected: \"LoopChild\","));
+        assert!(recover.contains("found: found.to_string(),"));
+        assert!(recover.contains("_cx.diagnostics.push(runtime::diagnostic_at(_node, problem));"));
+        assert!(recover.contains("    None\n"));
+    }
+
+    /// The same holds with no literal either: an all-labelled rule with no
+    /// string literals leaves a children enum that is `Error` alone, with no
+    /// `Token` early return before the unexpected-kind report.
+    #[test]
+    fn error_only_children_enum_has_no_single_arm_match() {
+        let g = Grammar::from_rules([
+            p(
+                "pair",
+                Sequence(vec![
+                    Field("left".into(), Box::new(nt("ident"))),
+                    Field("right".into(), Box::new(nt("ident"))),
+                ]),
+            ),
+            p("ident", TerminalPattern("/[a-z]+/".into())),
+        ]);
+        let out = partial(&g, None);
+
+        let child = item_body(&out, "pub enum PairChild {");
+        assert!(child.contains("Error(runtime::ErrorRegion),"));
+        assert!(!child.contains("Token"));
+
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for PairChild {");
+        assert!(!recover.contains("match"), "no single-arm match: {recover}");
+        assert!(recover.contains("if _node.node.is_error() {"));
+        assert!(!recover.contains("is_named"));
+        assert!(recover.contains("let found = _node.node.kind();"));
+    }
+
+    /// With at least one node-kind variant the dispatch is still a `match`,
+    /// with that kind's arm ahead of the catch-all: dropping the `match` is
+    /// only for the case with no arm to dispatch to.
+    #[test]
+    fn children_enum_with_kinds_keeps_its_match() {
+        let out = partial(&unlabelled_grammar(), None);
+
+        let recover = item_body(&out, "impl<'tree> runtime::Recover<'tree> for DeclChild {");
+        assert!(recover.contains("match _node.node.kind() {"));
+        assert!(recover.contains("\"ident\" => <Ident as runtime::Recover<'tree>>::recover(_node, _cx).map(DeclChild::Ident),"));
+        assert!(recover.contains("found => {"));
+        assert!(!recover.contains("let found"));
     }
 
     /// A leaf's `_text` is its whole source, literals included, so a rule

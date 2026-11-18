@@ -668,6 +668,36 @@ fn partial_unlabelled_children_compile() {
     assert_no_partial_mode_warnings(&output);
 }
 
+/// Partial-mode compile-check for a rule whose named children are all
+/// labelled (the shape reported against 0.6.0-beta.2): its `<Rule>Child` enum
+/// is only `Token` and `Error`, so its `recover` reports the unexpected kind
+/// without a `match` (which would have a lone catch-all arm and trip
+/// `clippy::match_single_binding`). The `let found` form has to type-check
+/// against the real `tree_sitter` crate with no warning; `pair` is the same
+/// again with no literal, leaving an `Error`-only enum.
+#[test]
+fn partial_all_labelled_children_compile() {
+    let grammar = parse_fixture(
+        "partial all-labelled children",
+        "source_file -> loop pair ;\n\
+         loop -> 'WHILE' condition: expr 'DO' body: block 'END' ;\n\
+         pair -> left: expr right: expr ;\n\
+         expr -> /[a-z]+/ ;\n\
+         block -> /[0-9]+/ ;\n",
+    );
+
+    let output = compile_generated_ast_in_mode(
+        "ast_partial_all_labelled_children_harness",
+        &grammar,
+        "partial_all_labelled_sample",
+        "fn main() {}\n",
+        false,
+        None,
+        BuildMode::Partial,
+    );
+    assert_no_partial_mode_warnings(&output);
+}
+
 /// Partial-mode compile-check for unlabelled children meeting
 /// `--merge-config`: a three-kind child enum that includes merged-away
 /// (private) structs, a list holding a single merged-away struct directly
