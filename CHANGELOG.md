@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `scaffold --ast-types --partial-trees`: the generated `ast.rs` tripped
+  `clippy::match_single_binding` (an error under `-D warnings`) for every rule
+  whose named children are all labelled. Such a rule's `<Rule>Child` enum has
+  only the `Token` and `Error` variants, and its `Recover` impl dispatched on
+  the node kind with a `match` whose sole arm was the catch-all. It now reports
+  the unexpected kind straight after a plain `let found = …` binding. The
+  output for an enum with at least one node-kind variant is unchanged (#501).
+
 ## [0.6.0-beta.2] - 2026-11-13
 
 ### Added
