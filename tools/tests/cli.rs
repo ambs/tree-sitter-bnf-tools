@@ -1746,7 +1746,13 @@ fn clippy_available() -> bool {
 /// scaffolded crate at `dir`: no clippy lint, and no rustc one either, in
 /// anything `scaffold` generated, examples included. Every crate shares one
 /// target directory so the dependencies (tree-sitter, `cc`) are built once.
+///
+/// The runtime is patched in through a config file, not `cargo_in`'s `--config`
+/// alone: clippy runs `cargo check` as a child that flag does not reach, so
+/// without the file a freshly bumped, not yet published runtime version would
+/// fail to resolve.
 fn assert_clippy_clean(dir: &std::path::Path) {
+    support::use_local_runtime(dir);
     let out = support::cargo_in(dir)
         .env(
             "CARGO_TARGET_DIR",

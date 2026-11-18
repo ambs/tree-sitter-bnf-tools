@@ -61,6 +61,36 @@ pub fn cargo_in(crate_dir: &Path) -> Command {
     command
 }
 
+/// Makes `ts-bnf-runtime` resolve to this checkout's `runtime/` for *every*
+/// `cargo` run in `crate_dir`, including subcommands that are not built into
+/// cargo, by writing the patch [`cargo_in`] passes with `--config` to the
+/// crate's own `.cargo/config.toml` instead.
+///
+/// [`cargo_in`]'s flag is not enough for those: `cargo clippy` is the external
+/// `cargo-clippy`, which runs `cargo check` itself, and `--config` does not
+/// reach that child. The crate then resolves `ts-bnf-runtime` from crates.io,
+/// where the version a release bump has just set does not exist yet. A config
+/// file is found by every `cargo` run in the directory. Like the flag, it
+/// leaves the manifest under test exactly what the tool wrote, and a crate that
+/// does not list the runtime is left alone. Only for a throwaway crate: it adds
+/// a file to the crate directory.
+pub fn use_local_runtime(crate_dir: &Path) {
+    let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap_or_default();
+    if !manifest.contains("ts-bnf-runtime") {
+        return;
+    }
+    let config_dir = crate_dir.join(".cargo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.toml"),
+        format!(
+            "[patch.crates-io]\nts-bnf-runtime = {{ path = {:?} }}\n",
+            runtime_crate_dir().display().to_string()
+        ),
+    )
+    .unwrap();
+}
+
 /// Returns the installed tree-sitter CLI version as `(major, minor)`, or `None` if not found.
 pub fn tree_sitter_version() -> Option<(u32, u32)> {
     let out = Command::new("tree-sitter").arg("--version").output().ok()?;

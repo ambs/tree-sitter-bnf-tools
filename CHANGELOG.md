@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0-beta.3] - 2026-11-18
+
 ### Changed
 - `scaffold` now runs `rustfmt` (edition 2021, no options of its own) over the
   Rust files it writes, so a freshly scaffolded crate passes `cargo fmt
@@ -710,7 +712,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Line comments (`#`)
   - Warning on undefined rule references in directive and rule bodies
 
-[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.2...HEAD
+[Unreleased]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.3...HEAD
+[0.6.0-beta.3]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.2...v0.6.0-beta.3
 [0.6.0-beta.2]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.6.0-beta.1...v0.6.0-beta.2
 [0.6.0-beta.1]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.5.0...v0.6.0-beta.1
 [0.5.0]: https://github.com/ambs/tree-sitter-bnf-tools/compare/v0.4.0...v0.5.0
